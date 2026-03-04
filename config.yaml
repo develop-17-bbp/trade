@@ -1,0 +1,39 @@
+# ── General Settings ──
+mode: testnet                  # execution mode: 'paper', 'testnet', or 'live'
+
+# ── Exchange Configuration (for testnet/live) ──
+exchange:
+  name: binance
+  api_key: "Jte13F3g78Uri75iUcCCuDjVmslrTiucFMJvLOLKTBlXxqB4gik9Ez1hOySvDF5W"
+  api_secret: "K6Mg4zBUb9IhAncjmgJie8Wl7qL35AwMe9fSnrYuy369HPwguMM5WOtSPcr8qYce"
+
+assets:
+  - BTC
+  - ETH
+
+initial_capital: 100000.0      # Starting capital in USD (just for tracking initial state)
+
+# ── L1 Quantitative Engine ──
+l1:
+  short_window: 5
+  long_window: 20
+  vol_threshold: 1.5
+
+# ── L2 Sentiment Rules ──
+sentiment:
+  fear_threshold: 0.3
+  greed_threshold: 0.7
+
+# ── Risk Parameters ──
+risk:
+  max_position_size_pct: 2.0
+  daily_loss_limit_pct: 3.0
+  max_drawdown_pct: 10.0
+  risk_per_trade_pct: 1.0      # risk 1% of equity per trade
+  atr_stop_mult: 2.0           # Stop Loss = 2x ATR
+  atr_tp_mult: 3.0             # Take Profit = 3x ATR
+
+# ── Models ──
+models:
+  lightgbm:
+    model_path: "models/lgbm_aave.txt"  # Trained LightGBM classifier for AAVE/USDT

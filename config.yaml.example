@@ -1,0 +1,128 @@
+# ============================================================
+# AI-Driven Crypto Trading System — Configuration
+# Three-Layer Hybrid Signal Architecture
+# ============================================================
+
+# ── General Settings ──
+mode: testnet                  # execution mode: 'paper', 'testnet', or 'live'
+# 'demo' key has been deprecated; real-time Binance CCXT data is required
+# demo: false                    # previously controlled synthetic vs live data
+
+assets:
+  - BTC
+  - ETH
+
+# ── Exchange Configuration (for testnet/live) ──
+exchange:
+  name: binance
+  api_key: ""                  # Alternatively use env var BINANCE_API_KEY / BINANCE_TESTNET_KEY
+  api_secret: ""               # Alternatively use env var BINANCE_API_SECRET / BINANCE_TESTNET_SECRET
+
+
+initial_capital: 100000.0      # Starting capital in USD
+# min_return_pct: 1.0          # Uncomment to enforce 1% daily target in reports
+
+# ── L1 Quantitative Engine ──
+l1:
+  sma_short: 10                # Short-term SMA period
+  sma_long: 50                 # Long-term SMA period
+  z_window: 20                 # Z-score lookback window
+  rsi_period: 14               # RSI period
+  bb_period: 20                # Bollinger Band period
+  roc_period: 12               # Rate of Change period
+  weights:
+    trend: 0.30                # Trend sub-signal weight
+    mean_reversion: 0.20       # Mean-reversion sub-signal weight
+    momentum: 0.25             # Momentum sub-signal weight
+    volatility: 0.15           # Volatility conditioning weight
+    cycle: 0.10                # Market cycle weight
+
+# ── L2 Sentiment Layer ──
+ai:
+  use_transformer: false       # true = HuggingFace transformer, false = rule-based
+  model: cardiffnlp/twitter-roberta-base-sentiment
+  embed_model: all-MiniLM-L6-v2
+  device: cpu                  # "cpu" or "cuda"
+decay_gamma: 0.001             # Sentiment time-decay rate (per second)
+
+# ── L3 Risk Engine ──
+risk:
+  max_position_size_pct: 2.0   # Max % of account per position
+  max_portfolio_pct: 20.0      # Max % total portfolio exposure
+  daily_loss_limit_pct: 3.0    # Daily loss halt trigger
+  max_drawdown_pct: 10.0       # Circuit breaker drawdown limit
+  risk_per_trade_pct: 1.0      # Risk per trade (for ATR sizing)
+  atr_stop_mult: 2.0           # Stop-loss = entry ± k * ATR
+  atr_tp_mult: 3.0             # Take-profit = entry ± k * ATR
+
+# ── RL Engine (v6.0 core) ──
+rl:
+  model_path: ''              # Path to saved PPO/SAC agent (optional)
+  vol_threshold: 0.04         # Volatility above which RL prefers flat
+  confidence_floor: 0.3       # Minimum action probability returned
+
+# ── Meta-Controller (Layer 4) ──
+meta:
+  lgb_weight_base: 0.6        # Base weight for LightGBM signal
+  rl_weight_base: 0.4         # Base weight for RL signal
+  high_vol_rl_weight: 0.8     # RL weight when vol > vol_threshold
+  veto_rl_prob_thresh: 0.45   # RL probability below which veto occurs
+  finbert_halve_thresh: 0.1   # Sentiment score for size halving
+  bias: 0.0                  # optional directional bias (-1 to +1) to nudge returns
+
+
+# ── Signal Combiner ──
+combiner:
+  l1_weight: 0.50              # L1 quantitative weight
+  l2_weight: 0.30              # L2 sentiment weight
+  l3_weight: 0.20              # L3 risk weight (+ VETO authority)
+  entry_threshold: 0.20        # Min signal strength to enter
+  exit_threshold: 0.05         # Min signal strength to hold
+  agreement_bonus: 0.10        # Bonus when L1 and L2 agree
+  l2_decay_rate: 0.002         # L2 staleness decay per second
+  l2_max_age: 600              # Max L2 age before full decay (seconds)
+
+# ── Execution ──
+fee_pct: 0.10                  # Trading fee per side (%)
+slippage_pct: 0.05             # Estimated slippage (%)
+
+# ── Data Sources (optional API keys via .env) ──
+# Set in .env file:
+#   NEWSAPI_KEY=your_key_here
+#   CRYPTOPANIC_TOKEN=your_token_here
+
+# ── News Fetching ──
+news:
+  limit: 50           # Maximum number of headlines to retrieve per asset
+
+
+# ── Robinhood Integration (for live trading) ──
+# For live trading mode with real Robinhood execution
+# Credentials can be provided here or via environment variables:
+#   - Command line config (not recommended for sensitive data)
+#   - Or use environment variables: ROBINHOOD_USER, ROBINHOOD_PASSWORD, ROBINHOOD_MFA
+robinhood:
+  # username: your_robinhood_email@example.com  # Leave blank, use env var instead
+  # password: your_password                       # Leave blank, use env var instead
+  # mfa_code: ''                                  # Optional for cached auth; auto-prompted if needed
+
+# ════════════════════════════════════════════════════════════
+# EXAMPLE: Running in Live Mode
+# ════════════════════════════════════════════════════════════
+# 1. Set environment variables:
+#    export ROBINHOOD_USER="your_email@example.com"
+#    export ROBINHOOD_PASSWORD="your_password"
+#    export ROBINHOOD_MFA="123456"  (optional)
+#
+# 2. Update mode in config above:
+#    mode: live
+#
+# 3. Run:
+#    python -m src.main
+#
+# The system will:
+#   - Authenticate with Robinhood
+#   - Generate live signals every cycle
+#   - Execute buy/sell orders on real positions
+#   - Fall back to paper mode if auth fails
+# ════════════════════════════════════════════════════════════

@@ -1,0 +1,63 @@
+============================================================
+  BACKTEST PERFORMANCE REPORT
+============================================================
+
+  Total Return:              -0.80%
+  Annual Return:             -1.06%
+  Avg Daily Return:        -0.0029%
+  Net P&L:              $     -802.10
+
+  -- Risk Metrics --
+  Sharpe Ratio:             -0.767
+  Sortino Ratio:            -1.078
+  Calmar Ratio:             -0.885
+  Max Drawdown:               1.20%
+  DD Duration:                   3 bars
+
+  -- Trade Stats --
+  Total Trades:                  4
+  Win Rate:                   25.0%
+  Profit Factor:             0.500
+  Avg Trade P&L:        $     -200.52
+  Avg Win:              $      802.39
+  Avg Loss:             $     -534.83
+  Avg Holding:                 1.8 bars
+  Total Fees:           $        0.00
+
+  -- Exit Reasons --
+    signal                   1
+    stop_loss                2
+    take_profit              1
+
+============================================================
+
+  -- Monte Carlo Simulation --
+  Simulations:         1000
+  Miss Rate:            5.0%
+  Mean Return:        -0.80%
+  Median Return:      -0.80%
+  5th Percentile:     -2.34%  (VaR)
+  95th Percentile:     0.92%
+  Worst Case:         -2.74%
+  Median Max DD:       1.36%
+  95% Max DD:          2.34%
+  Worst Max DD:        2.74%
+  Sharpe 95% CI:   [-107.77, 6.22]
+  P(Profitable):       25.8%
+  P(Sharpe > 1):       24.7%
+
+  -- Walk-Forward Validation --
+  Windows:                9
+  Avg OOS Return:     0.000%
+  Avg OOS Sharpe:     0.000
+  Consistency:          0.0%  (0/9 positive)
+  Per-window returns:
+    Window  1:    0.000%  [-]
+    Window  2:    0.000%  [-]
+    Window  3:    0.000%  [-]
+    Window  4:    0.000%  [-]
+    Window  5:    0.000%  [-]
+    Window  6:    0.000%  [-]
+    Window  7:    0.000%  [-]
+    Window  8:    0.000%  [-]
+    Window  9:    0.000%  [-]
