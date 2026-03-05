@@ -46,6 +46,21 @@ class AdaptiveEngine:
         with open(self.memory_file, 'w') as f:
             json.dump(self.perf_scores, f)
 
+    def select_strategy(self, features: Dict[str, float], sentiment_data: Dict) -> str:
+        """Helper to interface with HybridStrategy's feature format."""
+        sentiment_score = sentiment_data.get('aggregate_score', 0.0)
+        vol = features.get('ewma_vol', 0.02)
+        trend = features.get('ema_10_slope', 0.0)
+        chop = features.get('adx_strength', 25.0) # ADX as proxy for non-chop trendiness
+        
+        return self.select_best_strategy(
+            sentiment_score=sentiment_score,
+            volatility=vol,
+            trend_strength=trend,
+            chop_index=100 - chop, # Invert ADX for chop approx
+            asset_type='BTC'
+        )
+
     def select_best_strategy(self, 
                              sentiment_score: float, 
                              volatility: float, 

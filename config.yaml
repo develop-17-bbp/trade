@@ -7,9 +7,13 @@ exchange:
   api_key: "Jte13F3g78Uri75iUcCCuDjVmslrTiucFMJvLOLKTBlXxqB4gik9Ez1hOySvDF5W"
   api_secret: "K6Mg4zBUb9IhAncjmgJie8Wl7qL35AwMe9fSnrYuy369HPwguMM5WOtSPcr8qYce"
 
+# ── Assets to trade ──
+# For PAPER mode: use AAVE (we have CSV data)
+# For TESTNET/LIVE: use BTC, ETH
 assets:
   - BTC
   - ETH
+  - AAVE
 
 initial_capital: 100000.0      # Starting capital in USD (just for tracking initial state)
 

@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Trading Desk - Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%);
+            color: #e0e0e0;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            grid-template-rows: auto 1fr;
+            gap: 20px;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .header {
+            grid-column: 1 / -1;
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #00d4ff 0%, #00ff88 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .header .subtitle {
+            color: #888;
+            font-size: 1.1rem;
+            font-weight: 400;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .widget {
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 24px;
+            transition: all 0.3s ease;
+        }
+
+        .widget:hover {
+            border-color: rgba(0, 212, 255, 0.3);
+            box-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
+        }
+
+        .widget h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .widget h3::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(135deg, #00d4ff 0%, #00ff88 100%);
+            border-radius: 2px;
+        }
+
+        /* Strategist Hub */
+        .strategist-hub {
+            grid-column: 1 / -1;
+        }
+
+        .reasoning-feed {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            max-height: 300px;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .reasoning-feed::before {
+            content: '$';
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            color: #00ff88;
+            font-weight: bold;
+        }
+
+        .reasoning-line {
+            margin-bottom: 8px;
+            padding-left: 20px;
+            border-left: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .reasoning-line.new {
+            border-left-color: #00d4ff;
+            background: rgba(0, 212, 255, 0.05);
+        }
+
+        .reasoning-line .timestamp {
+            color: #666;
+            font-size: 0.8rem;
+            margin-right: 8px;
+        }
+
+        /* Memory Vault */
+        .memory-vault .memory-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
+        }
+
+        .memory-item .similarity {
+            color: #00ff88;
+            font-weight: 600;
+        }
+
+        .memory-item .outcome {
+            color: #888;
+            font-size: 0.8rem;
+        }
+
+        /* Equity Curve */
+        .equity-curve {
+            position: relative;
+        }
+
+        .equity-chart-container {
+            height: 300px;
+            position: relative;
+        }
+
+        .equity-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 16px;
+            padding: 16px;
+            background: rgba(0, 255, 136, 0.05);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            border-radius: 8px;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #00ff88;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Market Regime */
+        .market-regime {
+            text-align: center;
+        }
+
+        .regime-indicator {
+            font-size: 2rem;
+            font-weight: 700;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 16px 0;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 255, 136, 0.1) 100%);
+            border: 2px solid;
+            backdrop-filter: blur(10px);
+        }
+
+        .regime-indicator.ranging {
+            border-color: #ffa500;
+            color: #ffa500;
+        }
+
+        .regime-indicator.trending {
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+
+        /* Assets List */
+        .assets-list .asset-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .asset-item:hover {
+            border-color: rgba(0, 212, 255, 0.3);
+        }
+
+        .asset-symbol {
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .asset-signal {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .signal-long {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+        }
+
+        .signal-short {
+            background: rgba(255, 77, 77, 0.2);
+            color: #ff4d4d;
+            border: 1px solid rgba(255, 77, 77, 0.3);
+        }
+
+        .signal-flat {
+            background: rgba(255, 165, 0, 0.2);
+            color: #ffa500;
+            border: 1px solid rgba(255, 165, 0, 0.3);
+        }
+
+        .signal-veto {
+            background: rgba(128, 128, 128, 0.2);
+            color: #888;
+            border: 1px solid rgba(128, 128, 128, 0.3);
+        }
+
+        /* Animations */
+        @keyframes glow {
+            0%, 100% {
+                box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+            }
+            50% {
+                box-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
+            }
+        }
+
+        .glowing {
+            animation: glow 2s ease-in-out infinite;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto 1fr;
+            }
+
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                flex-direction: row;
+                flex-wrap: wrap;
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>Autonomous Trading Desk</h1>
+            <div class="subtitle">AI-Driven Crypto Trading System | Layer 7: Full Autonomy</div>
+        </div>
+
+        <div class="main-content">
+            <div class="widget strategist-hub">
+                <h3>🤖 Strategist Hub</h3>
+                <div class="reasoning-feed" id="reasoningFeed">
+                    <div class="reasoning-line">
+                        <span class="timestamp">14:32:15</span>
+                        <span class="content">Initializing agentic reasoning engine...</span>
+                    </div>
+                    <div class="reasoning-line">
+                        <span class="timestamp">14:32:16</span>
+                        <span class="content">Loading market data: BTC/USDT, ETH/USDT, AAVE/USDT</span>
+                    </div>
+                    <div class="reasoning-line">
+                        <span class="timestamp">14:32:17</span>
+                        <span class="content">Analyzing sentiment: FinBERT bullish ratio at 0.67</span>
+                    </div>
+                    <div class="reasoning-line new">
+                        <span class="timestamp">14:32:18</span>
+                        <span class="content">Thinking: Increasing bullish bias due to oversold RSI (28.3) and positive sentiment momentum</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="widget equity-curve">
+                <h3>📈 Real-Time Equity Curve</h3>
+                <div class="equity-chart-container">
+                    <canvas id="equityChart"></canvas>
+                </div>
+                <div class="equity-stats">
+                    <div class="stat">
+                        <div class="stat-value" id="totalReturn">+2.34%</div>
+                        <div class="stat-label">Total Return</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="sharpeRatio">1.87</div>
+                        <div class="stat-label">Sharpe Ratio</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="maxDrawdown">-1.2%</div>
+                        <div class="stat-label">Max Drawdown</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="winRate">68.5%</div>
+                        <div class="stat-label">Win Rate</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <div class="widget memory-vault">
+                <h3>🧠 Memory Vault</h3>
+                <div class="memory-item">
+                    <div class="similarity">92% Match</div>
+                    <div>Similar RSI oversold + sentiment spike in BTC (2024-02-15)</div>
+                    <div class="outcome">Outcome: +3.2% profit</div>
+                </div>
+                <div class="memory-item">
+                    <div class="similarity">87% Match</div>
+                    <div>ETH regime shift with funding rate compression (2024-01-28)</div>
+                    <div class="outcome">Outcome: +1.8% profit</div>
+                </div>
+                <div class="memory-item">
+                    <div class="similarity">83% Match</div>
+                    <div>AAVE volatility expansion + institutional accumulation (2024-03-02)</div>
+                    <div class="outcome">Outcome: -0.7% loss</div>
+                </div>
+            </div>
+
+            <div class="widget market-regime">
+                <h3>🎭 Market Regime</h3>
+                <div class="regime-indicator trending glowing" id="regimeIndicator">
+                    TRENDING
+                </div>
+                <div style="font-size: 0.9rem; color: #888; margin-top: 8px;">
+                    Volatility: 0.023 | Trend Strength: 0.78
+                </div>
+            </div>
+
+            <div class="widget assets-list">
+                <h3>💰 Active Assets</h3>
+                <div class="asset-item">
+                    <span class="asset-symbol">BTC/USDT</span>
+                    <span class="asset-signal signal-long">LONG</span>
+                </div>
+                <div class="asset-item">
+                    <span class="asset-symbol">ETH/USDT</span>
+                    <span class="asset-signal signal-flat">FLAT</span>
+                </div>
+                <div class="asset-item">
+                    <span class="asset-symbol">AAVE/USDT</span>
+                    <span class="asset-signal signal-veto">VETO</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize equity curve chart
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        const equityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: 100}, (_, i) => `Day ${i + 1}`),
+                datasets: [{
+                    label: 'Equity Curve',
+                    data: generateEquityData(),
+                    borderColor: '#00d4ff',
+                    backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#00ff88',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        display: false
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#888',
+                            callback: function(value) {
+                                return '$' + value.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                }
+            }
+        });
+
+        function generateEquityData() {
+            let value = 100000;
+            const data = [value];
+            for (let i = 1; i < 100; i++) {
+                const change = (Math.random() - 0.48) * 0.02; // Slight upward bias
+                value *= (1 + change);
+                data.push(value);
+            }
+            return data;
+        }
+
+        // Simulate real-time updates
+        function updateDashboard() {
+            // Update equity stats
+            const totalReturn = (Math.random() * 6 - 2).toFixed(2);
+            const sharpeRatio = (Math.random() * 2 + 1.5).toFixed(2);
+            const maxDrawdown = -(Math.random() * 3 + 0.5).toFixed(1);
+            const winRate = (Math.random() * 20 + 60).toFixed(1);
+
+            document.getElementById('totalReturn').textContent = `${totalReturn > 0 ? '+' : ''}${totalReturn}%`;
+            document.getElementById('totalReturn').style.color = totalReturn > 0 ? '#00ff88' : '#ff4d4d';
+            document.getElementById('sharpeRatio').textContent = sharpeRatio;
+            document.getElementById('maxDrawdown').textContent = `${maxDrawdown}%`;
+            document.getElementById('winRate').textContent = `${winRate}%`;
+
+            // Add new reasoning line occasionally
+            if (Math.random() < 0.3) {
+                addReasoningLine();
+            }
+
+            // Update regime occasionally
+            if (Math.random() < 0.1) {
+                toggleRegime();
+            }
+
+            // Update asset signals occasionally
+            if (Math.random() < 0.2) {
+                updateAssetSignals();
+            }
+        }
+
+        function addReasoningLine() {
+            const feed = document.getElementById('reasoningFeed');
+            const lines = [
+                "Analyzing funding rate divergence across assets...",
+                "Checking memory vault for similar volatility patterns...",
+                "Evaluating risk-adjusted position sizing...",
+                "Cross-referencing sentiment with on-chain metrics...",
+                "Optimizing entry timing based on historical performance...",
+                "Adjusting conviction score based on regime confidence..."
+            ];
+            const randomLine = lines[Math.floor(Math.random() * lines.length)];
+
+            const now = new Date();
+            const timestamp = now.toTimeString().split(' ')[0];
+
+            const lineElement = document.createElement('div');
+            lineElement.className = 'reasoning-line new';
+            lineElement.innerHTML = `<span class="timestamp">${timestamp}</span><span class="content">${randomLine}</span>`;
+
+            feed.appendChild(lineElement);
+            feed.scrollTop = feed.scrollHeight;
+
+            // Remove 'new' class after animation
+            setTimeout(() => {
+                lineElement.classList.remove('new');
+            }, 3000);
+        }
+
+        function toggleRegime() {
+            const indicator = document.getElementById('regimeIndicator');
+            const isTrending = indicator.classList.contains('trending');
+
+            indicator.classList.toggle('trending');
+            indicator.classList.toggle('ranging');
+            indicator.textContent = isTrending ? 'RANGING' : 'TRENDING';
+            indicator.style.borderColor = isTrending ? '#ffa500' : '#00ff88';
+            indicator.style.color = isTrending ? '#ffa500' : '#00ff88';
+        }
+
+        function updateAssetSignals() {
+            const signals = ['signal-long', 'signal-short', 'signal-flat', 'signal-veto'];
+            const signalElements = document.querySelectorAll('.asset-signal');
+
+            signalElements.forEach(element => {
+                // Remove current signal class
+                signals.forEach(signal => element.classList.remove(signal));
+
+                // Add random new signal
+                const randomSignal = signals[Math.floor(Math.random() * signals.length)];
+                element.classList.add(randomSignal);
+                element.textContent = randomSignal.split('-')[1].toUpperCase();
+            });
+        }
+
+        // Update dashboard every 3 seconds
+        setInterval(updateDashboard, 3000);
+
+        // Initial fade-in animation
+        document.querySelectorAll('.widget').forEach((widget, index) => {
+            setTimeout(() => {
+                widget.classList.add('fade-in');
+            }, index * 100);
+        });
+    </script>
+</body>
+</html>

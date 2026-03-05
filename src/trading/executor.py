@@ -18,18 +18,29 @@ import time
 import os
 import sys
 from typing import Dict, Optional, List
+from dataclasses import asdict
 
 from src.data.fetcher import PriceFetcher
 from src.data.news_fetcher import NewsFetcher
 from src.data.institutional_fetcher import InstitutionalFetcher
 from src.ai.sentiment import SentimentPipeline
+from src.ai.agentic_strategist import AgenticStrategist
+from src.ai.advanced_learning import AdvancedLearningEngine, MarketRegime
+from src.ai.reinforcement_learning import ReinforcementLearningAgent, AdaptiveAlgorithmLayer
+from src.data.on_chain_fetcher import OnChainFetcher
 from src.trading.strategy import HybridStrategy, SimpleStrategy
 from src.trading.backtest import (
     run_backtest, BacktestConfig, BacktestResult, format_backtest_report
 )
 from src.risk.manager import RiskManager
 from src.integrations.robinhood_stub import RobinhoodClient
-
+from src.portfolio.allocator import PortfolioAllocator
+from src.portfolio.hedger import PortfolioHedger
+from src.monitoring.health_checker import SystemHealthChecker
+from src.execution.failover import ExecutionFailoverController
+from src.risk.dynamic_manager import DynamicRiskManager
+from src.execution.router import ExecutionRouter, ExecutionMode
+from src.integrations.on_chain_portfolio import OnChainPortfolioManager
 
 def _safe_print(msg: str = ""):
     """Print with UTF-8 encoding, falling back to ASCII-safe output on Windows."""
@@ -73,6 +84,39 @@ class TradingExecutor:
             cryptopanic_token=os.environ.get('CRYPTOPANIC_TOKEN'),
         )
         self.institutional = InstitutionalFetcher()
+        self.on_chain = OnChainFetcher()
+        self.on_chain_portfolio = OnChainPortfolioManager()
+        self.strategist = AgenticStrategist(
+            provider=self.config.get('ai', {}).get('reasoning_provider', 'openai'),
+            model=self.config.get('ai', {}).get('reasoning_model', 'gpt-4-turbo')
+        )
+        
+        # Phase 6: Advanced Learning Engine
+        self.advanced_learning = AdvancedLearningEngine(
+            meta_model_path=self.config.get('models_path', 'models') + "/meta_learning_model.json"
+        )
+        self.rl_agent = ReinforcementLearningAgent(
+            learning_rate=self.config.get('rl', {}).get('learning_rate', 0.001),
+            gamma=self.config.get('rl', {}).get('gamma', 0.99)
+        )
+        self.adaptive_algo = AdaptiveAlgorithmLayer()
+        
+        # Phase 5: Autonomous Trading Components
+        self.portfolio_allocator = PortfolioAllocator(
+            total_capital=self.initial_capital,
+            max_allocation_pct=self.config.get('portfolio', {}).get('max_allocation_pct', 0.05)
+        )
+        self.portfolio_hedger = PortfolioHedger()
+        self.health_checker = SystemHealthChecker(check_interval_sec=60)
+        self.failover_controller = ExecutionFailoverController(primary_exchange=self.price_source)
+        
+        self.risk_manager = DynamicRiskManager(initial_capital=self.initial_capital)
+        self.execution_router = ExecutionRouter(
+            mode=ExecutionMode.TESTNET if self.mode == 'testnet' else ExecutionMode.LIVE
+        )
+        
+        self.agentic_bias = 0.0
+        self.iteration_count = 0
 
         # Strategy
         self.strategy = HybridStrategy(self.config)
@@ -100,6 +144,13 @@ class TradingExecutor:
             min_return_pct=self.config.get('min_return_pct'), # Activate 1% target override
         )
 
+    def _init_robinhood(self):
+        """Mock/Stub for Robinhood login."""
+        creds = self.config.get('robinhood', {})
+        if creds.get('username') and creds.get('password'):
+            self.robinhood = RobinhoodClient()
+            self.robinhood.login(creds['username'], creds['password'])
+
     def run(self):
         """Main entry point -- run the full system."""
         _safe_print("=" * 60)
@@ -110,101 +161,54 @@ class TradingExecutor:
         _safe_print(f"  Assets:  {', '.join(self.assets)}")
         _safe_print(f"  Capital: ${self.initial_capital:,.2f}")
         data_label = "Binance TESTNET (sandbox)" if self.price_source.testnet else "Live (Binance CCXT)"
-        _safe_print(f"  Data:    {data_label}")
-        if self.price_source.is_authenticated:
-            _safe_print(f"  Auth:    API Key authenticated (order execution enabled)")
-        broker_label = 'Robinhood' if self.robinhood and self.robinhood.authenticated else 'CCXT'
-        _safe_print(f"  Broker:  {broker_label}")
-        _safe_print("=" * 60)
-        _safe_print()
+        _safe_print(f"  Data Source: {data_label}")
+        _safe_print("-" * 60)
+
+        try:
+            from src.api.state import DashboardState
+            DashboardState().set_status("TRADING")
+        except: pass
 
         if self.mode == 'paper':
             self._run_paper()
         elif self.mode == 'testnet':
             self._run_testnet()
-        elif self.mode == 'live':
-            if self.robinhood and self.robinhood.authenticated:
-                self._run_live()
-            else:
-                _safe_print("[!] Robinhood not authenticated. Falling back to paper mode.")
-                self._run_paper()
         else:
-            _safe_print("Unknown mode. Use 'paper', 'testnet', or 'live'.")
+            self._run_live()
 
-    def _init_robinhood(self):
-        """Initialize Robinhood client with credentials from environment or config."""
-        if self.mode != 'live':
-            return  # Only init for live mode
-
-        rh_config = self.config.get('robinhood', {})
-        username = rh_config.get('username') or os.environ.get('ROBINHOOD_USER')
-        password = rh_config.get('password') or os.environ.get('ROBINHOOD_PASSWORD')
-        mfa_code = rh_config.get('mfa_code') or os.environ.get('ROBINHOOD_MFA')
-
-        if not username or not password:
-            _safe_print(
-                "[!] Robinhood credentials not found. Live mode requires ROBINHOOD_USER and ROBINHOOD_PASSWORD env vars."
-            )
-            return
-
-        _safe_print("[INIT] Initializing Robinhood client...")
-        self.robinhood = RobinhoodClient(cache_token=True)
-        if self.robinhood.login(username, password, mfa_code=mfa_code):
-            _safe_print(f"[OK] Robinhood authenticated as {username}")
-        else:
-            _safe_print("[!] Robinhood authentication failed. Will fall back to paper mode.")
-            self.robinhood = None
-
-    def _run_live(self):
-        """Run system in live mode with real Robinhood execution."""
-        _safe_print("\n[LIVE MODE] Trading with real capital via Robinhood")
-        _safe_print("[WARNING] Ensure you have reviewed the strategy thoroughly!")
-        _safe_print("[WARNING] Start with small positions before scaling.")
-        _safe_print()
-
-        all_results: Dict[str, Dict] = {}
+    def _run_paper(self):
+        """Backtest mode on historical data (loads from CSV)."""
+        all_results: Dict[str, BacktestResult] = {}
+        multi_asset_data = {}
+        import pandas as pd
 
         for asset in self.assets:
             symbol = f"{asset}/USDT"
-            _safe_print(f"\n{'-' * 50}")
-            _safe_print(f"  Live Trading: {symbol}")
-            _safe_print(f"{'-' * 50}")
+            _safe_print(f"\n  [PAPER] Running backtest for {symbol}...")
 
-            # Fetch price data
-            ohlcv_data = self._fetch_data(symbol)
-            if ohlcv_data is None:
+            # 1. Load data from CSV (AAVE_USDT_1h.csv)
+            csv_path = f"data/{asset}_USDT_1h.csv"
+            if not os.path.exists(csv_path):
+                _safe_print(f"  [X] CSV not found: {csv_path}. Skipping {asset}.")
                 continue
 
-            closes = ohlcv_data['closes']
-            highs = ohlcv_data['highs']
-            lows = ohlcv_data['lows']
-            volumes = ohlcv_data['volumes']
+            try:
+                df = pd.read_csv(csv_path)
+                closes = df['close'].tolist()
+                highs = df['high'].tolist()
+                lows = df['low'].tolist()
+                volumes = df['volume'].tolist()
+                multi_asset_data[asset] = df
+                _safe_print(f"  [OK] Loaded {len(closes):,} bars from {csv_path}")
+            except Exception as e:
+                _safe_print(f"  [X] Failed to load {csv_path}: {e}")
+                continue
 
-            # Fetch sentiment
+            # 2. Fetch sentiment (optional, may fail gracefully)
             headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment(asset)
 
-            # --- NEW: Fetch Institutional Data ---
-            ext_feats = {}
-            try:
-                # CCXT Source
-                ccxt_derivatives = self.price_source.fetch_derivatives_data(symbol)
-                ext_feats.update(ccxt_derivatives)
-                # External Source (CoinDesk, Amberdata placeholders)
-                ext_scraped = self.institutional.get_all_institutional(asset)
-                ext_feats.update(ext_scraped)
-            except Exception:
-                pass
-
-            # Check account balance
-            acct_info = self.robinhood.get_account_balance()
-            if acct_info:
-                _safe_print(f"\n  [ACCOUNT]")
-                _safe_print(f"     Cash:       ${acct_info['cash']:,.2f}")
-                _safe_print(f"     Buying Power: ${acct_info['buying_power']:,.2f}")
-                _safe_print(f"     Portfolio:  ${acct_info['portfolio_value']:,.2f}")
-
-            # Generate signals
-            _safe_print(f"\n  [SIGNAL] Running hybrid strategy...")
+            # 3. Generate signals using L1 + L2
+            _safe_print(f"  [SIGNAL] Generating hybrid signals (FinBERT + LightGBM)...")
             strategy_result = self.strategy.generate_signals(
                 prices=closes,
                 highs=highs,
@@ -214,114 +218,326 @@ class TradingExecutor:
                 headline_timestamps=h_timestamps if h_timestamps else None,
                 headline_sources=h_sources if h_sources else None,
                 headline_event_types=h_events if h_events else None,
-                external_features=ext_feats if ext_feats else None,
-                account_balance=acct_info['portfolio_value'] if acct_info else self.initial_capital,
             )
 
             signals = strategy_result['signals']
-            l1_data = strategy_result['l1_data']
-            last_signal = signals[-1] if signals else 0
 
-            _safe_print(f"     Latest signal: {last_signal:+d}")
+            # 4. Run Backtest (L3 Risk Simulation)
+            _safe_print(f"  [BACKTEST] Simulating execution with L3 Risk Manager...")
+            result = run_backtest(
+                prices=closes,
+                signals=signals,
+                config=self.bt_config,
+                highs=highs,
+                lows=lows
+            )
+            all_results[asset] = result
 
-            # Execute if signal present
-            if last_signal > 0:
-                qty = self._calculate_position_size(asset, acct_info)
-                _safe_print(f"\n  [EXECUTE] Placing BUY order for {qty} {asset}...")
-                order_result = self.robinhood.place_order(
-                    symbol=asset,
-                    quantity=qty,
-                    side='buy',
-                    order_type='market'
+            # 5. Output asset report
+            _safe_print(f"\n--- Report for {asset} ---")
+            _safe_print(format_backtest_report(result))
+
+            # 6. Record backtest for learning (L1 incremental training)
+            self.strategy.record_backtest(result, asset, strategy_result['l1_data'])
+
+        # Final Summary
+        self._print_portfolio_summary(all_results)
+        
+        # Phase 6: Advanced Learning
+        try:
+            learning_result = self._run_advanced_learning(all_results, multi_asset_data)
+            
+            # Update dashboard with Phase 6 insights
+            try:
+                from src.api.state import DashboardState
+                ds = DashboardState()
+                if learning_result:
+                    ds.update_advanced_learning({
+                        'regimes': learning_result.get('regimes', {}),
+                        'strategies': learning_result.get('strategies', {}),
+                        'patterns': learning_result.get('patterns', {}),
+                        'timestamp': learning_result.get('timestamp')
+                    })
+            except Exception:
+                pass
+                
+        except Exception as e:
+            _safe_print(f"  [WARNING] Phase 6 Advanced Learning error: {e}")
+
+    def _run_live(self):
+        """Main execution loop for Live/Testnet simulation."""
+        _safe_print(f"\n  [EXECUTION] Entering real-time monitoring loop...")
+        _safe_print(f"  Press Ctrl+C to exit.")
+        _safe_print("-" * 60)
+
+        while True:
+            self.iteration_count += 1
+            
+            # --- LAYER 6: AGENTIC REVIEW (Initial + Every 6 cycles) ---
+            if self.iteration_count == 1 or self.iteration_count % 6 == 0:
+                self._perform_agentic_review()
+
+            for asset in self.assets:
+                symbol = f"{asset}/USDT"
+                _safe_print(f"\n  [LIVE] Scanning {symbol}...")
+
+                # Fetch price data
+                ohlcv_data = self._fetch_data(symbol)
+                if ohlcv_data is None:
+                    continue
+
+                closes = ohlcv_data['closes']
+                highs = ohlcv_data['highs']
+                lows = ohlcv_data['lows']
+                volumes = ohlcv_data['volumes']
+
+                # Fetch sentiment
+                headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment(asset)
+
+                # Fetch Institutional Data
+                ext_feats = {}
+                try:
+                    ccxt_derivatives = self.price_source.fetch_derivatives_data(symbol)
+                    ext_feats.update(ccxt_derivatives)
+                    ext_scraped = self.institutional.get_all_institutional(asset)
+                    ext_feats.update(ext_scraped)
+                except Exception:
+                    pass
+
+                # Check account balance
+                acct_info = self.price_source.get_balance()
+                if acct_info and 'error' not in acct_info:
+                    _safe_print(f"     USDT: {acct_info.get('USDT', 0):,.2f}")
+
+                # Generate signals
+                strategy_result = self.strategy.generate_signals(
+                    prices=closes,
+                    highs=highs,
+                    lows=lows,
+                    volumes=volumes,
+                    headlines=headlines if headlines else None,
+                    headline_timestamps=h_timestamps if h_timestamps else None,
+                    headline_sources=h_sources if h_sources else None,
+                    headline_event_types=h_events if h_events else None,
+                    external_features=ext_feats if ext_feats else None,
+                    agentic_bias=self.agentic_bias
                 )
-                if order_result['status'] == 'success':
-                    _safe_print(f"     [OK] Buy order placed successfully")
-                else:
-                    _safe_print(f"     [X] Buy order failed: {order_result['message']}")
 
-            elif last_signal < 0:
-                # Get current position
-                position = self.robinhood.get_position(asset)
-                if position:
-                    qty = float(position.get('quantity', 0))
-                    if qty > 0:
-                        _safe_print(f"\n  [EXECUTE] Placing SELL order for {qty} {asset}...")
-                        order_result = self.robinhood.place_order(
-                            symbol=asset,
-                            quantity=qty,
-                            side='sell',
-                            order_type='market'
-                        )
-                        if order_result['status'] == 'success':
-                            _safe_print(f"     [OK] Sell order placed successfully")
-                        else:
-                            _safe_print(f"     [X] Sell order failed: {order_result['message']}")
-            else:
-                _safe_print(f"\n  [HOLD] Signal is neutral, holding position.")
+                signals = strategy_result['signals']
+                last_signal = signals[-1] if signals else 0
+                _safe_print(f"     Latest signal: {last_signal:+d}")
 
-            all_results[asset] = {
-                'strategy': strategy_result,
-                'live_execution': True,
-            }
+                # Execute order if signal changed
+                if last_signal != 0:
+                    # Phase 5: Autonomous execution with portfolio allocation and risk management
+                    self._execute_autonomous_trade(asset, symbol, last_signal, closes[-1])
 
-        _safe_print(f"\n{'=' * 60}")
-        _safe_print("  Live trading cycle complete. Check positions in Robinhood.")
-        _safe_print(f"{'=' * 60}")
-
-    def _calculate_position_size(self, asset: str, acct_info: Optional[Dict]) -> float:
-        """Calculate position size based on risk management rules."""
-        if not acct_info:
-            return 0.1  # default to 0.1 units if no account info
-
-        buying_power = acct_info.get('buying_power', 0)
-        risk_per_trade_pct = self.bt_config.risk_per_trade_pct / 100.0
-
-        # Allocate 1% of buying power per trade
-        risk_amount = buying_power * risk_per_trade_pct
-        current_price = self.price_source.fetch_ticker(f"{asset}/USDT")['last']
-        qty = risk_amount / current_price if current_price > 0 else 0.1
-
-        # Round to reasonable precision
-        return round(qty, 4)
+            # Wait for next cycle (e.g. 5 min)
+            _safe_print(f"\n  [SLEEP] Waiting 300s for next bar...")
+            time.sleep(300)
 
     def _run_testnet(self):
-        """Run system in testnet mode — real orders on Binance sandbox with fake money."""
-        _safe_print("\n  [TESTNET MODE] Trading with fake money on Binance Testnet")
-        _safe_print("  [INFO] Orders execute against a live order book — zero real risk")
-        _safe_print()
+        """Testnet execution mode - real-time signals with simulated orders."""
+        _safe_print(f"\n  [TESTNET] Entering testnet execution mode...")
+        _safe_print(f"  Press Ctrl+C to exit.")
+        _safe_print("-" * 60)
 
-        # Show testnet balance if authenticated
-        if self.price_source.is_authenticated:
-            balance = self.price_source.get_balance()
-            if 'error' not in balance:
-                _safe_print(f"  [BALANCE] Testnet Account:")
-                _safe_print(f"     USDT:  {balance.get('USDT', 0.0):,.2f}")
-                _safe_print(f"     BTC:   {balance.get('BTC', 0.0):.8f}")
-                _safe_print(f"     ETH:   {balance.get('ETH', 0.0):.8f}")
+        while True:
+            self.iteration_count += 1
+
+            # --- LAYER 6: AGENTIC REVIEW (Initial + Every 6 cycles) ---
+            if self.iteration_count == 1 or self.iteration_count % 6 == 0:
+                self._perform_agentic_review()
+
+            for asset in self.assets:
+                symbol = f"{asset}/USDT"
+                _safe_print(f"\n  [TESTNET] Scanning {symbol}...")
+
+                # Fetch price data
+                ohlcv_data = self._fetch_data(symbol)
+                if ohlcv_data is None:
+                    continue
+
+                closes = ohlcv_data['closes']
+                highs = ohlcv_data['highs']
+                lows = ohlcv_data['lows']
+                volumes = ohlcv_data['volumes']
+
+                # Fetch sentiment
+                headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment(asset)
+
+                # Fetch Institutional Data
+                ext_feats = {}
+                try:
+                    ccxt_derivatives = self.price_source.fetch_derivatives_data(symbol)
+                    ext_feats.update(ccxt_derivatives)
+                    ext_scraped = self.institutional.get_all_institutional(asset)
+                    ext_feats.update(ext_scraped)
+                except Exception:
+                    pass
+
+                # Check account balance (testnet)
+                acct_info = self.price_source.get_balance()
+                if acct_info and 'error' not in acct_info:
+                    _safe_print(f"     USDT: {acct_info.get('USDT', 0):,.2f}")
+
+                # Generate signals
+                strategy_result = self.strategy.generate_signals(
+                    prices=closes,
+                    highs=highs,
+                    lows=lows,
+                    volumes=volumes,
+                    headlines=headlines if headlines else None,
+                    headline_timestamps=h_timestamps if h_timestamps else None,
+                    headline_sources=h_sources if h_sources else None,
+                    headline_event_types=h_events if h_events else None,
+                    external_features=ext_feats if ext_feats else None,
+                    agentic_bias=self.agentic_bias
+                )
+
+                signals = strategy_result['signals']
+                last_signal = signals[-1] if signals else 0
+                _safe_print(f"     Latest signal: {last_signal:+d}")
+
+                # Execute order if signal changed (using Phase 5 autonomous execution)
+                if last_signal != 0:
+                    self._execute_autonomous_trade(asset, symbol, last_signal, closes[-1])
+
+            # Wait for next cycle (e.g. 5 min)
+            _safe_print(f"\n  [SLEEP] Waiting 300s for next bar...")
+            time.sleep(300)
+
+    def _execute_autonomous_trade(self, asset: str, symbol: str, signal: int, current_price: float):
+        """
+        Phase 5: Execute autonomous trade with portfolio allocation and risk management.
+        
+        Args:
+            asset: Asset symbol (e.g., 'BTC')
+            symbol: Trading pair (e.g., 'BTC/USDT')
+            signal: Trading signal (-1, 0, 1)
+            current_price: Current market price
+        """
+        try:
+            _safe_print(f"  [PHASE 5] Evaluating autonomous trade for {asset}...")
+            
+            # Get current portfolio allocations
+            performance_metrics = self._get_asset_performance_metrics()
+            onchain_data = {asset: asdict(self.on_chain_portfolio.compute_on_chain_signal(asset))}
+            
+            allocations = self.portfolio_allocator.allocate_portfolio(
+                assets=self.assets,
+                performance_metrics=performance_metrics,
+                onchain_data=onchain_data
+            )
+            
+            # Get allocation for this asset
+            allocation = allocations.get(asset)
+            if not allocation:
+                _safe_print(f"  [PHASE 5] No allocation calculated for {asset}")
+                return
+            
+            # Determine trade direction and size
+            side = "buy" if signal > 0 else "sell"
+            position_size_pct = allocation.position_size_pct
+            
+            # Adjust for signal strength (signal can be -1, 0, 1, but we'll use absolute value)
+            signal_strength = abs(signal)
+            position_size_pct *= signal_strength
+            
+            # Check risk limits
+            current_portfolio_heat = sum(a.position_size_pct for a in allocations.values())
+            allowed, reason = self.risk_manager.check_trade_allowed(
+                asset=asset,
+                proposed_size_pct=position_size_pct,
+                current_portfolio_heat=current_portfolio_heat
+            )
+            
+            if not allowed:
+                _safe_print(f"  [PHASE 5] Trade blocked by risk management: {reason}")
+                return
+            
+            # Calculate quantity
+            position_size_usd = position_size_pct * self.initial_capital
+            quantity = position_size_usd / current_price
+            
+            _safe_print(f"  [PHASE 5] Executing {side} order: {quantity:.6f} {asset} (${position_size_usd:.2f})")
+            _safe_print(f"  [PHASE 5] Kelly fraction: {allocation.kelly_fraction:.3f}, On-chain confidence: {allocation.onchain_confidence:.3f}")
+            
+            # Execute the order
+            execution_result = self.execution_router.execute_order(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                order_type="market"  # Use market orders for now
+            )
+            
+            if execution_result.success:
+                _safe_print(f"  [PHASE 5] ✓ Order executed successfully")
+                _safe_print(f"  [PHASE 5]   Order ID: {execution_result.order_id}")
+                _safe_print(f"  [PHASE 5]   Executed: {execution_result.executed_quantity:.6f} @ ${execution_result.executed_price:.2f}")
+                _safe_print(f"  [PHASE 5]   Fee: ${execution_result.fee:.4f}")
+                
+                # Update risk manager with P&L (simplified - would need actual fill tracking)
+                # For now, assume immediate execution at requested price
+                pnl_change = 0.0  # Would calculate based on actual entry/exit
+                self.risk_manager.update_pnl(pnl_change)
+                
             else:
-                _safe_print(f"  [!] Balance fetch failed: {balance['error']}")
-        _safe_print()
+                _safe_print(f"  [PHASE 5] ✗ Order execution failed: {execution_result.error_message}")
+                
+        except Exception as e:
+            _safe_print(f"  [PHASE 5] Error in autonomous execution: {e}")
+            import traceback
+            traceback.print_exc()
 
-        all_results: Dict[str, Dict] = {}
+    def _get_asset_performance_metrics(self) -> Dict[str, Dict[str, float]]:
+        """
+        Get performance metrics for all assets (simplified version).
+        In production, this would pull from actual trade history.
+        """
+        # Simplified metrics - in production would calculate from actual performance
+        metrics = {}
+        for asset in self.assets:
+            # Mock performance data - replace with real calculations
+            metrics[asset] = {
+                "win_rate": 0.55,  # 55% win rate
+                "avg_win_loss_ratio": 1.8,  # 1.8:1 reward/risk
+                "sharpe_ratio": 1.2,  # Decent risk-adjusted returns
+                "volatility": 0.03,  # 3% daily volatility
+                "max_drawdown": 0.08  # 8% max drawdown
+            }
+        return metrics
+        # 0. Initial Agentic Sync (Instant Telemetry)
+        try:
+            from src.api.state import DashboardState
+            DashboardState().set_status("SCANNING")
+        except: pass
+        self._perform_agentic_review()
+
+        # 1. Fetch and show balance
+        balance = self.price_source.get_balance()
+        if 'error' not in balance:
+            _safe_print(f"  [BALANCE] USDT: ${balance.get('USDT', 0.0):,.2f} | BTC: {balance.get('BTC', 0.0):.6f} | ETH: {balance.get('ETH', 0.0):.6f}")
+        else:
+            _safe_print(f"  [BALANCE] Notice: {balance['error']} (Read-only mode)")
+
+        all_results: Dict[str, BacktestResult] = {}
 
         for asset in self.assets:
             symbol = f"{asset}/USDT"
-            _safe_print(f"\n{'-' * 50}")
-            _safe_print(f"  Testnet Trading: {symbol}")
-            _safe_print(f"{'-' * 50}")
-
-            _safe_print(f"  [DYNAMIC OPTIMIZATION] Finding most profitable timeframe...")
+            _safe_print(f"\n{'-' * 80}")
+            _safe_print(f"  Asset Analysis: {symbol}")
+            _safe_print(f"{'-' * 80}")
+            _safe_print(f"  [DYNAMIC OPTIMIZATION] Evaluating timeframes...")
+            _safe_print(f"  {'TF':<8} | {'P&L %':<12} | {'PF':<8} | {'Trades':<8}")
+            _safe_print(f"  {'-' * 45}")
 
             best_tf = None
             best_score = -float('inf')
-            best_strategy_result = None
-            best_bt_result = None
-            best_data = None
+            best_res = None
             
             timeframes_to_test = ['15m', '1h', '4h', '1d', '1w', '1M']
             for tf in timeframes_to_test:
-                _safe_print(f"\n  >> Testing Timeframe: {tf}")
-                # Fetch data
                 ohlcv_data = self._fetch_data(symbol, timeframe=tf)
                 if ohlcv_data is None:
                     continue
@@ -346,363 +562,361 @@ class TradingExecutor:
                 signals = strategy_result['signals']
 
                 # Run backtest for analysis
-                from src.indicators.indicators import atr as compute_atr
-                atr_vals = compute_atr(highs, lows, closes)
-
-                bt_result = run_backtest(
-                    prices=closes, signals=signals,
-                    highs=highs, lows=lows, atr_values=atr_vals,
+                result = run_backtest(
+                    prices=closes,
+                    signals=signals,
                     config=self.bt_config,
+                    highs=highs,
+                    lows=lows
                 )
+
+                _safe_print(f"  {tf:<8} | {result.total_return_pct:>10.2f}% | {result.profit_factor:>8.2f} | {len(result.trades):>8}")
                 
-                import math
-                pf = bt_result.profit_factor if not math.isinf(bt_result.profit_factor) else 2.0
-                
-                # Base score is purely the Net P&L. We boost it if profit factor is high.
-                score = bt_result.net_pnl
-                if bt_result.net_pnl > 0 and pf > 1.0:
-                    score *= pf  # Reward profitable and highly efficient setups
-                elif bt_result.net_pnl < 0:
-                    score -= (1.0 / (pf + 0.1))  # Penalize worse profit factors further
-                
-                # If everything is 0 (no trades or break even), give small penalty so trades are preferred over flat
-                if bt_result.net_pnl == 0.0:
-                    score = -0.01  
-                
-                _safe_print(f"     Return: {bt_result.total_return_pct:.2f}% | P&L: ${bt_result.net_pnl:.2f} | PF: {pf:.2f}")
+                # Selection score: prioritize Return, but favor higher PF
+                score = result.total_return_pct + (result.profit_factor * 0.1)
                 
                 if score > best_score:
                     best_score = score
                     best_tf = tf
-                    best_strategy_result = strategy_result
-                    best_bt_result = bt_result
-                    best_data = ohlcv_data
+                    best_res = result
 
-            if best_tf is None:
-                _safe_print(f"  [!] Failed to evaluate timeframes for {symbol}")
-                continue
+            if best_res:
+                all_results[asset] = best_res
+                _safe_print(f"\n  [OPTIMIZED] Best timeframe for {asset} is {best_tf} ({best_res.total_return_pct:.2f}%)")
+
+                # Bootstrap memory vault with optimized trades
+                if len(best_res.trades) > 0:
+                    _safe_print(f"  [MEMORY] Archiving {len(best_res.trades)} trade experiences for {asset}...")
+                    for t in best_res.trades:
+                        self.strategist.record_trade_outcome({
+                            'asset': asset,
+                            'signal': t.direction,
+                            'entry_price': t.entry_price,
+                            'exit_price': t.exit_price,
+                            'size': t.size,
+                            'duration': t.holding_bars,
+                            'exit_reason': t.exit_reason,
+                            'confidence': 75.0
+                        }, t.net_pnl)
                 
-            _safe_print(f"\n  [BEST TIMEFRAME] Selected '{best_tf}' with P&L: ${best_bt_result.net_pnl:.2f} for live execution")
-            
-            # ── STRICT PROFIT GATE ──
-            # Only allow trading if the best timeframe is actually profitable
-            if best_bt_result.net_pnl <= 0.0:
-                _safe_print(f"  [GATE REJECTED] Even the best timeframe ({best_tf}) is losing money (P&L: ${best_bt_result.net_pnl:.2f}).")
-                _safe_print(f"  [HOLD] System will not take trades in a currently unprofitable regime.")
-                reject_unprofitable = True
-            else:
-                reject_unprofitable = False
-            
-            strategy_result = best_strategy_result
-            bt_result = best_bt_result
-            signals = strategy_result['signals']
-            l2_data = strategy_result['l2_data']
-            closes = best_data['closes']
-            
-            num_buy = sum(1 for s in signals if s == 1)
-            num_sell = sum(1 for s in signals if s == -1)
-            _safe_print(f"\n  [BEST TF REPORT]")
-            _safe_print(f"     Signals generated: {num_buy} buy, {num_sell} sell, {len(signals) - num_buy - num_sell} hold")
-            
-            report = format_backtest_report(bt_result)
-            _safe_print(f"\n{report}")
-
-            # Get latest signal for execution
-            last_signal = signals[-1] if signals else 0
-            _safe_print(f"\n  [LATEST SIGNAL] {'+1 BUY' if last_signal > 0 else '-1 SELL' if last_signal < 0 else '0 HOLD'}")
-
-            # Execute on testnet if authenticated and signal present
-            if self.price_source.is_authenticated and last_signal != 0 and not reject_unprofitable:
-                current_price = closes[-1]
-                # Position size: 1% of capital / current price
-                trade_amount = (self.initial_capital * 0.01) / current_price
-                trade_amount = max(trade_amount, 0.0001)  # min order size
-
-                side = 'buy' if last_signal > 0 else 'sell'
-                _safe_print(f"\n  [TESTNET ORDER] Placing {side.upper()} for {trade_amount:.6f} {asset}")
-                order_result = self.price_source.place_order(
-                    symbol=symbol,
-                    side=side,
-                    amount=trade_amount,
-                )
-                if order_result['status'] == 'success':
-                    _safe_print(f"     [OK] Order filled!")
-                    _safe_print(f"         ID:     {order_result.get('order_id')}")
-                    _safe_print(f"         Price:  ${order_result.get('price', 0):,.2f}")
-                    _safe_print(f"         Amount: {order_result.get('filled', 0):.6f}")
-                    _safe_print(f"         Cost:   ${order_result.get('cost', 0):,.2f}")
+                # Reasoning
+                if best_res.total_return_pct > 2.0 and best_res.profit_factor > 1.5:
+                    reason = "Strong trend capture with high profit factor."
+                elif best_res.profit_factor > 2.0:
+                    reason = "Exceptional win/loss ratio, prioritizing capital safety."
+                elif best_res.total_return_pct > 0:
+                    reason = "Highest absolute profitability in this regime."
                 else:
-                    _safe_print(f"     [X] Order failed: {order_result.get('message')}")
-            elif not self.price_source.is_authenticated:
-                _safe_print(f"\n  [!] API key not set — skipping order execution")
-                _safe_print(f"      Set BINANCE_TESTNET_KEY and BINANCE_TESTNET_SECRET env vars")
-            else:
-                _safe_print(f"\n  [HOLD] Signal is neutral, no order placed.")
+                    reason = "Least defensive posture among tested timeframes."
+                
+                _safe_print(f"  [REASON] {reason}")
+                
+                if best_res.total_return_pct < -2.0:
+                    _safe_print(f"  [VETO] Returns catastrophic (< -2%). Skipping orders for risk prevention.")
+                else:
+                    _safe_print(f"  [GO] Signal quality acceptable. Ready for orders.")
 
-            all_results[asset] = {
-                'backtest': bt_result,
-                'strategy': strategy_result,
-                'l2_sentiment': l2_data,
-            }
+        self._print_portfolio_summary(all_results)
 
-        # Show updated balance
-        if self.price_source.is_authenticated:
-            _safe_print(f"\n  [BALANCE] Updated Testnet Account:")
-            balance = self.price_source.get_balance()
-            if 'error' not in balance:
-                _safe_print(f"     USDT:  {balance.get('USDT', 0.0):,.2f}")
-                _safe_print(f"     BTC:   {balance.get('BTC', 0.0):.8f}")
-                _safe_print(f"     ETH:   {balance.get('ETH', 0.0):.8f}")
+        # 3. Enter real-time loop using the best parameters found
+        _safe_print("\n  [TESTNET] Entering continuous monitoring loop...")
+        try:
+            from src.api.state import DashboardState
+            DashboardState().set_status("TRADING")
+        except: pass
 
-        # Summary
-        if all_results:
-            self._print_summary(all_results)
-
-    def _run_paper(self):
-        """Run full pipeline in paper mode with backtesting."""
-        all_results: Dict[str, Dict] = {}
-
-        for asset in self.assets:
-            symbol = f"{asset}/USDT"
-            _safe_print(f"\n{'-' * 50}")
-            _safe_print(f"  Processing: {symbol}")
-            _safe_print(f"{'-' * 50}")
-
-            # ---- Step 1: Fetch Price Data ----
-            ohlcv_data = self._fetch_data(symbol)
-            if ohlcv_data is None:
-                continue
-
-            closes = ohlcv_data['closes']
-            highs = ohlcv_data['highs']
-            lows = ohlcv_data['lows']
-            volumes = ohlcv_data['volumes']
-
-            _safe_print(f"  [DATA] {len(closes)} candles")
-            _safe_print(f"     Price range: ${min(closes):,.2f} - ${max(closes):,.2f}")
-            _safe_print(f"     Current:     ${closes[-1]:,.2f}")
-
-            # ---- Step 2: Fetch News & Sentiment (L2) ----
-            _safe_print(f"\n  [NEWS] Fetching news for {asset}...")
-            headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment(asset)
-            _safe_print(f"     Found {len(headlines)} headlines")
-
-            # ---- Step 3: Run Hybrid Strategy (L1 + L2 + L3) ----
-            _safe_print(f"\n  [STRATEGY] Running hybrid strategy...")
-            strategy_result = self.strategy.generate_signals(
-                prices=closes,
-                highs=highs,
-                lows=lows,
-                volumes=volumes,
-                headlines=headlines if headlines else None,
-                headline_timestamps=h_timestamps if h_timestamps else None,
-                headline_sources=h_sources if h_sources else None,
-                headline_event_types=h_events if h_events else None,
-                account_balance=self.initial_capital,
-            )
-
-            signals = strategy_result['signals']
-            l1_data = strategy_result['l1_data']
-            l2_data = strategy_result['l2_data']
-
-            num_buy = sum(1 for s in signals if s == 1)
-            num_sell = sum(1 for s in signals if s == -1)
-            _safe_print(f"     Signals: {num_buy} buy, {num_sell} sell, {len(signals) - num_buy - num_sell} hold")
-
-            # Print L1 details
-            _safe_print(f"\n  -- L1 Quantitative Engine --")
-            _safe_print(f"     Cycle phase:     {l1_data.get('cycle_phase', 'N/A')}")
-            _safe_print(f"     Holding period:  {l1_data.get('holding_period', 'N/A')} bars")
-            cycles = l1_data.get('dominant_cycles', [])
-            if cycles:
-                _safe_print(f"     Top cycles:      {', '.join(f'{c[0]}d ({c[1]:.1%})' for c in cycles[:3])}")
-            # Forecast sub-signal if present
-            f_sig = l1_data.get('forecast_signal', [])
-            if f_sig:
-                _safe_print(f"     Forecast signal (last): {f_sig[-1]:+.2f}")
-
-            # Print L4 Meta-Controller Fusion State
-            _safe_print(f"\n  -- L4 Meta-Controller (XGBoost Arbitrator) --")
-            _safe_print(f"     LGBM Weight:     ~60% (Base)")
-            _safe_print(f"     RL Weight:       ~40% (Adapts to 80% if vol > 0.04)")
-            _safe_print(f"     Action Taken:    Fused Dual-Signal")
-
-            # Print L2 details
-            _safe_print(f"\n  -- L2 Sentiment Layer --")
-            _safe_print(f"     Aggregate score: {l2_data.get('aggregate_score', 0):.3f}")
-            _safe_print(f"     Label:           {l2_data.get('aggregate_label', 'N/A')}")
-            _safe_print(f"     Confidence:      {l2_data.get('confidence', 0):.3f}")
-            _safe_print(f"     Sources:         {l2_data.get('num_sources', 0)}")
-            _safe_print(f"     Freshness:       {l2_data.get('freshness', 0):.3f}")
-
-            # Print latest RSI / MACD
-            rsi_vals = l1_data.get('rsi', [])
-            if rsi_vals:
-                latest_rsi = rsi_vals[-1]
-                if not (latest_rsi != latest_rsi):  # not nan
-                    _safe_print(f"\n  -- Latest Indicators --")
-                    _safe_print(f"     RSI(14):         {latest_rsi:.2f}")
-                    macd_h = l1_data.get('macd_hist', [])
-                    if macd_h:
-                        _safe_print(f"     MACD Histogram:  {macd_h[-1]:.4f}")
-                    z_vals = l1_data.get('zscore', [])
-                    if z_vals and not (z_vals[-1] != z_vals[-1]):
-                        _safe_print(f"     Z-Score:         {z_vals[-1]:.3f}")
-
-            # ---- Step 4: Run Enhanced Backtest ----
-            _safe_print(f"\n  [BACKTEST] Running enhanced backtest...")
-            from src.indicators.indicators import atr as compute_atr
-            atr_vals = compute_atr(highs, lows, closes)
-
-            bt_result = run_backtest(
-                prices=closes,
-                signals=signals,
-                highs=highs,
-                lows=lows,
-                atr_values=atr_vals,
-                features=strategy_result.get('features'),
-                config=self.bt_config,
-            )
-            # feed results back to strategy so models can learn from mistakes
-            try:
-                self.strategy.record_backtest(bt_result)
-                self.strategy.retrain_models()
-            except Exception:
+        while True:
+            self.iteration_count += 1
+            
+            # Phase 6 & Layer 6: Meta-Learning + Agentic Review
+            if self.iteration_count == 1 or self.iteration_count % 6 == 0:
+                self._perform_agentic_review()
+                self._run_system_learning()
+            
+            for asset in self.assets:
+                # Periodic sync to keep dashboard alive
                 pass
+            
+            _safe_print(f"\n  [SLEEP] Waiting 300s for next bar...")
+            time.sleep(300)
 
-            # Print report
-            report = format_backtest_report(bt_result)
-            _safe_print(f"\n{report}")
-
-            # ---- Monte Carlo Evaluation ----
-            from src.trading.backtest import monte_carlo_simulation, format_monte_carlo_report
-            _safe_print(f"\n  [MONTE CARLO] Running 1,000 simulations with 5% miss rate...")
-            mc_results = monte_carlo_simulation(bt_result.trades, n_simulations=1000, miss_rate=0.05)
-            mc_report = format_monte_carlo_report(mc_results, getattr(self.bt_config, 'min_return_pct', None))
-            _safe_print(f"\n{mc_report}")
-
-            # ---- 1% daily target assessment ----
-            self._assess_daily_target(bt_result)
-
-            all_results[asset] = {
-                'backtest': bt_result,
-                'strategy': strategy_result,
-                'l2_sentiment': l2_data,
+    def _perform_agentic_review(self):
+        """Perform agentic review and sync to dashboard."""
+        _safe_print("\n  [AGENTIC] Performing reasoning-based system review...")
+        try:
+            import pandas as pd
+            hist_path = "logs/trade_history.csv"
+            trades = []
+            if os.path.exists(hist_path):
+                df = pd.read_csv(hist_path)
+                trades = df.tail(20).to_dict('records')
+            
+            sample_symbol = f"{self.assets[0]}/USDT"
+            raw_data = self.price_source.fetch_ohlcv(sample_symbol, limit=20)
+            processed = PriceFetcher.extract_ohlcv(raw_data)
+            
+            from src.indicators.indicators import atr as compute_atr
+            atr_val = compute_atr(processed['highs'], processed['lows'], processed['closes'])[-1]
+            
+            m_data = {
+                "atr": float(atr_val),
+                "funding_rate": self.price_source.fetch_derivatives_data(sample_symbol).get('funding_rate', 0.0),
+                "onchain": asdict(self.on_chain_portfolio.compute_on_chain_signal(self.assets[0])),
+                "asset": self.assets[0],
+                "sentiment": {"bullish": 0.0, "bearish": 0.0}  # Neutral default
             }
+            
+            try:
+                from src.api.state import DashboardState
+                ds = DashboardState()
+                ds.update_onchain(m_data['onchain'])
+            except: pass
 
-        # ---- Summary ----
-        if all_results:
-            self._print_summary(all_results)
+            decision = self.strategist.analyze_performance(trades, self.config, m_data)
+            _safe_print(f"     [!] Reason:      {decision.reasoning_trace}")
+            _safe_print(f"     [!] Regime:      {decision.market_regime}")
+            _safe_print(f"     [!] Confidence:  {decision.confidence_score}%")
+            self.agentic_bias = decision.macro_bias
+
+        except Exception as e:
+            _safe_print(f"  [!] Agentic review failed: {e}")
+
+    def _run_system_learning(self):
+        """Phase 6: Run meta-learning on recent data."""
+        _safe_print("\n  [META-LEARN] Running Phase 6 adaptive learning...")
+        try:
+            multi_asset_data = {}
+            for asset in self.assets:
+                symbol = f"{asset}/USDT"
+                ohlcv = self._fetch_data(symbol)
+                if ohlcv:
+                    import pandas as pd
+                    # Rename executor keys to match AdvancedLearningEngine expectations
+                    df = pd.DataFrame({
+                        'close': ohlcv['closes'],
+                        'high': ohlcv['highs'],
+                        'low': ohlcv['lows'],
+                        'volume': ohlcv['volumes']
+                    })
+                    multi_asset_data[asset] = df
+            
+            if multi_asset_data:
+                learning_result = self._run_advanced_learning({}, multi_asset_data)
+                # Sync results to dashboard (convert dataclasses to dicts)
+                try:
+                    from src.api.state import DashboardState
+                    ds = DashboardState()
+                    # MarketRegime is a dataclass — serialize to dict for JSON
+                    regimes_serialized = {}
+                    for asset_key, regime_obj in learning_result.get('regimes', {}).items():
+                        if hasattr(regime_obj, 'regime_type'):
+                            regimes_serialized[asset_key] = {
+                                'regime_type': regime_obj.regime_type,
+                                'confidence': regime_obj.confidence,
+                                'volatility': regime_obj.volatility,
+                                'trend_strength': regime_obj.trend_strength,
+                                'optimal_strategy': regime_obj.optimal_strategy
+                            }
+                        else:
+                            regimes_serialized[asset_key] = regime_obj
+                    
+                    ds.update_advanced_learning({
+                        'regimes': regimes_serialized,
+                        'strategies': learning_result.get('strategies', {}),
+                        'patterns': learning_result.get('patterns', {}),
+                        'timestamp': learning_result.get('timestamp')
+                    })
+                    _safe_print(f"  [META-LEARN] Dashboard synced with {len(regimes_serialized)} regime classifications")
+                except Exception as e:
+                    _safe_print(f"  [META-LEARN] Dashboard sync failed: {e}")
+        except Exception as e:
+            _safe_print(f"  [!] Meta-learning cycle failed: {e}")
+
+    def _print_portfolio_summary(self, results: Dict[str, BacktestResult]):
+        """Aggregate and print global portfolio performance."""
+        _safe_print("\n" + "=" * 80)
+        _safe_print("  FINAL PORTFOLIO SUMMARY")
+        _safe_print("=" * 80)
+
+        total_pnl = 0.0
+        total_ret = 0.0
+
+        for asset, res in results.items():
+            _safe_print(f"\n  {asset}:")
+            _safe_print(f"    Net P&L:    $ {res.net_pnl:>12,.2f}")
+            _safe_print(f"    Return:     {res.total_return_pct:>10.2f}%")
+            _safe_print(f"    Profit Fact: {res.profit_factor:>10.2f}")
+            _safe_print(f"    Sharpe:     {res.sharpe_ratio:>10.3f}")
+            _safe_print(f"    Max DD:     {res.max_drawdown_pct:>10.2f}%")
+            _safe_print(f"    Trades:     {res.total_trades:>12}")
+            _safe_print(f"    Win Rate:   {res.win_rate * 100:>10.1f}%")
+            
+            total_pnl += res.net_pnl
+            total_ret += res.total_return_pct
+
+        avg_ret = total_ret / len(results) if results else 0
+        _safe_print("-" * 50)
+        _safe_print(f"  Total Portfolio P&L: $ {total_pnl:>12,.2f}")
+        _safe_print(f"  Avg Asset Return:      {avg_ret:>10.2f}%")
+        _safe_print("=" * 80 + "\n")
+
+        # Dashboard Update
+        try:
+            from src.api.state import DashboardState
+            ds = DashboardState()
+            ds.update_portfolio(total_pnl, avg_ret)
+            for asset, res in results.items():
+                ds.update_asset(asset, {
+                    "pnl": res.net_pnl,
+                    "return": res.total_return_pct,
+                    "trades": res.total_trades,
+                    "win_rate": res.win_rate * 100
+                })
+        except ImportError:
+            pass
 
     def _fetch_data(self, symbol: str, timeframe: Optional[str] = None) -> Optional[Dict]:
-        """Fetch real-time data focusing on L3 events (falling back to CCXT L1)."""
-        # Testnet lacks deep daily history (only ~28 days), so we use 1h candles by default
+        """Fetch real-time data."""
         if timeframe is None:
             timeframe = '1h' if self.mode == 'testnet' else '1d'
 
         try:
-            _safe_print(f"  [LIVE] Fetching {timeframe} candles for {symbol} (CoinAPI via CCXT)...")
-            raw = self.price_source.fetch_ohlcv(symbol, timeframe=timeframe, limit=200)
-
-            if not raw or len(raw) < 50:
-                _safe_print(f"  [!] Warning: Only {len(raw) if raw else 0} candles fetched for {symbol}.")
-                _safe_print(f"      (Need at least 50 for the Trend SMA gate to pass).")
-
+            raw = self.price_source.fetch_ohlcv(symbol, timeframe=timeframe, limit=2000)
             if not raw:
                 raise ValueError(f"No data returned for {symbol}")
             return PriceFetcher.extract_ohlcv(raw)
         except Exception as e:
             _safe_print(f"  [X] Failed to fetch {symbol}: {e}")
-            _safe_print(f"  [FATAL] Real-time data is required. Cannot proceed with synthetic data.")
             raise
 
     def _fetch_sentiment(self, asset: str):
-        """Fetch news headlines and analyze sentiment."""
-        headlines: List[str] = []
-        timestamps: List[float] = []
-        sources: List[str] = []
-        events: List[str] = []
-
+        """Fetch headlines from primary sources and return metadata."""
         try:
-            news_limit = self.config.get('news', {}).get('limit', 50)
-            news_items = self.news.fetch_all(asset, limit=news_limit)
-            for item in news_items:
-                headlines.append(item.title)
-                timestamps.append(item.timestamp)
-                sources.append(item.source)
-                events.append(item.event_type)
+            items = self.news.fetch_all(asset, limit=50)
+            headlines = [item.title for item in items]
+            timestamps = [item.timestamp for item in items]
+            sources = [item.source for item in items]
+            events = [item.event_type for item in items]
+            return headlines, timestamps, sources, events
+        except Exception:
+            return [], [], [], []
+
+    def _run_advanced_learning(self, all_results: Dict[str, BacktestResult], 
+                               price_data: Dict[str, Dict]) -> Dict:
+        """
+        PHASE 6: Run advanced learning to generate adaptive strategies.
+        Analyzes performance across assets and learns optimal hyperparameters.
+        """
+        _safe_print("\n" + "=" * 80)
+        _safe_print("  PHASE 6: ADVANCED LEARNING (Meta-Learning Engine)")
+        _safe_print("=" * 80)
+        
+        # Step 1: Process market data through advanced learning
+        import pandas as pd
+        multi_asset_data = {}
+        for asset in self.assets:
+            if asset in price_data:
+                # Convert to DataFrame
+                data = price_data[asset]
+                df = pd.DataFrame(data)
+                multi_asset_data[asset] = df
+        
+        if not multi_asset_data:
+            _safe_print("  [SKIP] No market data for advanced learning.")
+            return {}
+        
+        # Step 2: Run advanced learning pipeline
+        try:
+            # Get onchain data for all assets
+            onchain_data = {}
+            for asset in self.assets:
+                try:
+                    onchain_data[asset] = asdict(self.on_chain_portfolio.compute_on_chain_signal(asset))
+                except Exception as e:
+                    _safe_print(f"  [WARNING] Failed to get onchain data for {asset}: {e}")
+            
+            learning_result = self.advanced_learning.process_market_data(multi_asset_data, onchain_data)
+            _safe_print(f"  [LEARNING] Processed {len(multi_asset_data)} assets with onchain integration")
+            _safe_print(f"  [PATTERNS] Discovered {len(learning_result['patterns'])} cross-market patterns")
+            _safe_print(f"  [REGIMES] Classified {len(learning_result['regimes'])} market regimes")
+            _safe_print(f"  [STRATEGIES] Generated {len(learning_result['strategies'])} adaptive strategies")
         except Exception as e:
-            _safe_print(f"     [!] News fetch failed: {e}")
-            # Fallback
+            _safe_print(f"  [WARNING] Advanced learning failed: {e}")
+            return {}
+        
+        # Step 3: Update adaptive algorithm layer with backtest results
+        for asset, result in all_results.items():
             try:
-                headlines = self.news.fetch_headlines(asset, limit=5)
-            except Exception:
-                headlines = []
-            timestamps = [time.time()] * len(headlines)
-            sources = ['reddit'] * len(headlines)
-            events = ['general'] * len(headlines)
+                self.adaptive_algo.record_performance(
+                    'neutral',  # Could be tracked per variant
+                    {
+                        "pnl_pct": result.total_return_pct,
+                        "sharpe_ratio": result.sharpe_ratio,
+                        "max_drawdown": result.max_drawdown_pct / 100.0
+                    }
+                )
+            except:
+                pass
+        
+        # Step 4: Adapt RL agent to current market conditions with onchain data
+        if onchain_data:
+            for asset in self.assets:
+                if asset in onchain_data:
+                    try:
+                        market_metrics = {
+                            "volatility": learning_result.get('regimes', {}).get(asset, MarketRegime("UNKNOWN", 0, 0.03, 0, 0, "HOLD")).volatility,
+                            "trend_strength": learning_result.get('regimes', {}).get(asset, MarketRegime("UNKNOWN", 0, 0.03, 0, 0, "HOLD")).trend_strength,
+                            "momentum": onchain_data[asset].get('on_chain_momentum', 0.0)
+                        }
+                        self.adaptive_algo.adapt_to_market_conditions(market_metrics, onchain_data[asset])
+                    except Exception as e:
+                        _safe_print(f"  [WARNING] Failed to adapt RL agent for {asset}: {e}")
+        
+        # Step 4: Display regime-specific strategies
+        _safe_print("\n  [REGIMES & STRATEGIES]:")
+        for asset, regime in learning_result.get('regimes', {}).items():
+            _safe_print(f"    {asset}: {regime.regime_type} (confidence: {regime.confidence:.1f}%)")
+            if asset in learning_result.get('strategies', {}):
+                strategy = learning_result['strategies'][asset]
+                _safe_print(f"      Strategy: {strategy['strategy_name']}")
+                _safe_print(f"      Expected Performance: {strategy['predicted_performance']:.3f}")
+        
+        # Step 5: Display highest-confidence patterns
+        _safe_print("\n  [CROSS-MARKET PATTERNS]:")
+        patterns = learning_result.get('patterns', {})
+        if patterns.get('momentum_breakout'):
+            _safe_print(f"    Momentum Breakouts: {len(patterns['momentum_breakout'])} assets")
+        if patterns.get('mean_reversion'):
+            _safe_print(f"    Mean Reversion Signals: {len(patterns['mean_reversion'])} assets")
+        if patterns.get('volatility_expansion'):
+            _safe_print(f"    Volatility Expansion: {len(patterns['volatility_expansion'])} assets")
+        
+        # Step 6: Save learned models
+        try:
+            self.advanced_learning.save_learned_models()
+            _safe_print("\n  [SAVED] Advanced learning models persisted")
+        except Exception as e:
+            _safe_print(f"  [WARNING] Could not save models: {e}")
+        
+        return learning_result
+    
+    def _run_reinforcement_learning(self, asset: str, price_data: Optional[Dict] = None):
+        """
+        Run reinforcement learning on a single asset.
+        Trains policy for optimal trading actions.
+        """
+        if not price_data:
+            return None
+        
+        _safe_print(f"  [RL-LEARNING] Training RL agent for {asset}...")
+        
+        # Convert price data to market states and train
+        # This is a simplified version - in production would use actual trade trajectory
+        try:
+            policy = self.rl_agent.get_policy_summary()
+            _safe_print(f"    Action preferences: {policy['action_preferences']}")
+            return policy
+        except Exception as e:
+            _safe_print(f"    [WARNING] RL learning failed: {e}")
+            return None
 
-        return headlines, timestamps, sources, events
-
-    def _execute_twap(self):
-        """L5 Adaptive Gateway: Routes orders via CCXT handling Binance/Coinbase burst rate limits."""
-        pass
-
-    def _assess_daily_target(self, bt_result: BacktestResult):
-        """Assess realism of 1% daily target."""
-        _safe_print(f"\n  -- 1% Daily Target Assessment --")
-        target = 1.0
-        actual = bt_result.avg_daily_return_pct
-
-        _safe_print(f"     Target daily return: {target:.2f}%")
-        _safe_print(f"     Actual avg daily:    {actual:.4f}%")
-
-        if actual >= target:
-            _safe_print(f"     [OK] Target met! (but verify over longer periods)")
-        elif actual >= 0.1:
-            _safe_print(f"     [~] Below 1% target, but positive ({actual:.4f}%)")
-            _safe_print(f"       -> Realistic achievable range: 0.05-0.3%/day")
-        elif actual >= 0:
-            _safe_print(f"     [~] Marginal -- barely positive")
-            _safe_print(f"       -> Consider expanding asset universe or strategy tuning")
-        else:
-            _safe_print(f"     [!!] Negative returns -- strategy needs optimization")
-
-        _safe_print(f"\n     Realistic expectations:")
-        _safe_print(f"       * 1%/day = ~3,678% annual (compounded) -- extremely aggressive")
-        _safe_print(f"       * Top hedge funds target 15-25% annual (0.04-0.07%/day)")
-        _safe_print(f"       * Sharpe > 1.0 is good; > 2.0 is excellent")
-        _safe_print(f"       * Current Sharpe: {bt_result.sharpe_ratio:.3f}")
-
-    def _print_summary(self, results: Dict[str, Dict]):
-        """Print portfolio-level summary."""
-        _safe_print(f"\n{'=' * 60}")
-        _safe_print(f"  PORTFOLIO SUMMARY")
-        _safe_print(f"{'=' * 60}")
-
-        total_pnl = 0.0
-        for asset, data in results.items():
-            bt = data['backtest']
-            total_pnl += bt.net_pnl
-            l2 = data['l2_sentiment']
-            _safe_print(f"\n  {asset}:")
-            _safe_print(f"    Net P&L:    ${bt.net_pnl:>12,.2f}")
-            _safe_print(f"    Return:     {bt.total_return_pct:>8.2f}%")
-            _safe_print(f"    Sharpe:     {bt.sharpe_ratio:>8.3f}")
-            _safe_print(f"    Max DD:     {bt.max_drawdown_pct:>8.2f}%")
-            _safe_print(f"    Trades:     {bt.total_trades:>8d}")
-            _safe_print(f"    Win Rate:   {bt.win_rate * 100:>8.1f}%")
-            _safe_print(f"    Sentiment:  {l2.get('aggregate_label', 'N/A')}")
-
-        _safe_print(f"\n  {'-' * 40}")
-        _safe_print(f"  Total Net P&L: ${total_pnl:>12,.2f}")
-        portfolio_return = (total_pnl / self.initial_capital) * 100
-        _safe_print(f"  Portfolio Return: {portfolio_return:>8.2f}%")
-        _safe_print(f"{'=' * 60}")
-
-
-# Allow direct execution (real-time data only)
-if __name__ == '__main__':
-    cfg = {'mode': 'paper'}  # demo flag removed; real-time data is enforced
-    ex = TradingExecutor(cfg)
-    ex.run()

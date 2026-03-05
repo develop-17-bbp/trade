@@ -25,6 +25,18 @@ lightgbm
 pytorch-forecasting
 fingpt
 
+# Layer 6+: Agentic & Fine-Tuning
+peft
+bitsandbytes
+accelerate
+trl
+llama-cpp-python
+pydantic>=2.0
+chromadb
+
+# Dashboard
+flask
+
 # Testing
 pytest
 
