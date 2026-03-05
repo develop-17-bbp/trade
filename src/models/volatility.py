@@ -49,8 +49,17 @@ def simple_returns(prices: List[float]) -> List[float]:
 
 
 # ---------------------------------------------------------------------------
-# EWMA Volatility  (RiskMetrics style)
+# EWMA Volatility Class
 # ---------------------------------------------------------------------------
+class EWMAVolatility:
+    """Wrapper class for Exponentially Weighted Moving Average volatility."""
+    def __init__(self, lam: float = 0.94):
+        self.lam = lam
+
+    def compute(self, prices: List[float]) -> List[float]:
+        return ewma_volatility(prices, self.lam)
+
+
 def ewma_volatility(prices: List[float], lam: float = 0.94) -> List[float]:
     """
     Exponentially Weighted Moving Average volatility.

@@ -86,6 +86,8 @@ class LightGBMClassifier:
         'rsi_x_sentiment', 'trend_x_sentiment', 'vol_x_momentum',
         'adx_strength', 'trend_vol_ratio', 'sentiment_decay',
         'vol_adj_momentum', 'sentiment_x_volume',
+        # Institutional features (3) - defaults to 0 if not provided
+        'funding_rate', 'open_interest', 'oi_change',
     ]
 
     CONFIDENCE_THRESHOLD = 0.65  # minimum to pass signal to risk engine
@@ -117,6 +119,7 @@ class LightGBMClassifier:
     def load_model(self, model_path: str) -> bool:
         """
         Load a trained LightGBM model from file.
+        Tries optimized version first if available.
         
         Args:
             model_path: path to saved LightGBM model file (e.g., 'models/lgbm_aave.txt')
@@ -127,13 +130,24 @@ class LightGBMClassifier:
         try:
             import lightgbm as lgb
             import os
+            
+            # Try optimized version first
+            optimized_path = model_path.replace('.txt', '_optimized.txt')
+            if os.path.exists(optimized_path):
+                self._lgb_model = lgb.Booster(model_file=optimized_path)
+                self._fitted = True
+                self._lgb_available = True
+                print(f"Loaded optimized model from {optimized_path}")
+                return True
+            
+            # Fall back to original
             if os.path.exists(model_path):
                 self._lgb_model = lgb.Booster(model_file=model_path)
                 self._fitted = True
                 self._lgb_available = True
                 return True
-            else:
-                return False
+            
+            return False
         except Exception:
             return False
 
@@ -504,7 +518,7 @@ class LightGBMClassifier:
             import numpy as np
             X = np.array([[f.get(name, 0.0) for name in self.FEATURE_NAMES]
                           for f in features])
-            proba = self._lgb_model.predict(X)
+            proba = self._lgb_model.predict(X, predict_disable_shape_check=True)
             results = []
             for p in proba:
                 # p = [prob_short, prob_flat, prob_long]

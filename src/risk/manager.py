@@ -82,9 +82,10 @@ class RiskManager:
                  atr_tp_mult: float = 3.0,
                  vol_gate_mult: float = 2.0,
                  max_trades_per_day: int = 20,
-                 cooldown_after_loss: float = 30.0):
+                 cooldown_after_loss: float = 30.0,
+                 **kwargs):
         # Position limits
-        self.max_position_pct = max_position_pct
+        self.max_position_pct = kwargs.get('max_position_size_pct', max_position_pct)
         self.max_portfolio_pct = max_portfolio_pct
 
         # Loss controls
@@ -113,6 +114,17 @@ class RiskManager:
         self._halt_reason = ''
         self._last_loss_time = 0.0
         self._veto_active = False
+
+    def is_trade_safe(self, current_price: float, direction: int, 
+                        atr_value: float, account_balance: float) -> Tuple[bool, str]:
+        """Wrapper for evaluate_trade to match HybridStrategy interface."""
+        res = self.evaluate_trade(
+            asset="PROXY", direction=direction, proposed_size=1.0, 
+            account_balance=account_balance, current_price=current_price,
+            atr_value=atr_value
+        )
+        is_safe = res['action'] in [RiskAction.ALLOW, RiskAction.REDUCE]
+        return is_safe, res['reason']
 
     # -------------------------------------------------------------------
     # Core risk check — called before every trade

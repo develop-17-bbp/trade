@@ -23,7 +23,8 @@ class MetaController:
                   rl_action: int, rl_prob: float, 
                   features: Dict[str, float],
                   finbert_score: float,
-                  asset_name: str = 'BTC') -> Tuple[int, float, float]:
+                  asset_name: str = 'BTC',
+                  agentic_bias: float = 0.0) -> Tuple[int, float, float]:
         """
         Returns: 
            final_direction (-1, 0, 1)
@@ -89,6 +90,12 @@ class MetaController:
             adj = self.bias if final_class > 0 else -self.bias
             final_conf = float(min(1.0, max(0.0, float(final_conf) + float(adj))))
             
+        # --- NEW: Agentic Macro Bias ---
+        if agentic_bias and final_class != 0:
+            # Shift confidence based on LLM Macro Analysis
+            agent_adj = agentic_bias if final_class > 0 else -agentic_bias
+            final_conf = float(min(1.0, max(0.0, float(final_conf) + float(agent_adj))))
+
         # --- NEW ACCURACY STEP: KELLY SIZING ---
         from src.models.meta_sizer import MetaSizer
         ms = MetaSizer()
