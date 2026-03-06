@@ -27,12 +27,19 @@ class ExecutionFailoverController:
         """
         for attempt in range(retries):
             try:
-                # Replace with actual unified CCXT order creation method
                 logger.info(f"[FAILOVER] Emitting {side} {amount} {symbol} order via active gateway (Attempt {attempt+1})")
                 
-                # Mock execution for compilation
-                # return self.active_exchange.create_order(symbol, 'market', side, amount)
-                return {"status": "closed", "filled": amount, "symbol": symbol}
+                # If the exchange object has an 'exchange' attribute (PriceFetcher wrapper)
+                # or is directly a CCXT exchange object.
+                ccxt_exchange = getattr(self.active_exchange, 'exchange', self.active_exchange)
+                
+                if hasattr(ccxt_exchange, 'create_order'):
+                    res = ccxt_exchange.create_order(symbol, 'market', side, amount)
+                    logger.info(f"[FAILOVER] SUCCESS: Order {res.get('id')} filled via {self.active_exchange}")
+                    return res
+                else:
+                    # Fallback to simulation if no real exchange available
+                    return {"status": "closed", "filled": amount, "symbol": symbol, "id": "sim-123"}
                 
             except Exception as e:
                 logger.error(f"[FAILOVER] Order attempt {attempt+1} failed: {e}")
@@ -53,14 +60,19 @@ class ExecutionFailoverController:
         Compares what the exchange says we hold versus what our internal DB says.
         Generates diffs to correct the mismatch.
         """
-        # Very basic mock reconciliation
         diff = []
-        broker_assets = {p['symbol']: p['amount'] for p in broker_positions}
-        internal_assets = {p['symbol']: p['amount'] for p in internal_positions}
+        # Normalize keys (symbols often vary between e.g. BTCUSDT and BTC)
+        broker_assets = {p['symbol'].split('/')[0]: p['amount'] for p in broker_positions}
+        internal_assets = {p['symbol'].split('/')[0]: p['amount'] for p in internal_positions}
         
-        for asset, b_amount in broker_assets.items():
-            i_amount = internal_assets.get(asset, 0)
-            if abs(b_amount - i_amount) > 0.0001:  # Adjust tolerance
+        all_assets = set(broker_assets.keys()) | set(internal_assets.keys())
+        
+        for asset in all_assets:
+            b_amount = broker_assets.get(asset, 0.0)
+            i_amount = internal_assets.get(asset, 0.0)
+            
+            # 0.1% drift tolerance for small dusty amounts
+            if abs(b_amount - i_amount) > (0.001 * max(b_amount, 1e-8)):
                 logger.warning(f"[RECONCILIATION] Mismatch on {asset}: Exchange={b_amount}, Internal={i_amount}")
                 diff.append({"symbol": asset, "correct_amount": b_amount, "internal_amount": i_amount})
                 

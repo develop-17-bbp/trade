@@ -35,7 +35,8 @@ class TradeRecord:
     """Record of a single trade for P&L tracking."""
     __slots__ = ('asset', 'direction', 'entry_price', 'exit_price',
                  'size', 'pnl', 'timestamp', 'holding_bars',
-                 'stop_loss', 'take_profit', 'trailing_stop_active', 'peak_price')
+                 'stop_loss', 'take_profit', 'trailing_stop_active', 'peak_price',
+                 'partial_tp_hit', 'breakeven_active')
 
     def __init__(self, asset: str, direction: int, entry_price: float,
                  size: float, timestamp: float = 0.0):
@@ -51,6 +52,8 @@ class TradeRecord:
         self.take_profit = 0.0
         self.trailing_stop_active = False
         self.peak_price = entry_price
+        self.partial_tp_hit = False
+        self.breakeven_active = False
 
     def close(self, exit_price: float):
         self.exit_price = exit_price
@@ -337,11 +340,20 @@ class RiskManager:
 
         record = self.open_positions[asset]
         
-        # --- Update Trailing Stop ---
-        # If price moves in our direction, move the stop up (for long) or down (for short)
-        trail_dist = abs(record.entry_price - record.stop_loss) * 0.8 # Trail at 80% of initial stop distance
+        # --- Update Trailing Stop & Check Partial TP ---
+        trail_dist = abs(record.entry_price - record.stop_loss) * 0.8
         
         if record.direction > 0: # Long
+            # Partial Take Profit Check (at 50% of the distance to full TP)
+            if not record.partial_tp_hit and record.take_profit > record.entry_price:
+                partial_price = record.entry_price + (record.take_profit - record.entry_price) * 0.5
+                if current_price >= partial_price:
+                    record.partial_tp_hit = True
+                    # Move stop to breakeven
+                    record.stop_loss = max(record.stop_loss, record.entry_price * 1.001)
+                    record.breakeven_active = True
+                    return 'partial_tp_long'
+
             if current_price > record.peak_price:
                 record.peak_price = current_price
                 new_stop = current_price - trail_dist
@@ -352,7 +364,18 @@ class RiskManager:
                 return 'stop_loss'
             if record.take_profit > 0 and current_price >= record.take_profit:
                 return 'take_profit'
+                
         else: # Short
+            # Partial Take Profit Check
+            if not record.partial_tp_hit and record.take_profit < record.entry_price:
+                partial_price = record.entry_price - (record.entry_price - record.take_profit) * 0.5
+                if current_price <= partial_price:
+                    record.partial_tp_hit = True
+                    # Move stop to breakeven
+                    record.stop_loss = min(record.stop_loss, record.entry_price * 0.999)
+                    record.breakeven_active = True
+                    return 'partial_tp_short'
+
             if current_price < record.peak_price:
                 record.peak_price = current_price
                 new_stop = current_price + trail_dist
@@ -365,6 +388,20 @@ class RiskManager:
                 return 'take_profit'
 
         return None
+        
+    def check_all_stops(self, prices: Dict[str, float]) -> List[Dict[str, Any]]:
+        """Utility to check all open positions against current prices."""
+        results = []
+        for asset, price in prices.items():
+            trigger = self.check_stops(asset, price)
+            if trigger:
+                results.append({
+                    'asset': asset,
+                    'price': price,
+                    'trigger': trigger,
+                    'record': self.open_positions[asset]
+                })
+        return results
 
     # -------------------------------------------------------------------
     # Position size check (backward-compatible)

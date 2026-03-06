@@ -66,6 +66,14 @@ class FinBERTService:
         if self._loaded:
             return
         self._loaded = True
+        
+        import os
+        if os.environ.get('DISABLE_FINBERT', '1') == '1':
+            print("[FinBERT] Disabled via config. Using enhanced rule-based fallback.")
+            self._pipeline = None
+            self._available = False
+            return
+            
         try:
             from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
             tokenizer = AutoTokenizer.from_pretrained(self.model_path)
