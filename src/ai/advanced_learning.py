@@ -615,8 +615,81 @@ class MetaLearningEngine:
             self.hyperparameter_effectiveness = defaultdict(list, meta_model.get("hyperparameter_effectiveness", {}))
             self.market_to_strategy_map = meta_model.get("market_to_strategy_map", {})
             logger.info(f"[META-LEARNING] Model loaded from {filepath}")
-        except FileNotFoundError:
-            logger.warning(f"[META-LEARNING] No saved model found at {filepath}")
+        except Exception as e:
+            logger.error(f"Error loading meta-model from {filepath}: {e}")
+
+class MarketAnomalyDetector:
+    """
+    Detects extreme market outliers (Black Swans, Flash Crashes, Liquidity Sweeps)
+    using statistical velocity and volume profile deviations.
+    """
+    def __init__(self, deviation_threshold: float = 3.5):
+        self.deviation_threshold = deviation_threshold
+        
+    def detect_anomalies(self, close: np.ndarray, volume: np.ndarray) -> Dict[str, Any]:
+        """Returns anomaly detection flags and scores."""
+        if len(close) < 50:
+            return {"is_anomaly": False, "type": "NONE", "severity": 0.0}
+            
+        recent_returns = np.diff(close[-50:]) / close[-50:-1]
+        mean_ret = np.mean(recent_returns[:-1])
+        std_ret = np.std(recent_returns[:-1])
+        
+        # Z-score of the most recent bar's return
+        if std_ret > 0:
+            z_score = abs(recent_returns[-1] - mean_ret) / std_ret
+        else:
+            z_score = 0.0
+            
+        avg_vol = np.mean(volume[-50:-1])
+        vol_spike = volume[-1] / avg_vol if avg_vol > 0 else 1.0
+        
+        is_anomaly = z_score > self.deviation_threshold and vol_spike > 2.0
+        
+        anomaly_type = "NONE"
+        if is_anomaly:
+            if recent_returns[-1] < 0:
+                anomaly_type = "FLASH_CRASH"
+            else:
+                anomaly_type = "LIQUIDITY_SWEEP_UP"
+                
+        return {
+            "is_anomaly": is_anomaly,
+            "type": anomaly_type,
+            "severity": round(z_score * vol_spike, 2),
+            "z_score": round(z_score, 2),
+            "vol_spike": round(vol_spike, 2)
+        }
+
+class AlphaDecayTracker:
+    """
+    Tracks the 'half-life' of a generated strategy's edge.
+    If a strategy's expected EV diverges too far from actual Out-of-Sample PnL,
+    it forces a deprecation of that strategy hyperparameter set.
+    """
+    def __init__(self, decay_threshold: float = 0.6):
+        self.decay_threshold = decay_threshold
+        self.strategy_performance_history = defaultdict(list)
+        
+    def update_edge_retention(self, strategy_id: str, predicted_perf: float, actual_out_of_sample: float) -> float:
+        """Calculate the Remaining Edge Ratio (0.0 to 1.0)"""
+        if predicted_perf <= 0:
+            return 1.0
+            
+        ratio = max(0.0, actual_out_of_sample / predicted_perf)
+        self.strategy_performance_history[strategy_id].append(ratio)
+        
+        # EWMA of edge retention
+        history = self.strategy_performance_history[strategy_id][-10:]
+        weights = np.exp(np.linspace(-1., 0., len(history)))
+        weights /= weights.sum()
+        
+        edge_remaining = np.sum(np.array(history) * weights)
+        return float(edge_remaining)
+        
+    def requires_retirement(self, edge_remaining: float) -> bool:
+        """Returns True if the strategy's alpha has decayed past the acceptable threshold."""
+        return edge_remaining < self.decay_threshold
 
 
 class AdvancedLearningEngine:
@@ -630,13 +703,16 @@ class AdvancedLearningEngine:
         self.regime_classifier = MarketRegimeClassifier()
         self.strategy_generator = AdaptiveStrategyGenerator()
         self.meta_learner = MetaLearningEngine()
+        self.anomaly_detector = MarketAnomalyDetector()
+        self.alpha_tracker = AlphaDecayTracker()
         
-        # Try to load existing meta-model
-        self.meta_learner.load_meta_model(meta_model_path)
+        self.active_strategies: Dict[str, GeneratedStrategy] = {}
+        self.performance_tracker: Dict[str, List[Dict]] = defaultdict(list)
+        self.edge_retention: Dict[str, float] = {}
         self.meta_model_path = meta_model_path
         
-        self.active_strategies = {}  # asset -> GeneratedStrategy
-        self.performance_tracker = defaultdict(list)
+        # Try loading existing meta-model
+        self.meta_learner.load_meta_model(self.meta_model_path)
         
     def process_market_data(self, multi_asset_data: Dict[str, pd.DataFrame], 
                            onchain_data: Optional[Dict[str, Dict]] = None) -> Dict[str, Any]:
@@ -694,10 +770,30 @@ class AdvancedLearningEngine:
             predicted_perf = self.meta_learner.predict_strategy_performance(asset, strategy)
             strategy.performance_score = predicted_perf
             
+            # Step 6: Anomaly Detection (Flash Crashes / Liquidity Sweeps)
+            anomaly_data = self.anomaly_detector.detect_anomalies(close, volume)
+            if anomaly_data["is_anomaly"]:
+                logger.warning(f"[ANOMALY DETECTED] {asset}: {anomaly_data['type']} (Severity: {anomaly_data['severity']})")
+                
+                # Override regime and strategy dynamically due to Black Swan
+                regime = MarketRegime("ANOMALY", 1.0, 1.0, 0.0, 5, "LIQUIDITY_SHOCK_DEFENSE")
+                strategy = self.strategy_generator._generate_hold_strategy(regime)
+                result["regimes"][asset] = regime
+
+            # Calculate remaining Edge (Alpha Decay)
+            edge_ratio = self.edge_retention.get(asset, 1.0)
+            if edge_ratio < self.alpha_tracker.decay_threshold:
+                logger.warning(f"[ALPHA DECAY] {asset} strategy completely degraded (Edge: {edge_ratio:.2f}). Forcing mutation.")
+                strategy = self.strategy_generator.generate_strategy_for_regime(regime, perf_dict)
+                self.edge_retention[asset] = 1.0  # Reset for the new strategy
+            
             self.active_strategies[asset] = strategy
             result["strategies"][asset] = {
                 "strategy_name": strategy.name,
+                "strategy_id": strategy.strategy_id,
                 "predicted_performance": predicted_perf,
+                "anomaly_flags": anomaly_data,
+                "alpha_edge_remaining": edge_ratio,
                 "entry_signals": strategy.entry_signals,
                 "position_size": strategy.position_sizing
             }
@@ -706,21 +802,29 @@ class AdvancedLearningEngine:
     
     def update_with_backtest_results(self, asset: str, backtest_results: Dict[str, float]):
         """
-        Update meta-learning with actual backtest results.
+        Update meta-learning with actual backtest results and track Alpha Decay.
         Self-optimization loop.
         """
         self.performance_tracker[asset].append(backtest_results)
         
         if asset in self.active_strategies:
-            strategy = self.active_strategies[asset]
+            strat = self.active_strategies[asset]
+            perf = backtest_results.get("total_return_pct", 0)
             
-            # Optimize strategy based on results
-            optimized = self.strategy_generator.optimize_strategy_hyperparameters(
-                strategy, backtest_results
+            # 1. Update Alpha Decay Tracker
+            edge = self.alpha_tracker.update_edge_retention(strat.strategy_id, strat.performance_score, perf)
+            self.edge_retention[asset] = edge
+            
+            # 2. Meta-Learning Update
+            self.meta_learner.learn_optimal_hyperparameters(
+                asset=asset,
+                tested_strategies=[strat],
+                results=[backtest_results]
             )
-            self.active_strategies[asset] = optimized
             
-            logger.info(f"[ADVANCED-LEARNING] Updated strategy for {asset} based on backtest")
+            # 3. Strategy self-modification if performance is poor but not fully decayed
+            if perf < -0.01 and edge > self.alpha_tracker.decay_threshold:
+                self.strategy_generator.optimize_strategy_hyperparameters(strat, backtest_results)
     
     def discover_new_trading_patterns(self, asset: str, lookback_days: int = 365) -> Dict[str, Any]:
         """

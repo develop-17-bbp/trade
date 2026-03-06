@@ -42,3 +42,8 @@ pytest
 
 # Wavelet support for indicators
 PyWavelets>=1.3.0
+
+# Institutional Infrastructure v6.5
+msgpack
+kafka-python
+clickhouse-connect

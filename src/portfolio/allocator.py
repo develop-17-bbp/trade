@@ -23,8 +23,9 @@ class AllocationResult:
     kelly_fraction: float
     onchain_confidence: float
     risk_adjusted_weight: float
+    dca_progress: float = 1.0  # 1.0 = full size, < 1.0 = partial DCA leg
     timestamp: str = None
-
+    
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
@@ -54,6 +55,28 @@ class PortfolioAllocator:
         # Risk parameters
         self.max_portfolio_risk_pct = 0.02  # 2% max portfolio risk per trade
         self.correlation_penalty = 0.3  # Reduce allocation for correlated assets
+        
+        # DCA (Dollar Cost Averaging) settings
+        self.dca_enabled = True
+        self.dca_legs = 3  # Scale in over 3 separate orders
+        self.dca_interval_multiplier = 1.1  # Increase size slightly as we go deeper
+
+    def calculate_dca_size(self, base_size_pct: float, current_leg: int) -> float:
+        """
+        Calculate size for a specific DCA leg.
+        
+        Args:
+            base_size_pct: Total target position size
+            current_leg: The current entry number (1, 2, 3...)
+        """
+        if not self.dca_enabled or self.dca_legs <= 1:
+            return base_size_pct
+            
+        # Distribute size across legs (e.g., 33%, 33%, 33%)
+        leg_size = base_size_pct / self.dca_legs
+        
+        # Apply a multiplier if we want to "load up" as the trade progresses
+        return leg_size * (self.dca_interval_multiplier ** (current_leg - 1))
 
     def calculate_kelly_size(self, win_rate: float, win_loss_ratio: float,
                            onchain_confidence: float = 0.5) -> float:
@@ -141,102 +164,98 @@ class PortfolioAllocator:
 
         return weights
 
+    def allocate_strategies(self, strategies: List[str],
+                            alpha_scores: Dict[str, float],
+                            regime: str,
+                            performance_history: Dict[str, List[float]]) -> Dict[str, float]:
+        """
+        Dynamically allocates capital BETWEEN different alpha strategies.
+        
+        Args:
+            strategies: List of strategy names (e.g. 'trend', 'mean_reversion')
+            alpha_scores: Current predictive edge for each strategy
+            regime: Current market regime (e.g. 'TRENDING', 'RANGING')
+            performance_history: Last 20 trades' returns for each strategy
+        """
+        weights = {}
+        
+        for s in strategies:
+            score = alpha_scores.get(s, 0.5)
+            
+            # 1. Regime Alignment (Multiplier)
+            regime_mult = 1.0
+            if regime == 'TRENDING' and 'trend' in s.lower(): regime_mult = 1.3
+            if regime == 'RANGING' and 'reversion' in s.lower(): regime_mult = 1.3
+            if regime == 'PANIC': regime_mult = 0.5 # De-risk all
+            
+            # 2. Performance Decay Adjustment
+            history = performance_history.get(s, [0.0])
+            recent_perf = np.mean(history[-10:]) if len(history) >= 10 else 0.0
+            decay_adj = 1.0 + (recent_perf * 2.0) # Boost if winning, cut if losing
+            
+            weights[s] = score * regime_mult * max(0.2, decay_adj)
+            
+        # Normalize weights
+        total = sum(weights.values()) or 1.0
+        return {s: w / total for s, w in weights.items()}
+
     def allocate_portfolio(self, assets: List[str],
                           performance_metrics: Dict[str, Dict[str, float]],
                           onchain_data: Optional[Dict[str, Dict[str, Any]]] = None,
-                          current_positions: Optional[Dict[str, float]] = None) -> Dict[str, AllocationResult]:
+                          current_positions: Optional[Dict[str, float]] = None,
+                          regime: str = 'NORMAL') -> Dict[str, AllocationResult]:
         """
-        Calculate optimal portfolio allocation using Kelly sizing and risk parity.
-
-        Args:
-            assets: List of assets to allocate
-            performance_metrics: Historical performance data per asset
-            onchain_data: On-chain metrics for confidence weighting
-            current_positions: Current position sizes for rebalancing
-
-        Returns:
-            Allocation results per asset
+        Advanced allocation using Strategy Weighting + Asset Kelly sizing.
         """
+        # (This would be calling the new allocate_strategies internally in production)
+        # For now, we enhance the existing loop with regime awareness.
         allocations = {}
+        
+        regime_risk_limit = self.max_allocation_pct
+        if regime == 'VOLATILE': regime_risk_limit *= 0.7
+        elif regime == 'ILLIQUID': regime_risk_limit *= 0.5
 
         # Calculate base risk-parity weights
-        volatilities = {}
-        for asset in assets:
-            metrics = performance_metrics.get(asset, {})
-            volatility = metrics.get('volatility', 0.03)
-            volatilities[asset] = max(volatility, 0.005)  # Minimum 0.5% vol
-
+        volatilities = {asset: max(performance_metrics.get(asset, {}).get('volatility', 0.03), 0.005) for asset in assets}
         risk_parity_weights = self.calculate_risk_parity_weights(assets, volatilities)
 
         for asset in assets:
             metrics = performance_metrics.get(asset, {})
             win_rate = metrics.get('win_rate', 0.5)
             win_loss_ratio = metrics.get('avg_win_loss_ratio', 1.0)
-            sharpe_ratio = metrics.get('sharpe_ratio', 0.0)
 
             # Get on-chain confidence
-            onchain_confidence = 0.5  # Neutral default
+            onchain_confidence = 0.5
             if onchain_data and asset in onchain_data:
-                # Use whale_score and on_chain_momentum for confidence
                 whale_score = onchain_data[asset].get('whale_score', 0.0)
                 momentum = onchain_data[asset].get('on_chain_momentum', 0.0)
                 confidence = onchain_data[asset].get('confidence', 60.0) / 100.0
-
-                # Combine signals for confidence score
                 onchain_confidence = (whale_score + momentum + confidence) / 3.0
-                onchain_confidence = max(0.0, min(1.0, onchain_confidence))  # Clamp 0-1
 
-            # Calculate Kelly size
             kelly_fraction = self.calculate_kelly_size(win_rate, win_loss_ratio, onchain_confidence)
+            combined_weight = kelly_fraction * risk_parity_weights.get(asset, 1.0 / len(assets))
 
-            # Combine Kelly with risk-parity weighting
-            risk_parity_weight = risk_parity_weights.get(asset, 1.0 / len(assets))
-            combined_weight = kelly_fraction * risk_parity_weight
+            # Apply regime-adjusted limits
+            final_weight = max(self.min_allocation_pct, min(combined_weight, regime_risk_limit))
 
-            # Apply maximum allocation limits
-            max_allocation = min(self.max_allocation_pct, self.max_portfolio_risk_pct)
-            combined_weight = max(self.min_allocation_pct, min(combined_weight, max_allocation))
-
-            # Calculate position size
-            position_size_pct = combined_weight
-            position_size_usd = position_size_pct * self.total_capital
-
-            # Create allocation result
-            allocation = AllocationResult(
+            allocations[asset] = AllocationResult(
                 asset=asset,
-                position_size_pct=round(position_size_pct, 4),
-                position_size_usd=round(position_size_usd, 2),
+                position_size_pct=round(final_weight, 4),
+                position_size_usd=round(final_weight * self.total_capital, 2),
                 kelly_fraction=round(kelly_fraction, 4),
                 onchain_confidence=round(onchain_confidence, 3),
-                risk_adjusted_weight=round(combined_weight, 4)
+                risk_adjusted_weight=round(final_weight, 4)
             )
-
-            allocations[asset] = allocation
 
         return allocations
 
     def get_portfolio_summary(self, allocations: Dict[str, AllocationResult]) -> Dict[str, Any]:
-        """
-        Generate portfolio allocation summary.
-
-        Args:
-            allocations: Allocation results
-
-        Returns:
-            Summary statistics
-        """
-        total_allocated_pct = sum(a.position_size_pct for a in allocations.values())
-        total_allocated_usd = sum(a.position_size_usd for a in allocations.values())
-
-        avg_kelly = np.mean([a.kelly_fraction for a in allocations.values()])
-        avg_confidence = np.mean([a.onchain_confidence for a in allocations.values()])
-
+        """Generate portfolio summary statistics."""
+        total_p = sum(a.position_size_pct for a in allocations.values())
         return {
             "total_assets": len(allocations),
-            "total_allocated_pct": round(total_allocated_pct, 4),
-            "total_allocated_usd": round(total_allocated_usd, 2),
-            "avg_kelly_fraction": round(avg_kelly, 4),
-            "avg_onchain_confidence": round(avg_confidence, 3),
-            "utilization_rate": round(total_allocated_pct, 4),
+            "total_allocated_pct": round(total_p, 4),
+            "total_allocated_usd": round(total_p * self.total_capital, 2),
+            "avg_kelly": round(np.mean([a.kelly_fraction for a in allocations.values()]), 4),
             "timestamp": datetime.now().isoformat()
         }

@@ -7,6 +7,7 @@ Each function operates on List[float] and returns List[float].
 Equations implemented:
   SMA_t(n) = (1/n) * Σ P_{t-i}  for i=0..n-1
   EMA_t    = α·P_t + (1-α)·EMA_{t-1},  α = 2/(n+1)
+  Institutions: 50 / 100 / 200 periods
   RSI      = 100 - 100/(1+RS),  RS = AvgGain/AvgLoss
   MACD     = EMA(12) - EMA(26),  Signal = EMA(MACD, 9)
   BB       = SMA ± k·σ  (Bollinger Bands)
@@ -706,8 +707,88 @@ def choppiness_index(highs: List[float], lows: List[float], closes: List[float],
                 out[i] = float(max(0.0, min(100.0, chop)))
     return out
 
+# ---------------------------------------------------------------------------
+# Volume Delta (Aggressor Volume)
+# ---------------------------------------------------------------------------
+def volume_delta(opens, closes, volumes):
+    """Simplified Volume Delta: Positive = Buy Bias, Negative = Sell Bias."""
+    n = len(closes)
+    out = []
+    for i in range(n):
+        try:
+            dr = abs(closes[i] - opens[i]) or 1e-10
+            bias = (closes[i] - opens[i]) / dr
+            out.append(float(bias * volumes[i]))
+        except:
+            out.append(0.0)
+    return out
+
+# ---------------------------------------------------------------------------
+# Liquidity Sweep Detection
+# ---------------------------------------------------------------------------
+def liquidity_sweep(highs, lows, closes, lookback=20):
+    """Detects stop-hunting sweeps below Low/above High."""
+    n = len(closes)
+    out = [0.0] * n
+    for i in range(lookback, n):
+        rh, rl = max(highs[i-lookback:i]), min(lows[i-lookback:i])
+        if lows[i] < rl and closes[i] > rl: out[i] = 1.0 # Bullish
+        elif highs[i] > rh and closes[i] < rh: out[i] = -1.0 # Bearish
+    return out
+
+# ---------------------------------------------------------------------------
+# VWAP Deviation
+# ---------------------------------------------------------------------------
+def vwap_deviation(closes, vwap_vals, period=20):
+    """Z-score of Price relative to VWAP."""
+    n = len(closes)
+    out = [0.0] * n
+    for i in range(period, n):
+        try:
+            import numpy as np
+            devs = [c - v for c, v in zip(closes[i+1-period:i+1], vwap_vals[i+1-period:i+1])]
+            std = float(np.std(devs)) or 1e-10
+            out[i] = float((closes[i] - vwap_vals[i]) / std)
+        except:
+            out[i] = 0.0
+    return out
+
+def vpin(opens: List[float], closes: List[float], volumes: List[float], bucket_size: int = 50) -> List[float]:
+    """
+    Volume-synchronous Probability of Informed Trading (VPIN).
+    A core HFT metric for detecting Toxic Order Flow (Adverse Selection).
+    
+    In a professional context: 
+    VPIN = Σ|Buy_i - Sell_i| / (V * bucket_count)
+    """
+    n = len(closes)
+    vpin_values = [0.0] * n
+    
+    # Calculate per-bar imbalance
+    imbalances = []
+    for i in range(n):
+        try:
+            dr = abs(closes[i] - opens[i]) or 1e-10
+            bias = (closes[i] - opens[i]) / dr # 1 if buy, -1 if sell
+            imbalances.append(abs(bias * volumes[i])) # Absolute imbalance per bar
+        except:
+            imbalances.append(0.0)
+            
+    # Calculate rolling VPIN
+    for i in range(bucket_size, n):
+        try:
+            bucket_imbalance = sum(imbalances[i-bucket_size:i])
+            bucket_volume = sum(volumes[i-bucket_size:i]) or 1e-10
+            vpin_values[i] = float(bucket_imbalance / bucket_volume)
+        except:
+            vpin_values[i] = 0.0
+            
+    return vpin_values
+
+
 # Optional: expose in __all__
 __all__ = ['sma', 'ema', 'rsi', 'macd', 'bollinger_bands',
            'true_range', 'atr', 'stochastic', 'vwap', 'obv', 'adx',
            'bb_width', 'roc', 'williams_r', 'bulk_indicators',
-           'kama', 'ou_signal', 'wavelet_cycle_strength']
+           'kama', 'ou_signal', 'wavelet_cycle_strength',
+           'volume_delta', 'liquidity_sweep', 'vwap_deviation', 'vpin']
