@@ -113,3 +113,7 @@ class TradingJournal:
             "total_pnl": sum(t["pnl"] for t in closed_trades),
             "avg_return": sum(t.get("return_pct", 0) for t in closed_trades) / len(closed_trades)
         }
+
+    def get_recent_trades(self, limit: int = 5) -> List[Dict]:
+        """Get the most recent trades for context in LLM analysis."""
+        return self.trades[-limit:] if self.trades else []

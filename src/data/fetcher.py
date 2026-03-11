@@ -41,7 +41,11 @@ class PriceFetcher:
             # Build exchange config
             exchange_config: Dict = {
                 'enableRateLimit': True,
-                'options': {'defaultType': 'spot'},
+                'options': {
+                    'defaultType': 'spot',
+                    'adjustForTimeDifference': True,
+                    'recvWindow': 60000,
+                },
             }
 
             # Add API credentials if provided
@@ -169,7 +173,7 @@ class PriceFetcher:
     def get_balance(self) -> Dict:
         """Fetch account balances. Requires API key authentication."""
         if not self.is_authenticated:
-            return {'error': 'Not authenticated. Set API key/secret.'}
+            return {'error': 'Not authenticated. Set API key/secret.', 'read_only': True}
         try:
             balance = self.exchange.fetch_balance()
             # Extract relevant info
@@ -183,6 +187,14 @@ class PriceFetcher:
                 'ETH': free.get('ETH', 0.0),
             }
         except Exception as e:
+            error_msg = str(e)
+            # Check if this is an auth error
+            if '2008' in error_msg or 'Invalid Api-Key' in error_msg or 'Unauthorized' in error_msg:
+                return {
+                    'error': f'Invalid or expired API credentials. {error_msg}',
+                    'invalid_credentials': True,
+                    'read_only': True,
+                }
             return {'error': str(e)}
 
     def place_order(self, symbol: str, side: str, amount: float,

@@ -12,6 +12,7 @@ Each source returns normalized headlines with timestamps and source metadata.
 
 import time
 import requests
+import os
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 
@@ -89,29 +90,61 @@ class NewsFetcher:
         self.reddit_api = 'https://www.reddit.com/r/{}/hot.json'
         self._cache: Dict[str, tuple] = {}  # source -> (timestamp, items)
         self._cache_ttl = 120  # seconds
+        
+        # Log which news sources are enabled
+        print("\n[NewsAPI] Source Configuration:")
+        print(f"  - NewsAPI:      {'ENABLED' if self.newsapi_key else 'DISABLED (no key in NEWSAPI_KEY)'}")
+        print(f"  - CryptoPanic:  {'ENABLED' if self.cryptopanic_token else 'DISABLED (no token in CRYPTOPANIC_TOKEN)'}")
+        print(f"  - Reddit:       ALWAYS ENABLED (no key needed)")
+        print(f"  - CoinGecko:    FALLBACK ONLY (used if other sources return <50 items)")
+        print(f"  - Priority: NewsAPI -> CryptoPanic -> Reddit -> CoinGecko fallback\n")
 
     def fetch_all(self, query: str = 'crypto', limit: int = 100) -> List[NewsItem]:
         """Fetch from all available sources, dedupe, and return sorted by recency.
+
+        Priority order (use primary sources first, fallback to CoinGecko only if needed):
+        1. NewsAPI (if key available) - HIGH QUALITY news + crypto keywords
+        2. CryptoPanic (if token available) - REAL-TIME crypto news
+        3. Reddit (always available) - Community sentiment + discussion threads
+        4. CoinGecko (fallback only) - Trending data when other sources insufficient
 
         The `limit` parameter controls the maximum number of headlines returned
         after deduplication; internally each source is queried with the same
         limit.  Defaults to a generous 100 to avoid starving the sentiment layer.
         """
         items: List[NewsItem] = []
+        sources_used: List[str] = []
 
-        # Reddit (always available, no API key needed)
-        items.extend(self._fetch_reddit(query, limit))
-
-        # CryptoPanic (free tier available)
-        if self.cryptopanic_token:
-            items.extend(self._fetch_cryptopanic(limit))
-
-        # NewsAPI (requires key)
+        # PRIMARY: General news via NewsAPI (highest quality when available)
         if self.newsapi_key:
-            items.extend(self._fetch_newsapi(query, limit))
+            newsapi_items = self._fetch_newsapi(f"{query} crypto", limit)
+            newsapi_items.extend(self._fetch_newsapi(f"Binance {query}", limit // 2))
+            items.extend(newsapi_items)
+            sources_used.append(f"NewsAPI ({len(newsapi_items)} items)")
+        else:
+            sources_used.append("NewsAPI (⚠️  no key configured)")
 
-        # CoinGecko trending (free, no key)
-        items.extend(self._fetch_coingecko_trending())
+        # SECONDARY: CryptoPanic (real-time crypto specific)
+        if self.cryptopanic_token:
+            cp_items = self._fetch_cryptopanic(limit)
+            items.extend(cp_items)
+            sources_used.append(f"CryptoPanic ({len(cp_items)} items)")
+        else:
+            sources_used.append("CryptoPanic (⚠️  no token configured)")
+
+        # TERTIARY: Reddit (community sentiment)
+        reddit_items = self._fetch_reddit(query, limit)
+        items.extend(reddit_items)
+        sources_used.append(f"Reddit ({len(reddit_items)} items)")
+
+        # FALLBACK: CoinGecko trending (only if primary sources returned few items)
+        # Don't use CoinGecko if we already have good data from NewsAPI/CryptoPanic
+        if len(items) < limit // 2:
+            cg_items = self._fetch_coingecko_trending()
+            items.extend(cg_items)
+            sources_used.append(f"CoinGecko FALLBACK ({len(cg_items)} items)")
+        else:
+            sources_used.append("CoinGecko (skipped - sufficient items from primary sources)")
 
         # Deduplicate by title similarity
         items = self._dedupe(items)
@@ -123,7 +156,27 @@ class NewsFetcher:
 
         # Sort by timestamp (most recent first)
         items.sort(key=lambda x: x.timestamp, reverse=True)
-        return items[:limit]
+        
+        # Log sources used and items fetched
+        print(f"\n[NewsAPI] Fetch Summary:")
+        for source in sources_used:
+            print(f"  • {source}")
+        print(f"  └─ Total: {len(items)} unique items (after dedup)")
+        
+        # Show breakdown of sources in returned items
+        returned_items = items[:limit]
+        source_breakdown = {}
+        for item in returned_items:
+            source = item.source
+            source_breakdown[source] = source_breakdown.get(source, 0) + 1
+        
+        print(f"\n[NewsAPI] Returned Items Breakdown ({len(returned_items)} items):")
+        for source, count in sorted(source_breakdown.items(), key=lambda x: -x[1]):
+            pct = (count / len(returned_items)) * 100 if returned_items else 0
+            print(f"  • {source}: {count} items ({pct:.1f}%)")
+        print()
+        
+        return returned_items
 
     def fetch_headlines(self, query: str, limit: int = 50) -> List[str]:
         """Backward-compatible: return just headline strings.

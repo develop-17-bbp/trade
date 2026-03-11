@@ -54,9 +54,13 @@ class MetaController:
         elif lgb_class == -1 and finbert_score > 0.1:
             position_scale *= 0.5
 
-        # Meta-Controller Strict Veto (Drawdown Risk from RL)
-        if lgb_class != 0 and rl_prob < 0.45:
-            return 0, 1.0, 0.0  # Full veto (0.0 scale)
+        # Meta-Controller Veto (Drawdown Risk from RL)
+        # RELAXED for testnet: Allow trades if LightGBM confident, even if RL is uncertain
+        # Only veto if BOTH disagreetrongly (RL prob < 0.30)
+        if lgb_class != 0 and rl_prob < 0.30:
+            # Both models disagree strongly - be cautious
+            if lgb_conf < 0.55:  # Also LightGBM not confident
+                return 0, 1.0, 0.0  # Full veto only in extreme disagreement
 
         # --- Agreement / Disagreement Logic ---
         if lgb_class == rl_action:
