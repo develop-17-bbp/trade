@@ -24,15 +24,22 @@ class FastTickIngestor:
         self._connect_shm()
 
     def _connect_shm(self):
+        import sys
         try:
-            # We assume the Rust/Go service created this file in /tmp
-            # In production, this would be a real SHM segment.
-            f = open(f"tmp/{self.buffer_name}", "r+b")
-            self.shm = mmap.mmap(f.fileno(), 1024)
-            logger.info(f"[HFT-INGEST] Connected to high-speed binary tick feed.")
-        except FileNotFoundError:
-            # Create a mock if it doesn't exist for the demo
-            pass
+            if sys.platform == 'win32':
+                # Windows-native Named Shared Memory
+                self.shm = mmap.mmap(-1, 1024, tagname=self.buffer_name)
+                logger.info(f"[HFT-INGEST] Connected to Windows SHM: {self.buffer_name}")
+            else:
+                # We assume the Rust/Go service created this file in /tmp
+                import os
+                os.makedirs("tmp", exist_ok=True)
+                f = open(f"tmp/{self.buffer_name}", "r+b")
+                self.shm = mmap.mmap(f.fileno(), 1024)
+                logger.info(f"[HFT-INGEST] Connected to file-backed SHM: {self.buffer_name}")
+        except Exception as e:
+            logger.warning(f"[HFT-INGEST] Shared Memory unavailable ({e}). Using network fallback.")
+            self.shm = None
 
     def get_latest_tick(self) -> Optional[Tuple[int, float, float, int]]:
         """

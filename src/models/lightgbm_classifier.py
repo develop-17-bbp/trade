@@ -116,20 +116,21 @@ class LightGBMClassifier:
         This method assumes a 3-class output [prob_short, prob_flat, prob_long].
         """
         try:
-            # We calibrate based on the highest raw probability
             import numpy as np
+            # We calibrate based on the highest raw probability
             raw_prob = float(np.max(prob_array))
             
-            # Platt Scaling (Bayesian shift)
-            A, B = -2.0, 0.5 
-            calibrated = 1.0 / (1.0 + math.exp(A * raw_prob + B))
-            return float(calibrated)
-        except:
+            # Platt Scaling (Bayesian shift) - clamp input to avoid overflow
+            A, B = -2.0, 0.5
+            z = max(-100, min(100, A * raw_prob + B))  # Prevent overflow
+            calibrated = 1.0 / (1.0 + math.exp(z))
+            return float(max(0.0, min(1.0, calibrated)))
+        except Exception:
             # Fallback to simple max
             try:
                 import numpy as np
-                return float(np.max(prob_array))
-            except:
+                return float(max(0.0, min(1.0, np.max(prob_array))))
+            except Exception:
                 return 0.5
 
     # -------------------------------------------------------------------
@@ -256,23 +257,41 @@ class LightGBMClassifier:
             f['btc_nasdaq_corr_24h'] = float(ef.get('btc_nasdaq_corr_24h', 0.7))
             f['correlation_breakdown'] = float(ef.get('correlation_breakdown', 0.0))
             
-            # --- MACO / GROWTH ---
+            # --- MACRO / GROWTH ---
             f['stablecoin_mint_velocity'] = float(ef.get('stablecoin_mint_velocity', 0.0))
             f['stablecoin_depeg_event'] = float(ef.get('stablecoin_depeg_event', 0.0))
             
-            # Legacy Core
-            f['sma_10_50_ratio'] = 1.0
-            f['ema_10_20_ratio'] = 1.0
-            f['rsi_14'] = 50.0
-            f['macd_hist'] = 0.0
-            f['adx_14'] = 25.0
-            f['bb_width_20'] = 0.05
-            f['stoch_k'] = 50.0
-            f['stoch_d'] = 50.0
-            f['cycle_phase_encoded'] = 0.0
-            f['dominant_period'] = 30.0
-            f['sentiment_mean'] = float(sentiment_features.get('sentiment_mean', 0.0)) if sentiment_features else 0.0
-            f['sentiment_z_score'] = 0.0
+            # Legacy Core Indicators (computed from price data)
+            sma_10 = sma(closes, 10)
+            sma_50 = sma(closes, 50)
+            ema_10 = ema(closes, 10)
+            ema_20 = ema(closes, 20)
+            rsi_vals = rsi(closes, 14)
+            macd_vals, signal_vals, hist_vals = macd(closes)
+            adx_line, plus_di, minus_di = adx(highs, lows, closes, 14)
+            bb_high, bb_low, bb_mid = bollinger_bands(closes, 20)
+            stoch_k_vals, stoch_d_vals = stochastic(highs, lows, closes, 14, 3)
+            
+            f['sma_10_50_ratio'] = (sma_10[i] / sma_50[i]) if sma_50[i] > 0 else 1.0
+            f['ema_10_20_ratio'] = (ema_10[i] / ema_20[i]) if ema_20[i] > 0 else 1.0
+            f['rsi_14'] = float(rsi_vals[i])
+            f['macd_hist'] = float(hist_vals[i])
+            f['adx_14'] = float(adx_line[i])
+            f['bb_width_20'] = float((bb_high[i] - bb_low[i]) / closes[i]) if closes[i] > 0 else 0.05
+            f['stoch_k'] = float(stoch_k_vals[i])
+            f['stoch_d'] = float(stoch_d_vals[i])
+            f['cycle_phase_encoded'] = float(ef.get('cycle_phase_encoded', 0.0))
+            f['dominant_period'] = float(ef.get('dominant_period', 30.0))
+            
+            # Sentiment features with proper normalization
+            if sentiment_features:
+                sent_mean = float(sentiment_features.get('sentiment_mean', 0.0))
+                sent_zscore = float(sentiment_features.get('sentiment_z_score', 0.0))
+                f['sentiment_mean'] = max(-1.0, min(1.0, sent_mean))  # Clamp to [-1, 1]
+                f['sentiment_z_score'] = max(-3.0, min(3.0, sent_zscore))  # Clamp z-score to [-3, 3]
+            else:
+                f['sentiment_mean'] = 0.0
+                f['sentiment_z_score'] = 0.0
             
             features.append(f)
         return features
@@ -345,7 +364,7 @@ class LightGBMClassifier:
             score += 0.10 * vol_scale.get(int(vol_regime), 0)
             weight_sum += 0.10
 
-            # --- Sentiment (weight: 0.15) ---
+            # --- Sentim    ent (weight: 0.15) ---
             sent = f.get('sentiment_mean', 0)
             sent_conf = f.get('avg_confidence', 0.3)
             sent_z = f.get('sentiment_z_score', 0)
@@ -420,19 +439,22 @@ class LightGBMClassifier:
                   entry_price: float, exit_price: float, bars_held: int) -> None:
         """
         Record a closed trade using Triple Barrier Labeling logic.
+        Labels align with LightGBM 3-class expectations: 0=SHORT, 1=FLAT, 2=LONG
         """
         entry = features.copy()
         
-        # Triple Barrier Labeling (simplified)
-        # Class 1: Target Hit (Profit)
-        # Class 2: Stop Hit (Loss)
-        # Class 0: Time Out or Neutral
-        if net_pnl > 0:
-            label = 1
-        elif net_pnl < 0:
-            label = 2  # LightGBM expects 0, 1, 2 for multiclass 3
+        # Triple Barrier Labeling: Map outcome to class labels
+        # Label 0 (SHORT): Loss or bearish outcome
+        # Label 1 (FLAT): Neutral/breakeven
+        # Label 2 (LONG): Profit or bullish outcome
+        pnl_thresh = max(10.0, abs(entry_price * 0.001))  # Min $10 or 0.1% threshold
+        
+        if net_pnl > pnl_thresh:
+            label = 2  # LONG: profit
+        elif net_pnl < -pnl_thresh:
+            label = 0  # SHORT: loss
         else:
-            label = 0
+            label = 1  # FLAT: breakeven
             
         entry['label'] = label
         entry['direction'] = direction

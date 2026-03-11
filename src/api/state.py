@@ -18,15 +18,71 @@ _DEFAULT_STATE = {
     "agentic_log": [],
     "memory_hits": [],
     "onchain_metrics": {},
+    "sentiment": {},
+    "l1_features": {},
+    "layers": {},
+    "sources": {
+        "exchange": "UNKNOWN",
+        "news": "UNKNOWN",
+        "onchain": "UNKNOWN",
+        "llm": "UNKNOWN"
+    },
     "advanced_learning": {
         "regimes": {},
         "strategies": {},
         "patterns": {},
         "timestamp": ""
     },
+    "performance_edge": {
+        "uplift_pct": 0.0,
+        "baseline_winrate": 0.5,
+        "agent_winrate": 0.5
+    },
+    "execution": {
+        "slippage": 0.0,
+        "fill_rate": 100.0,
+        "latency_ms": 0,
+        "orders_per_min": 0.0
+    },
+    "risk_metrics": {
+        "vpin_threshold": 0.8,
+        "max_drawdown": 0.0,
+        "risk_score": 0.0
+    },
+    "training_status": "IDLE",
+    "model_version": "v6.0",
+    "performance_gain": 0.0,
+    "next_training": "",
+    "memory_latency": 0,
+    "memory_confidence": 0.7,
+    "strategist_confidence": 0.7,
+    "last_reasoning": "",
     "status": "INITIALIZING",
     "last_update": "",
-    "accuracy": 0.5
+    "accuracy": 0.5,
+    "layer_logs": {
+        "L1": [],
+        "L2": [],
+        "L3": [],
+        "L4": [],
+        "L5": [],
+        "L6": [],
+        "L7": [],
+        "L8": [],
+        "L9": []
+    },
+    "trade_history": [],
+    "benchmark": {
+        "predictions": [],
+        "actuals": [],
+        "per_model": {
+            "lightgbm": {"predictions": [], "actuals": [], "correct": 0, "total": 0},
+            "patchtst": {"predictions": [], "actuals": [], "correct": 0, "total": 0},
+            "rl_agent": {"predictions": [], "actuals": [], "correct": 0, "total": 0},
+            "strategist": {"predictions": [], "actuals": [], "correct": 0, "total": 0}
+        }
+    },
+    "performance": {}
 }
 
 
@@ -138,6 +194,86 @@ class DashboardState:
             s["last_update"] = datetime.now().isoformat()
         self._read_modify_write(_mod)
 
+    def update_sentiment(self, asset: str, data: Dict[str, Any]):
+        def _mod(s):
+            s["sentiment"][asset] = data
+        self._read_modify_write(_mod)
+
+    def update_l1_features(self, asset: str, data: Dict[str, Any]):
+        def _mod(s):
+            s["l1_features"][asset] = data
+        self._read_modify_write(_mod)
+
+    def set_layers(self, layers: Dict[str, Any]):
+        def _mod(s):
+            s["layers"] = layers
+            s["last_update"] = datetime.now().isoformat()
+        self._read_modify_write(_mod)
+
+    def set_sources(self, sources: Dict[str, str]):
+        def _mod(s):
+            s["sources"].update(sources)
+            s["last_update"] = datetime.now().isoformat()
+        self._read_modify_write(_mod)
+
+    def update_performance_edge(self, edge_data: Dict[str, float]):
+        def _mod(s):
+            s["performance_edge"].update(edge_data)
+        self._read_modify_write(_mod)
+
+    def update_execution_metrics(self, exec_data: Dict[str, float]):
+        def _mod(s):
+            s["execution"].update(exec_data)
+        self._read_modify_write(_mod)
+
+    def update_risk_metrics(self, risk_data: Dict[str, float]):
+        def _mod(s):
+            s["risk_metrics"].update(risk_data)
+        self._read_modify_write(_mod)
+
+    def update_training_status(self, status: str, version: str = None, gain: float = None, next_training: str = None):
+        def _mod(s):
+            s["training_status"] = status
+            if version:
+                s["model_version"] = version
+            if gain is not None:
+                s["performance_gain"] = gain
+            if next_training:
+                s["next_training"] = next_training
+        self._read_modify_write(_mod)
+
+    def update_memory_metrics(self, latency: int, confidence: float):
+        def _mod(s):
+            s["memory_latency"] = latency
+            s["memory_confidence"] = confidence
+        self._read_modify_write(_mod)
+
+    def update_strategist_metrics(self, confidence: float, last_reasoning: str):
+        def _mod(s):
+            s["strategist_confidence"] = confidence
+            s["last_reasoning"] = last_reasoning
+        self._read_modify_write(_mod)
+
+    def add_layer_log(self, layer: str, message: str, level: str = "INFO"):
+        """Add a log entry for a specific layer"""
+        def _mod(s):
+            log_entry = {
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "message": message,
+                "level": level
+            }
+            if layer not in s["layer_logs"]:
+                s["layer_logs"][layer] = []
+            s["layer_logs"][layer].insert(0, log_entry)
+            # Keep only last 20 logs per layer
+            s["layer_logs"][layer] = s["layer_logs"][layer][:20]
+        self._read_modify_write(_mod)
+
+    def get_layer_logs(self, layer: str, limit: int = 5) -> List[Dict]:
+        """Get recent logs for a specific layer"""
+        state = self.get_full_state()
+        return state.get("layer_logs", {}).get(layer, [])[:limit]
+
     def set_status(self, status: str):
         def _mod(s):
             s["status"] = status
@@ -147,3 +283,48 @@ class DashboardState:
         """Read-only: returns latest state from disk."""
         self.state = self._read_file()
         return self.state
+
+    def record_trade(self, trade_data: Dict):
+        """Record a completed trade for benchmark tracking."""
+        def _mod(s):
+            if "trade_history" not in s:
+                s["trade_history"] = []
+            s["trade_history"].append(trade_data)
+            # Keep last 500 trades
+            s["trade_history"] = s["trade_history"][-500:]
+        self._read_modify_write(_mod)
+
+    def record_prediction(self, predicted_direction: int, actual_direction: int):
+        """Record a prediction vs actual for direction accuracy tracking."""
+        def _mod(s):
+            if "benchmark" not in s:
+                s["benchmark"] = {"predictions": [], "actuals": []}
+            s["benchmark"]["predictions"].append(predicted_direction)
+            s["benchmark"]["actuals"].append(actual_direction)
+            # Keep last 1000
+            s["benchmark"]["predictions"] = s["benchmark"]["predictions"][-1000:]
+            s["benchmark"]["actuals"] = s["benchmark"]["actuals"][-1000:]
+        self._read_modify_write(_mod)
+
+    def update_benchmark_metrics(self, metrics: Dict):
+        """Push computed benchmark metrics (win_rate, sharpe, etc)."""
+        def _mod(s):
+            s["performance"] = metrics
+        self._read_modify_write(_mod)
+
+    def record_model_prediction(self, model_name: str, predicted: int, actual: int):
+        """Record a single model's prediction vs actual for per-model accuracy."""
+        def _mod(s):
+            if "benchmark" not in s:
+                s["benchmark"] = {"predictions": [], "actuals": [], "per_model": {}}
+            pm = s["benchmark"].setdefault("per_model", {})
+            m = pm.setdefault(model_name, {"predictions": [], "actuals": [], "correct": 0, "total": 0})
+            m["predictions"].append(predicted)
+            m["actuals"].append(actual)
+            m["total"] += 1
+            if (predicted > 0) == (actual > 0) and actual != 0:
+                m["correct"] += 1
+            # Keep last 1000
+            m["predictions"] = m["predictions"][-1000:]
+            m["actuals"] = m["actuals"][-1000:]
+        self._read_modify_write(_mod)
