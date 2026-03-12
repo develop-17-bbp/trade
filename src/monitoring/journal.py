@@ -3,32 +3,92 @@ PHASE 5: Trading Journal
 ========================
 Maintains a rich, persistent log of all trades for post-trade analysis.
 Tracks entry/exit reasons, market regime at time of trade, and alpha decay.
+Supports optional AES encryption for at-rest security.
 """
 
 import json
 import os
+import base64
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import logging
+import hashlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 JOURNAL_FILE = "logs/trading_journal.json"
+ENCRYPTED_JOURNAL_FILE = "logs/trading_journal.enc"
+
+
+def _get_encryption_key() -> Optional[bytes]:
+    """Derive AES key from JOURNAL_ENCRYPTION_KEY env var."""
+    key_str = os.environ.get('JOURNAL_ENCRYPTION_KEY')
+    if not key_str:
+        return None
+    return hashlib.sha256(key_str.encode()).digest()
+
+
+def _encrypt_data(data: bytes, key: bytes) -> bytes:
+    """AES-256-CBC encryption with PKCS7 padding."""
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives import padding
+        iv = os.urandom(16)
+        padder = padding.PKCS7(128).padder()
+        padded = padder.update(data) + padder.finalize()
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(padded) + encryptor.finalize()
+        return base64.b64encode(iv + ciphertext)
+    except ImportError:
+        logger.warning("cryptography package not installed. Journal stored unencrypted.")
+        return data
+
+
+def _decrypt_data(data: bytes, key: bytes) -> bytes:
+    """AES-256-CBC decryption."""
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives import padding
+        raw = base64.b64decode(data)
+        iv = raw[:16]
+        ciphertext = raw[16:]
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+        decryptor = cipher.decryptor()
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        return unpadder.update(padded) + unpadder.finalize()
+    except ImportError:
+        return data
+
 
 class TradingJournal:
     """
     Persistent repository for trade outcomes and metadata.
     Enables 'Alpha Review' and strategy refinement.
+    Set JOURNAL_ENCRYPTION_KEY env var to enable AES-256 encryption at rest.
     """
     def __init__(self):
         self._ensure_log_dir()
+        self._encryption_key = _get_encryption_key()
         self.trades = self._load_journal()
 
     def _ensure_log_dir(self):
         os.makedirs("logs", exist_ok=True)
 
     def _load_journal(self) -> List[Dict]:
+        # Try encrypted file first
+        if self._encryption_key and os.path.exists(ENCRYPTED_JOURNAL_FILE):
+            try:
+                with open(ENCRYPTED_JOURNAL_FILE, 'rb') as f:
+                    decrypted = _decrypt_data(f.read(), self._encryption_key)
+                    return json.loads(decrypted.decode('utf-8'))
+            except Exception as e:
+                logger.error(f"Failed to load encrypted journal: {e}")
+                return []
+
+        # Fall back to plaintext
         if os.path.exists(JOURNAL_FILE):
             try:
                 with open(JOURNAL_FILE, 'r') as f:
@@ -94,8 +154,14 @@ class TradingJournal:
 
     def _save_journal(self):
         try:
-            with open(JOURNAL_FILE, 'w') as f:
-                json.dump(self.trades, f, indent=2)
+            data = json.dumps(self.trades, indent=2)
+            if self._encryption_key:
+                encrypted = _encrypt_data(data.encode('utf-8'), self._encryption_key)
+                with open(ENCRYPTED_JOURNAL_FILE, 'wb') as f:
+                    f.write(encrypted)
+            else:
+                with open(JOURNAL_FILE, 'w') as f:
+                    f.write(data)
         except Exception as e:
             logger.error(f"Failed to save journal: {e}")
 

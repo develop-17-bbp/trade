@@ -1,0 +1,25 @@
+========================================================================
+FLASH CRASH STRESS TEST REPORT
+========================================================================
+Generated: 2026-03-11T23:16:46.415627+00:00
+
+Overall Result: PASS
+
+Dynamic Risk Manager Check
+  Allowed New Trade: False
+  Shutdown Active:   True
+  Drawdown:          10.00%
+  Threshold:         10.00%
+  Reason:            CRITICAL: Portfolio Drawdown 10.00% hit shutdown limit.
+
+Backtest Flash Crash Check
+  Kill Switch:       True
+  Trigger Bar:       56
+  Max Drawdown:      20.00%
+  Exit Reason:       kill_switch
+  Total Trades:      1
+  Reason:            Kill switch triggered at 20.00% drawdown (limit 10.00%)
+
+Conclusion
+  Risk Fortress kill switches trip before mainnet in the deterministic -20% crash harness.
+========================================================================

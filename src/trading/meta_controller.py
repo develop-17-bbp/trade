@@ -23,6 +23,7 @@ class MetaController:
                   rl_action: int, rl_prob: float, 
                   features: Dict[str, float],
                   finbert_score: float,
+                  patch_result: Optional[Dict] = None,
                   asset_name: str = 'BTC',
                   agentic_bias: float = 0.0) -> Tuple[int, float, float]:
         """
@@ -39,11 +40,13 @@ class MetaController:
         # Dynamic Weighting Based on Volatility Regime
         # Ramps up RL weight to 80% and LightGBM to 20% in high volatility
         if vol > 0.04:  # Simulated threshold
-            lgb_weight = 0.20
-            rl_weight = 0.80
+            lgb_weight = 0.15
+            rl_weight = 0.70
+            patch_weight = 0.15
         else:
-            lgb_weight = 0.60
-            rl_weight = 0.40
+            lgb_weight = 0.50
+            rl_weight = 0.30
+            patch_weight = 0.20
 
         position_scale = 1.0
         
@@ -55,12 +58,14 @@ class MetaController:
             position_scale *= 0.5
 
         # Meta-Controller Veto (Drawdown Risk from RL)
-        # RELAXED for testnet: Allow trades if LightGBM confident, even if RL is uncertain
-        # Only veto if BOTH disagreetrongly (RL prob < 0.30)
         if lgb_class != 0 and rl_prob < 0.30:
-            # Both models disagree strongly - be cautious
-            if lgb_conf < 0.55:  # Also LightGBM not confident
-                return 0, 1.0, 0.0  # Full veto only in extreme disagreement
+            if lgb_conf < 0.55:
+                return 0, 1.0, 0.0
+
+        # PatchTST Liquidity Shock Veto (Loss Prevention)
+        if patch_result and patch_result.get('liquidity_shock_prob', 0) > 0.70:
+            # High probability of flash crash - full veto
+            return 0, 1.0, 0.0
 
         # --- Agreement / Disagreement Logic ---
         if lgb_class == rl_action:
@@ -75,8 +80,11 @@ class MetaController:
             # Weighted vote score
             lgb_score = lgb_class * lgb_conf
             rl_score = rl_action * rl_prob
+            patch_score = 0.0
+            if patch_result:
+                patch_score = patch_result.get('prediction', 0) * patch_result.get('confidence', 0)
 
-            combined_score = (lgb_score * lgb_weight) + (rl_score * rl_weight)
+            combined_score = (lgb_score * lgb_weight) + (rl_score * rl_weight) + (patch_score * patch_weight)
 
             if combined_score > 0.35:
                 final_class = 1

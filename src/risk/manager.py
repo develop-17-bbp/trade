@@ -36,10 +36,10 @@ class TradeRecord:
     __slots__ = ('asset', 'direction', 'entry_price', 'exit_price',
                  'size', 'pnl', 'timestamp', 'holding_bars',
                  'stop_loss', 'take_profit', 'trailing_stop_active', 'peak_price',
-                 'partial_tp_hit', 'breakeven_active')
+                 'partial_tp_hit', 'breakeven_active', 'order_id')
 
     def __init__(self, asset: str, direction: int, entry_price: float,
-                 size: float, timestamp: float = 0.0):
+                 size: float, timestamp: float = 0.0, order_id: str = ""):
         self.asset = asset
         self.direction = direction
         self.entry_price = entry_price
@@ -47,6 +47,7 @@ class TradeRecord:
         self.size = size
         self.pnl = 0.0
         self.timestamp = timestamp or time.time()
+        self.order_id = order_id
         self.holding_bars = 0
         self.stop_loss = 0.0
         self.take_profit = 0.0
@@ -280,9 +281,9 @@ class RiskManager:
     # -------------------------------------------------------------------
     def register_trade_open(self, asset: str, direction: int,
                               entry_price: float, size: float,
-                              stop_loss: float = 0.0, take_profit: float = 0.0):
+                              stop_loss: float = 0.0, take_profit: float = 0.0, order_id: str = ""):
         """Record a new open position with precise stops."""
-        record = TradeRecord(asset, direction, entry_price, size)
+        record = TradeRecord(asset, direction, entry_price, size, order_id=order_id)
         record.stop_loss = stop_loss
         record.take_profit = take_profit
         self.open_positions[asset] = record
