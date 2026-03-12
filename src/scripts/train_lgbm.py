@@ -19,16 +19,15 @@ Requirements:
 """
 
 import argparse
+import os
 import time
-import math
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Sequence, Tuple
 
 import ccxt
 import numpy as np
 import pandas as pd
 
 from src.models.lightgbm_classifier import LightGBMClassifier
-from src.trading.backtest import run_backtest
 from src.indicators.indicators import sma  # ensure import for feature generation
 
 
@@ -78,6 +77,33 @@ def build_dataset(df: pd.DataFrame) -> (List[Dict[str,float]], List[int]):
     return features, labels
 
 
+def load_ohlcv(path: str) -> pd.DataFrame:
+    if path.lower().endswith('.parquet'):
+        return pd.read_parquet(path)
+
+    df = pd.read_csv(path)
+    cols = {c.lower(): c for c in df.columns}
+
+    def find(names: Sequence[str]) -> Optional[str]:
+        for name in names:
+            if name in cols:
+                return cols[name]
+        return None
+
+    mapping = {
+        'timestamp': find(['timestamp', 'time', 'date', 'datetime']),
+        'open': find(['open', 'o', 'open_price']),
+        'high': find(['high', 'h', 'high_price']),
+        'low': find(['low', 'l', 'low_price']),
+        'close': find(['close', 'c', 'close_price', 'adj_close', 'price']),
+        'volume': find(['volume', 'v', 'vol']),
+    }
+    rename_map = {source: target for target, source in mapping.items() if source is not None}
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
+
+
 def train_model(features: List[Dict[str,float]], labels: List[int], model_out: str):
     try:
         import lightgbm as lgb
@@ -101,15 +127,46 @@ def train_model(features: List[Dict[str,float]], labels: List[int], model_out: s
     print(f"Model saved to {model_out}")
 
 
+def default_model_out(symbol: str, model_dir: str = 'models') -> str:
+    base = symbol.split('/')[0].lower()
+    return os.path.join(model_dir, f'lgbm_{base}.txt')
+
+
+def train_symbol(symbol: str,
+                 timeframe: str,
+                 since: int,
+                 until: int,
+                 model_out: str,
+                 input_path: Optional[str] = None) -> Tuple[str, int]:
+    if input_path:
+        df = load_ohlcv(input_path)
+    else:
+        df = fetch_ohlcv(symbol, timeframe, since, until)
+
+    if df.empty:
+        raise ValueError(f"No data fetched for {symbol}")
+
+    features, labels = build_dataset(df)
+    os.makedirs(os.path.dirname(model_out) or '.', exist_ok=True)
+    train_model(features, labels, model_out)
+    return model_out, len(df)
+
+
 def parse_args():
     p = argparse.ArgumentParser(__doc__)
-    p.add_argument('--symbol', required=True)
+    p.add_argument('--symbol', help='Single symbol to train, e.g. BTC/USDT')
+    p.add_argument('--symbols', nargs='+', help='Batch symbols, e.g. BTC/USDT ETH/USDT')
     p.add_argument('--timeframe', default='1h')
-    p.add_argument('--since', required=True,
+    p.add_argument('--since',
                    help='ISO date or milliseconds since epoch')
-    p.add_argument('--until', required=True,
+    p.add_argument('--until',
                    help='ISO date or milliseconds since epoch')
     p.add_argument('--model-out', default='models/lgbm_model.txt')
+    p.add_argument('--model-dir', default='models',
+                   help='Output directory used with --symbols')
+    p.add_argument('--input', help='Local CSV/parquet OHLCV input for single-symbol training')
+    p.add_argument('--inputs', nargs='+',
+                   help='Local CSV/parquet OHLCV inputs matched 1:1 with --symbols')
     return p.parse_args()
 
 
@@ -122,15 +179,47 @@ def to_millis(s):
 
 def main():
     args = parse_args()
-    since = to_millis(args.since)
-    until = to_millis(args.until)
-    df = fetch_ohlcv(args.symbol, args.timeframe, since, until)
-    if df.empty:
-        print("No data fetched; exiting.")
+    symbols = args.symbols or ([args.symbol] if args.symbol else [])
+    if not symbols:
+        raise ValueError("Provide --symbol or --symbols")
+
+    if args.inputs and len(args.inputs) != len(symbols):
+        raise ValueError("--inputs must match the number of --symbols")
+
+    if (args.input or args.inputs) is None:
+        if not args.since or not args.until:
+            raise ValueError("--since and --until are required when fetching from exchange")
+        since = to_millis(args.since)
+        until = to_millis(args.until)
+    else:
+        since = 0
+        until = 0
+
+    if len(symbols) == 1:
+        model_out = args.model_out if args.model_out != 'models/lgbm_model.txt' else default_model_out(symbols[0], args.model_dir)
+        model_path, bars = train_symbol(
+            symbol=symbols[0],
+            timeframe=args.timeframe,
+            since=since,
+            until=until,
+            model_out=model_out,
+            input_path=args.input,
+        )
+        print(f"Trained {symbols[0]} on {bars} bars -> {model_path}")
         return
-    print(f"Fetched {len(df)} bars from {args.symbol} {args.timeframe}")
-    features, labels = build_dataset(df)
-    train_model(features, labels, args.model_out)
+
+    input_paths = args.inputs or [None] * len(symbols)
+    for symbol, input_path in zip(symbols, input_paths):
+        model_out = default_model_out(symbol, args.model_dir)
+        model_path, bars = train_symbol(
+            symbol=symbol,
+            timeframe=args.timeframe,
+            since=since,
+            until=until,
+            model_out=model_out,
+            input_path=input_path,
+        )
+        print(f"Trained {symbol} on {bars} bars -> {model_path}")
 
 
 if __name__ == '__main__':

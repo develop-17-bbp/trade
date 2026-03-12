@@ -12,6 +12,7 @@ load_dotenv()
 from src.data.fetcher import PriceFetcher
 from src.data.news_fetcher import NewsFetcher
 from src.data.institutional_fetcher import InstitutionalFetcher
+from src.data.free_tier_integrations import FreeDataAggregator
 from src.ai.sentiment import SentimentPipeline
 from src.ai.agentic_strategist import AgenticStrategist
 from src.ai.advanced_learning import AdvancedLearningEngine, MarketRegime
@@ -82,8 +83,6 @@ class TradingExecutor:
         self.price_source = PriceFetcher(
             exchange_name=exchange_cfg.get('name', 'binance'),
             testnet=use_testnet,
-            api_key=exchange_cfg.get('api_key'),
-            api_secret=exchange_cfg.get('api_secret'),
         )
         if not self.price_source.is_available:
             raise RuntimeError(
@@ -97,6 +96,7 @@ class TradingExecutor:
         self.institutional = InstitutionalFetcher()
         self.on_chain = OnChainFetcher()
         self.on_chain_portfolio = OnChainPortfolioManager()
+        self.free_data = FreeDataAggregator()  # Free data sources (Fear/Greed, IV, etc.)
         import os as _os_env
         _prov_cfg = self.config.get('ai', {}).get('reasoning_provider', 'openai')
         _model_cfg = self.config.get('ai', {}).get('reasoning_model')
@@ -213,6 +213,24 @@ class TradingExecutor:
         
         # Phase 5: Trading Journal & Styles
         self.journal = TradingJournal()
+        
+        # Recover previously OPEN trades to allow TP/SL closure
+        _recovered = 0
+        for t in self.journal.trades:
+            if t.get("status") == "OPEN":
+                asset = t.get("asset", "").replace("/USDT", "").replace("USDT", "")
+                direction = 1 if str(t.get("side")).lower() == "buy" else -1
+                price = float(t.get("price", 0.0))
+                qty = float(t.get("quantity", 0.0))
+                order_id = t.get("order_id", "")
+                if price > 0 and qty > 0:
+                    size_pct = (qty * price) / self.initial_capital
+                    self.risk_manager.register_trade_open(asset, direction, price, size_pct, order_id=order_id)
+                    _recovered += 1
+        if _recovered > 0:
+            import logging
+            logging.info(f"[RECOVERY] Re-attached {_recovered} open trades to Risk Manager.")
+
         style_val = self.config.get('trading_style', 'swing').lower()
         self.style = TradingStyle.DAY if style_val == 'day' else TradingStyle.SWING
         
@@ -462,9 +480,14 @@ class TradingExecutor:
 
             # 2. Fetch sentiment (optional, may fail gracefully)
             headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment(asset)
+            
+            # 2.5 Fetch free data sources (Fear/Greed, IV, On-Chain, etc.) 
+            free_signals = self.free_data.aggregate_all_signals(symbol=asset)
+            _safe_print(f"  [FREE DATA] {asset}: Fear/Greed={free_signals.get('fear_greed_classification')}, "
+                       f"IV={free_signals.get('iv_regime')}, Flow={free_signals.get('exchange_flow_signal')}")
 
             # 3. Generate signals using L1 + L2
-            _safe_print(f"  [SIGNAL] Generating hybrid signals (FinBERT + LightGBM)...")
+            _safe_print(f"  [SIGNAL] Generating hybrid signals (FinBERT + LightGBM + FREE DATA)...")
             strategy_result = self.strategy.generate_signals(
                 prices=closes,
                 highs=highs,
@@ -477,6 +500,14 @@ class TradingExecutor:
             )
 
             signals = strategy_result['signals']
+            
+            # 3.5 Apply confidence boost from free data
+            l2_data = strategy_result.get('l2_data', {}) or {}
+            base_confidence = float(l2_data.get('confidence', 0.5))
+            boosted_confidence = self.free_data.calculate_free_data_boost(base_confidence, free_signals)
+            l2_data['confidence'] = boosted_confidence
+            l2_data['free_data_signal'] = free_signals.get('fear_greed_signal')
+            _safe_print(f"  [CONFIDENCE BOOST] {asset}: {base_confidence:.1%} → {boosted_confidence:.1%} (free data)")
 
             # 4. Run Backtest (L3 Risk Simulation)
             _safe_print(f"  [BACKTEST] Simulating execution with L3 Risk Manager...")
@@ -564,9 +595,9 @@ class TradingExecutor:
                     "L4 Meta": {"status": "OK", "progress": 0.7, "metric": "Signal Fused"},
                     "L5 Execution": {"status": "OK", "progress": 0.8, "metric": "PAPER READY"},
                     "L6 Strategist": {"status": "OK", "progress": float(conf/100.0 if conf <= 1 else conf), "metric": "Sim Reflecting"},
-                    "L7 Autonomy": {"status": "OK", "progress": 0.9, "metric": "Backtest Active"},
+                    "L7 Autonomy": {"status": "OK", "progress": 1.0, "metric": "PatchTST ACTIVE"},
                     "L8 Monitoring": {"status": "OK", "progress": 0.9, "metric": "Log STABLE"},
-                    "L9 Learning": {"status": "OK", "progress": 0.5, "metric": "Meta Queued"}
+                    "L9 Learning": {"status": "OK", "progress": 1.0, "metric": "LGBM+TRANSFORMER"}
                 }
                 DashboardState().set_layers(layers)
                 DashboardState().set_sources({
@@ -1328,7 +1359,7 @@ class TradingExecutor:
                     feature_vector=ext_feats if ext_feats else {},
                     model_signal=final_direction
                 )
-                self.risk_manager.register_trade_open(asset, final_direction, current_price, pos_size_pct)
+                self.risk_manager.register_trade_open(asset, final_direction, current_price, pos_size_pct, order_id=execution_id)
                 
                 # ═══ REAL-TIME BENCHMARK: Record trade entry ═══
                 try:
@@ -1419,11 +1450,10 @@ class TradingExecutor:
             return_pct = ((res.executed_price - record.entry_price) / record.entry_price * 100) * record.direction
             
             self.risk_manager.close_position(asset, res.executed_price)
-            self.journal.log_trade(
-                asset=asset, side=side, quantity=res.executed_quantity,
-                price=res.executed_price, regime="Exit", strategy_name="RiskManagement",
-                confidence=1.0, reasoning=f"Full exit via {reason}",
-                order_id=res.order_id
+            self.journal.close_trade(
+                order_id=record.order_id,
+                exit_price=res.executed_price,
+                pnl=pnl
             )
             
             # ═══ REAL-TIME BENCHMARK: Record completed trade with P&L ═══

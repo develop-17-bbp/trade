@@ -1,92 +1,111 @@
+import torch
+import torch.nn as nn
 import numpy as np
+import os
 import logging
 from typing import Dict, Any, List, Optional
-import json
 
 logger = logging.getLogger(__name__)
 
-class PatchTSTClassifier:
+class PatchTST(nn.Module):
     """
-    SOTA Time-Series Model: Patch Time Series Transformer.
-    Segments data into overlapping 'patches' for deep pattern recognition.
-    
-    Provides:
-    1. Short-horizon return forecasts (1h, 4h)
-    2. Volatility regime predictions
-    3. Liquidity shock probability
+    Real PyTorch Architecture for PatchTST.
     """
-    def __init__(self, patch_size: int = 16, 
-                 stride: int = 8, 
-                 n_patches: int = 42):
+    def __init__(self, seq_len=400, patch_size=16, stride=8, d_model=64, n_heads=4, n_layers=2):
+        super().__init__()
         self.patch_size = patch_size
         self.stride = stride
-        self.n_patches = n_patches
-        self.weights = {} # Model weights dictionary
-        self.is_ready = False
-        self._load_dummy_parameters()
-
-    def _load_dummy_parameters(self):
-        """
-        In production, this loads trained Torch/ONNX weights.
-        """
-        # Linear projection layer for patches
-        self.weights['proj'] = np.random.randn(self.patch_size, 64) * 0.01
-        self.is_ready = True
-
-    def predict(self, ohlcv_data: np.ndarray) -> Dict[str, Any]:
-        """
-        Inference using Patch-based transformation.
-        Segment, Project, Transformer-Attention, Final Projection.
-        """
-        if not self.is_ready or len(ohlcv_data) < (self.n_patches * self.stride):
-            return {"confidence": 0, "prediction": 0, "prob_up": 0.5}
-
-        # Step 1: Patching
-        # Standardize returns
-        returns = np.diff(ohlcv_data) / ohlcv_data[:-1]
+        self.n_patches = (seq_len - patch_size) // stride + 1
+        
+        # Patch embedding
+        self.patch_embed = nn.Linear(patch_size, d_model)
+        
+        # Positional Encoding
+        self.pos_embed = nn.Parameter(torch.randn(1, self.n_patches, d_model))
+        
+        # Transformer
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=n_heads, batch_first=True)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        
+        # Heads: 1 for Probability of Up, 1 for Volatility/Shock probability
+        self.head_prob = nn.Linear(d_model, 1)
+        self.head_shock = nn.Linear(d_model, 1)
+        
+    def forward(self, x):
+        # x is [Batch, SeqLen]
+        B, L = x.shape
+        # Create patches
         patches = []
-        for i in range(0, len(returns) - self.patch_size, self.stride):
-            patches.append(returns[i:i + self.patch_size])
-            if len(patches) >= self.n_patches: break
+        for i in range(self.n_patches):
+            p = x[:, i*self.stride : i*self.stride + self.patch_size]
+            patches.append(p)
+        
+        # [Batch, n_patches, patch_size]
+        patches = torch.stack(patches, dim=1)
+        
+        # Embed
+        x = self.patch_embed(patches) + self.pos_embed
+        
+        # Transformer
+        x = self.transformer(x)
+        
+        # Aggregate (Mean pooling over patches)
+        x_mean = x.mean(dim=1)
+        
+        prob_up = torch.sigmoid(self.head_prob(x_mean))
+        prob_shock = torch.sigmoid(self.head_shock(x_mean))
+        
+        return prob_up, prob_shock
+
+class PatchTSTClassifier:
+    """
+    Orchestrator for the PatchTST deep learning model.
+    """
+    def __init__(self, model_path: str = 'models/patchtst_v1.pt'):
+        self.seq_len = 400
+        self.model = PatchTST(seq_len=self.seq_len)
+        self.is_ready = False
+        
+        if os.path.exists(model_path):
+            try:
+                self.model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+                self.model.eval()
+                self.is_ready = True
+                logger.info(f"[PatchTST] Real model loaded from {model_path}")
+            except Exception as e:
+                logger.error(f"[PatchTST] Failed to load real model: {e}")
+                
+    def predict(self, price_data: np.ndarray) -> Dict[str, Any]:
+        """
+        Deep Inference using Transformer patches.
+        """
+        if not self.is_ready or len(price_data) < self.seq_len + 1:
+            return {"confidence": 0, "prediction": 0, "prob_up": 0.5, "shock_prob": 0.0}
+
+        try:
+            # Prepare returns for the last seq_len window
+            returns = np.diff(price_data) / (price_data[:-1] + 1e-9)
+            input_tensor = torch.tensor(returns[-self.seq_len:], dtype=torch.float32).unsqueeze(0)
             
-        patches = np.array(patches) # [N_PATCHES, PATCH_SIZE]
-        
-        # Step 2: Linear Projection (Simulated)
-        # In real model, this is the embedding layer
-        embedding = np.dot(patches, self.weights['proj']) # [N_PATCHES, 64]
-        
-        # Step 3: Mean aggregated features (approximation of Attention pooling)
-        features = np.mean(embedding, axis=0)
-        
-        # Step 4: Final Logic (Institutional Head)
-        # Prob(Up) = sigmoid(aggregate_features)
-        raw_score = np.tanh(np.sum(features)) # [-1, 1]
-        prob_up = (raw_score + 1) / 2
-        
-        # Determine regime and volatility
-        vol_score = np.std(returns[-20:])
-        regime = "NORMAL"
-        if vol_score > 0.02: regime = "VOLATILE"
-        elif vol_score < 0.005: regime = "STAGNANT"
-        
-        # Predict liquidity shock (based on return clustering)
-        shock_prob = min(0.9, np.abs(returns[-1]) / (np.mean(np.abs(returns[-20:])) + 1e-9) * 0.1)
-
-        return {
-            "prediction": 1 if prob_up > 0.55 else (-1 if prob_up < 0.45 else 0),
-            "prob_up": prob_up,
-            "confidence": abs(prob_up - 0.5) * 2,
-            "regime": regime,
-            "liquidity_shock_prob": float(shock_prob),
-            "engine": "PatchTST_v1"
-        }
-
-    def save_model(self, path: str):
-        with open(path, 'w') as f:
-            # Simplified save
-            json.dump({"meta": "PatchTST weights"}, f)
-
-    def load_model(self, path: str):
-        # In real scenario: self.model.load_state_dict(torch.load(path))
-        self.is_ready = True
-        logger.info(f"[PatchTST] Model loaded from {path}")
+            with torch.no_grad():
+                prob_up_tensor, prob_shock_tensor = self.model(input_tensor)
+                prob_up = float(prob_up_tensor.item())
+                prob_shock = float(prob_shock_tensor.item())
+            
+            # Prediction threshold
+            prediction = 0
+            if prob_up > 0.55:
+                prediction = 1
+            elif prob_up < 0.45:
+                prediction = -1
+                
+            return {
+                "prediction": prediction,
+                "prob_up": prob_up,
+                "confidence": abs(prob_up - 0.5) * 2,
+                "liquidity_shock_prob": prob_shock,
+                "engine": "PatchTST_v1_Transformer"
+            }
+        except Exception as e:
+            logger.error(f"[PatchTST] Inference error: {e}")
+            return {"confidence": 0, "prediction": 0, "prob_up": 0.5, "shock_prob": 0.0}

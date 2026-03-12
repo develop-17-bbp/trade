@@ -33,7 +33,11 @@ class BacktestConfig:
     atr_stop_mult: float = 2.0
     atr_tp_mult: float = 3.0
     compound: bool = True          # reinvest profits
+    use_profit_gate: bool = True
     trading_days_per_year: int = 365  # crypto trades 24/7
+    flash_crash_bar: Optional[int] = None
+    flash_crash_drawdown_pct: float = 0.0
+    kill_switch_drawdown_pct: Optional[float] = None
     # If set, the backtest result will be adjusted to ensure at least this return (percent).
     # WARNING: This artificially enforces a minimum reported return and does not change trade list.
     min_return_pct: Optional[float] = None
@@ -83,6 +87,9 @@ class BacktestResult:
     total_fees: float = 0.0
     net_pnl: float = 0.0
     avg_daily_return_pct: float = 0.0
+    kill_switch_triggered: bool = False
+    kill_switch_bar: Optional[int] = None
+    kill_switch_reason: str = ""
 
 
 def run_backtest(prices: List[float], signals: List[int],
@@ -113,15 +120,31 @@ def run_backtest(prices: List[float], signals: List[int],
 
     cfg = config or BacktestConfig()
     n = len(prices)
+    sim_prices = list(prices)
 
     if highs is None:
-        highs = prices
+        highs = sim_prices
+    else:
+        highs = list(highs)
     if lows is None:
-        lows = prices
+        lows = sim_prices
+    else:
+        lows = list(lows)
+
+    if (
+        cfg.flash_crash_bar is not None
+        and 0 <= cfg.flash_crash_bar < n
+        and cfg.flash_crash_drawdown_pct > 0
+    ):
+        crash_mult = max(0.0, 1.0 - (cfg.flash_crash_drawdown_pct / 100.0))
+        crash_bar = cfg.flash_crash_bar
+        sim_prices[crash_bar] = sim_prices[crash_bar] * crash_mult
+        highs[crash_bar] = min(highs[crash_bar], sim_prices[crash_bar])
+        lows[crash_bar] = min(lows[crash_bar], sim_prices[crash_bar])
 
     # Compute fallback ATR if not provided
     if atr_values is None:
-        atr_values = _simple_atr(prices, 14)
+        atr_values = _simple_atr(sim_prices, 14)
 
     # State
     capital = cfg.initial_capital
@@ -136,6 +159,10 @@ def run_backtest(prices: List[float], signals: List[int],
     trades: List[TradeResult] = []
     total_fees = 0.0
     signals_count = 0
+    peak_equity = capital
+    kill_switch_triggered = False
+    kill_switch_bar: Optional[int] = None
+    kill_switch_reason = ""
 
     # Pre-compute trend and momentum filters for profit-gate
     _sma50: List[float] = []
@@ -143,16 +170,16 @@ def run_backtest(prices: List[float], signals: List[int],
     _rsi14: List[float] = []
     _running_sum = 0.0
     for _j in range(n):
-        _running_sum += prices[_j]
+        _running_sum += sim_prices[_j]
         if _j >= 49:
             if _j > 49:
-                _running_sum -= prices[_j - 50]
+                _running_sum -= sim_prices[_j - 50]
             _sma50.append(_running_sum / 50.0)
         else:
-            _sma50.append(prices[_j])  # fallback: price itself
+            _sma50.append(sim_prices[_j])  # fallback: price itself
         # ROC-10
         if _j >= 10:
-            _roc10.append((prices[_j] - prices[_j - 10]) / prices[_j - 10] * 100.0)
+            _roc10.append((sim_prices[_j] - sim_prices[_j - 10]) / sim_prices[_j - 10] * 100.0)
         else:
             _roc10.append(0.0)
         # Simple RSI-14
@@ -160,7 +187,7 @@ def run_backtest(prices: List[float], signals: List[int],
             gains = 0.0
             losses = 0.0
             for _k in range(_j - 13, _j + 1):
-                delta = prices[_k] - prices[_k - 1]
+                delta = sim_prices[_k] - sim_prices[_k - 1]
                 if delta > 0:
                     gains += delta
                 else:
@@ -177,8 +204,8 @@ def run_backtest(prices: List[float], signals: List[int],
 
     for i in range(n):
         sig = signals[i]
-        current_price = prices[i]
-        current_atr = atr_values[i] if i < len(atr_values) and not math.isnan(atr_values[i]) else prices[i] * 0.02
+        current_price = sim_prices[i]
+        current_atr = atr_values[i] if i < len(atr_values) and not math.isnan(atr_values[i]) else sim_prices[i] * 0.02
 
         # ---- Check stops on open positions ----
         if position != 0 and cfg.use_stops and i > entry_bar:
@@ -257,13 +284,13 @@ def run_backtest(prices: List[float], signals: List[int],
             position = 0.0
 
         # Open new position (with profit-probability gate)
-        if position == 0 and sig != 0 and i < n - 1:
+        if position == 0 and sig != 0 and i < n - 1 and cfg.use_profit_gate:
             # ── PROFIT GATE: reject signals likely to lose ──
             # Compute a 20-bar SMA for short-term trend
             if i >= 19:
-                _sma20_val = sum(prices[i-19:i+1]) / 20.0
+                _sma20_val = sum(sim_prices[i-19:i+1]) / 20.0
             else:
-                _sma20_val = prices[i]
+                _sma20_val = sim_prices[i]
 
             trend_ok = False
             rsi_ok = False
@@ -271,12 +298,12 @@ def run_backtest(prices: List[float], signals: List[int],
 
             if sig == 1:  # want to go LONG
                 # Price must be above BOTH 20 and 50 SMA = confirmed uptrend
-                trend_ok = prices[i] > _sma50[i] and prices[i] > _sma20_val
+                trend_ok = sim_prices[i] > _sma50[i] and sim_prices[i] > _sma20_val
                 rsi_ok = 35.0 < _rsi14[i] < 65.0       # tighter: not overbought/oversold
                 momentum_ok = _roc10[i] > 0.0           # momentum must be positive
             elif sig == -1:  # want to go SHORT
                 # Price must be below BOTH 20 and 50 SMA = confirmed downtrend
-                trend_ok = prices[i] < _sma50[i] and prices[i] < _sma20_val
+                trend_ok = sim_prices[i] < _sma50[i] and sim_prices[i] < _sma20_val
                 rsi_ok = 35.0 < _rsi14[i] < 65.0       # tighter
                 momentum_ok = _roc10[i] < 0.0           # momentum must be negative
 
@@ -329,13 +356,40 @@ def run_backtest(prices: List[float], signals: List[int],
         # Track equity (mark-to-market)
         if position != 0:
             unrealized = position * (current_price - entry_price)
-            equity_curve.append(capital + unrealized)
+            current_equity = capital + unrealized
+            equity_curve.append(current_equity)
         else:
-            equity_curve.append(capital)
+            current_equity = capital
+            equity_curve.append(current_equity)
+
+        peak_equity = max(peak_equity, current_equity)
+        drawdown_pct = ((peak_equity - current_equity) / peak_equity) * 100 if peak_equity > 0 else 0.0
+        if (
+            cfg.kill_switch_drawdown_pct is not None
+            and drawdown_pct >= cfg.kill_switch_drawdown_pct
+        ):
+            kill_switch_triggered = True
+            kill_switch_bar = i
+            kill_switch_reason = (
+                f"Kill switch triggered at {drawdown_pct:.2f}% drawdown "
+                f"(limit {cfg.kill_switch_drawdown_pct:.2f}%)"
+            )
+            if position != 0:
+                trade = _close_trade(
+                    position, entry_price, current_price, entry_bar, i,
+                    'kill_switch', cfg,
+                    entry_features
+                )
+                trades.append(trade)
+                capital += trade.net_pnl
+                total_fees += trade.fees
+                position = 0.0
+                equity_curve[-1] = capital
+            break
 
     # ---- Close any open position at end ----
-    if position != 0:
-        exit_price = prices[-1]
+    if position != 0 and not kill_switch_triggered:
+        exit_price = sim_prices[-1]
         trade = _close_trade(
             position, entry_price, exit_price, entry_bar, n - 1,
             'end_of_data', cfg
@@ -349,6 +403,9 @@ def run_backtest(prices: List[float], signals: List[int],
     result = _compute_metrics(trades, equity_curve, cfg)
     result.signals_generated = signals_count
     result.total_fees = total_fees
+    result.kill_switch_triggered = kill_switch_triggered
+    result.kill_switch_bar = kill_switch_bar
+    result.kill_switch_reason = kill_switch_reason
     # Optionally enforce a minimum return percentage on the reported results.
     if cfg.min_return_pct is not None:
         try:

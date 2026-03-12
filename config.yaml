@@ -7,8 +7,8 @@ poll_interval: 30             # interval between iterations in seconds (fast for
 #                 or https://www.binance.com/en/user/settings/api-management (live)
 exchange:
   name: binance
-  api_key: "8kkHSN8sjB9xfFQerIweu1jLKbr3cGLshtjka55exPYhfpDqX3OaxjQLnNB3cnhF"
-  api_secret: "sG6hPUEYsRAeRJtvy0jIkclafmyqbqBOHjOouyTt1UYHe6GEeiUHdQWTXghSM6OV"
+  # API keys loaded from .env (BINANCE_API_KEY / BINANCE_TESTNET_KEY)
+  # Never commit credentials here — use environment variables
 
 # ── Assets to trade ──
 # For PAPER mode: use AAVE (we have CSV data)
@@ -33,23 +33,23 @@ sentiment:
 
 # ── Risk Parameters ──
 risk:
-  max_position_size_pct: 2.0
-  daily_loss_limit_pct: 5.0        # Increased to 5% (more tolerance)
-  max_drawdown_pct: 15.0            # Increased to 15% (more tolerance)
-  risk_per_trade_pct: 1.0           # risk 1% of equity per trade
-  atr_stop_mult: 2.0                # Stop Loss = 2x ATR
-  atr_tp_mult: 3.0                  # Take Profit = 3x ATR
+  max_position_size_pct: 1.0
+  daily_loss_limit_pct: 3.0         # Reduced for safety
+  max_drawdown_pct: 10.0            # Reduced for safety
+  risk_per_trade_pct: 0.5           # Risk 0.5% of equity per trade
+  atr_stop_mult: 3.5                # Stop Loss = 3.5x ATR (give more room)
+  atr_tp_mult: 2.5                  # Take Profit = 2.5x ATR (tighter TP)
 
 # ── Signal Generation Settings ──
 signal:
-  min_confidence: 0.45              # Lowered for testnet to force more signals
+  min_confidence: 0.65              # Raised from 0.45 (only strong signals)
   use_ensemble: true                # Use L1+L2+L3 ensemble
   neutral_threshold: 0.40           # Below this = strong signal
   
 # ── Testnet Trading Mode ──
-testnet_aggressive: true            # More aggressive on testnet (fake money)
-max_trades_per_hour: 20             # High limit for testnet — force trades
-force_trade: true                   # Force trades even on weak signals (TESTNET ONLY)
+testnet_aggressive: false           # Changed from true (wait for quality signals)
+max_trades_per_hour: 5              # Reduced from 20 (quality over quantity)
+force_trade: false                  # Changed from true (NO weak signal forcing)
 
 # ── Models ──
 models:
@@ -58,14 +58,14 @@ models:
 
 # ── AI Reasoning Layer ──
 ai:
-  reasoning_provider: "google"              # 'google' (Gemini), 'openai', or 'local'
-  reasoning_model: "gemini-1.5-flash"       # Google Gemini model
+  reasoning_provider: "local"               # 'google' (Gemini), 'openai', or 'local'
+  reasoning_model: "neural-chat"            # Ollama local model
   
   # Rate Limiting (to avoid quota exhaustion)
   rate_limit_calls_per_minute: 15     # Conservative rate limiter for free tier
   rate_limit_enabled: true            # Enable rate limiting
   
   # Fallback Strategy (auto-switch on quota/error)
-  fallback_on_quota_error: true       # Fall back to rule-based on quota exceeded
-  use_local_on_failure: true          # Set to true to use Ollama on failure
+  fallback_on_quota_error: false      # Fall back to rule-based on quota exceeded
+  use_local_on_failure: false         # Set to true to use Ollama on failure
 

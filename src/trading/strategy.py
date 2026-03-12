@@ -12,6 +12,7 @@ from src.models.lightgbm_classifier import LightGBMClassifier
 from src.models.rl_agent import RLAgent
 from src.ai.finbert_service import FinBERTService
 from src.ai.sentiment import SentimentPipeline
+from src.ai.patchtst_model import PatchTSTClassifier
 from src.risk.manager import RiskManager
 from src.trading.meta_controller import MetaController
 from src.trading.adaptive_engine import AdaptiveEngine
@@ -58,6 +59,9 @@ class HybridStrategy:
 
         # Signal combiner
         self.combiner = SignalCombiner(cfg.get('combiner', {}))
+        
+        # L7: PatchTST Transformer
+        self.patch_tst = PatchTSTClassifier(cfg.get('models', {}).get('patchtst_path', 'models/patchtst_v1.pt'))
 
         # track trades for feedback learning
         self._trade_history: List[Dict] = []
@@ -105,8 +109,13 @@ class HybridStrategy:
         lgb_predictions = self.classifier.predict(features)
         rl_predictions = self.rl_agent.predict(features)
         forecast_sig = self.classifier.forecast_signal(features)
+        
+        # PatchTST Inference (Deep Layer 7)
+        import numpy as np
+        patch_result = self.patch_tst.predict(np.array(prices))
+        
         self._last_features = features[-1] if features else {}
-
+        
         # STEP 3: Signal Fusion (L4)
         from src.indicators.indicators import atr as compute_atr
         atr_vals = compute_atr(highs, lows, prices)
@@ -126,6 +135,7 @@ class HybridStrategy:
                 rl_action=rl_a, rl_prob=float(rl_p),
                 features=f,
                 finbert_score=l2_aggregate.get('aggregate_score', 0.0),
+                patch_result=patch_result,
                 agentic_bias=agentic_bias
             )
 

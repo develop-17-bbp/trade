@@ -13,7 +13,11 @@ Supports:
 
 import os
 import time
+import threading
+import logging
 from typing import List, Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class PriceFetcher:
@@ -30,10 +34,19 @@ class PriceFetcher:
     def __init__(self, exchange_name: str = "binance",
                  testnet: bool = False,
                  api_key: Optional[str] = None,
-                 api_secret: Optional[str] = None):
+                 api_secret: Optional[str] = None,
+                 max_requests_per_second: int = 10):
         self.testnet = testnet
         self.exchange_name = exchange_name
         self._authenticated = False
+
+        # Exchange API rate limiter (application-level)
+        self._rate_lock = threading.Lock()
+        self._rate_timestamps: List[float] = []
+        self._max_rps = max_requests_per_second
+
+        # Slippage tracker
+        self._slippage_history: List[Dict] = []
 
         try:
             import ccxt
@@ -58,6 +71,12 @@ class PriceFetcher:
                 self._authenticated = True
 
             self.exchange = getattr(ccxt, exchange_name)(exchange_config)
+            
+            # Force CCXT to calculate server time offset
+            try:
+                self.exchange.load_time_difference()
+            except Exception as e:
+                print(f"  [WARN] Failed to sync exchange time: {e}")
 
             # Enable testnet sandbox
             if testnet:
@@ -74,6 +93,18 @@ class PriceFetcher:
             self.exchange = None
             self._available = False
 
+    def _throttle(self):
+        """Application-level rate limiter. Blocks if requests exceed max_rps."""
+        with self._rate_lock:
+            now = time.time()
+            # Remove timestamps older than 1 second
+            self._rate_timestamps = [t for t in self._rate_timestamps if now - t < 1.0]
+            if len(self._rate_timestamps) >= self._max_rps:
+                sleep_time = 1.0 - (now - self._rate_timestamps[0])
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+            self._rate_timestamps.append(time.time())
+
     @property
     def is_available(self) -> bool:
         return self._available
@@ -87,6 +118,7 @@ class PriceFetcher:
         if not self._available:
             return {'last': 0.0, 'bid': 0.0, 'ask': 0.0}
         try:
+            self._throttle()
             return self.exchange.fetch_ticker(symbol)
         except Exception as e:
             print(f"Warning: fetch_ticker failed for {symbol}: {e}")
@@ -103,6 +135,7 @@ class PriceFetcher:
             raise RuntimeError("Exchange not available")
         if not hasattr(self.exchange, 'fetch_ohlcv'):
             raise RuntimeError('Exchange does not support OHLCV')
+        self._throttle()
         return self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
 
     def fetch_derivatives_data(self, symbol: str, current_price: float = 0.0) -> Dict[str, float]:
@@ -170,11 +203,26 @@ class PriceFetcher:
     # Order execution (testnet or live)
     # ------------------------------------------------------------------
 
+    def get_slippage_stats(self) -> Dict:
+        """Get slippage statistics from recent trades."""
+        if not self._slippage_history:
+            return {'avg_slippage_pct': 0.0, 'max_slippage_pct': 0.0, 'trade_count': 0}
+        recent = self._slippage_history[-100:]  # Last 100 trades
+        slippages = [s['slippage_pct'] for s in recent]
+        return {
+            'avg_slippage_pct': sum(slippages) / len(slippages),
+            'max_slippage_pct': max(slippages),
+            'min_slippage_pct': min(slippages),
+            'trade_count': len(recent),
+            'high_slippage_count': sum(1 for s in slippages if s > 0.5),
+        }
+
     def get_balance(self) -> Dict:
         """Fetch account balances. Requires API key authentication."""
         if not self.is_authenticated:
             return {'error': 'Not authenticated. Set API key/secret.', 'read_only': True}
         try:
+            self._throttle()
             balance = self.exchange.fetch_balance()
             # Extract relevant info
             total = balance.get('total', {})
@@ -216,10 +264,35 @@ class PriceFetcher:
             return {'status': 'error', 'message': 'Not authenticated. Set API key/secret.'}
 
         try:
+            self._throttle()
+            # Capture pre-trade price for slippage calculation
+            pre_trade_price = None
+            if order_type == 'market':
+                try:
+                    ticker = self.exchange.fetch_ticker(symbol)
+                    pre_trade_price = float(ticker.get('last', 0))
+                except Exception:
+                    pass
+
             if order_type == 'limit' and price is not None:
                 order = self.exchange.create_order(symbol, order_type, side, amount, price)
             else:
                 order = self.exchange.create_order(symbol, 'market', side, amount)
+
+            fill_price = order.get('price') or order.get('average')
+
+            # Track slippage for market orders
+            slippage_pct = 0.0
+            if pre_trade_price and fill_price and pre_trade_price > 0:
+                slippage_pct = abs(float(fill_price) - pre_trade_price) / pre_trade_price * 100
+                self._slippage_history.append({
+                    'symbol': symbol, 'side': side,
+                    'expected': pre_trade_price, 'actual': float(fill_price),
+                    'slippage_pct': slippage_pct, 'time': time.time()
+                })
+                if slippage_pct > 0.5:
+                    logger.warning(f"[SLIPPAGE] High slippage on {symbol}: {slippage_pct:.3f}% "
+                                   f"(expected={pre_trade_price}, filled={fill_price})")
 
             return {
                 'status': 'success',
@@ -229,10 +302,11 @@ class PriceFetcher:
                 'type': order.get('type'),
                 'amount': order.get('amount'),
                 'filled': order.get('filled'),
-                'price': order.get('price') or order.get('average'),
+                'price': fill_price,
                 'cost': order.get('cost'),
                 'fee': order.get('fee'),
                 'testnet': self.testnet,
+                'slippage_pct': slippage_pct,
             }
         except Exception as e:
             return {
@@ -246,6 +320,7 @@ class PriceFetcher:
         if not self.is_authenticated:
             return []
         try:
+            self._throttle()
             return self.exchange.fetch_open_orders(symbol)
         except Exception as e:
             print(f"Warning: fetch_open_orders failed: {e}")
@@ -256,6 +331,7 @@ class PriceFetcher:
         if not self.is_authenticated:
             return {'status': 'error', 'message': 'Not authenticated'}
         try:
+            self._throttle()
             result = self.exchange.cancel_order(order_id, symbol)
             return {'status': 'cancelled', 'order_id': order_id}
         except Exception as e:

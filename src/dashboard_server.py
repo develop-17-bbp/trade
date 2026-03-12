@@ -6,7 +6,8 @@ Real-time monitoring interface for the Autonomous Trading Desk.
 Serves the HTML dashboard and provides API endpoints for real-time data.
 """
 
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request, Response
+from functools import wraps
 import json
 import time
 from datetime import datetime
@@ -15,6 +16,46 @@ import os
 from src.api.state import DashboardState
 
 app = Flask(__name__)
+
+# ── Dashboard Authentication ──
+DASHBOARD_API_KEY = os.environ.get('DASHBOARD_API_KEY', '')
+DASHBOARD_USER = os.environ.get('DASHBOARD_USER', 'admin')
+DASHBOARD_PASS = os.environ.get('DASHBOARD_PASS', '')
+
+
+def _check_auth(username, password):
+    """Verify credentials against environment variables."""
+    return username == DASHBOARD_USER and password == DASHBOARD_PASS
+
+
+def _check_api_key():
+    """Check for API key in header or query param."""
+    key = request.headers.get('X-API-Key') or request.args.get('api_key')
+    return key == DASHBOARD_API_KEY
+
+
+def require_auth(f):
+    """Decorator that enforces authentication on dashboard routes."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # Skip auth if no credentials are configured (dev mode)
+        if not DASHBOARD_PASS and not DASHBOARD_API_KEY:
+            return f(*args, **kwargs)
+
+        # Check API key first (for programmatic access)
+        if DASHBOARD_API_KEY and _check_api_key():
+            return f(*args, **kwargs)
+
+        # Fall back to Basic Auth
+        auth = request.authorization
+        if auth and _check_auth(auth.username, auth.password):
+            return f(*args, **kwargs)
+
+        return Response(
+            'Authentication required. Set DASHBOARD_USER/DASHBOARD_PASS or DASHBOARD_API_KEY env vars.\n',
+            401, {'WWW-Authenticate': 'Basic realm="Trading Dashboard"'}
+        )
+    return decorated
 
 # Mock data for demonstration
 MOCK_EQUITY_DATA = [100000 + i * 100 + random.randint(-500, 500) for i in range(100)]
@@ -33,6 +74,7 @@ MOCK_MEMORY_VAULT = [
 ]
 
 @app.route('/')
+@require_auth
 def dashboard():
     eq = []
     rl = []
@@ -1063,6 +1105,7 @@ def dashboard():
                                 memory_vault=mv)
 
 @app.route('/api/dashboard-data')
+@require_auth
 def get_dashboard_data():
     try:
         s = DashboardState().get_full_state()

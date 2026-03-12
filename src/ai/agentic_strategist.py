@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from typing import Dict, List, Optional, Any
+from typing import ClassVar, Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
@@ -15,6 +15,26 @@ class StrategistDecision(BaseModel):
     suggested_config_update: Dict[str, Any] = Field(default_factory=dict, description="Specific overrides for config.yaml")
     macro_bias: float = Field(0.0, ge=-0.5, le=0.5, description="Directional tilt based on news/derivatives")
 
+    # Whitelist of config keys the LLM is allowed to suggest, with safe value ranges
+    ALLOWED_CONFIG_KEYS: ClassVar[Dict[str, Dict[str, Tuple[float, float]]]] = {
+        'risk': {
+            'max_position_size_pct': (0.1, 5.0),
+            'daily_loss_limit_pct': (0.5, 5.0),
+            'risk_per_trade_pct': (0.1, 2.0),
+            'atr_stop_mult': (1.0, 6.0),
+            'atr_tp_mult': (1.0, 6.0),
+        },
+        'signal': {
+            'min_confidence': (0.3, 0.95),
+            'neutral_threshold': (0.2, 0.6),
+        },
+        'l1': {
+            'short_window': (3, 20),
+            'long_window': (10, 50),
+            'vol_threshold': (0.5, 3.0),
+        },
+    }
+
     @field_validator('market_regime')
     @classmethod
     def validate_regime(cls, v):
@@ -22,6 +42,31 @@ class StrategistDecision(BaseModel):
         if v.upper() not in allowed:
             return "VOLATILE"
         return v.upper()
+
+    @field_validator('suggested_config_update')
+    @classmethod
+    def validate_config_update(cls, v):
+        """Whitelist config keys and clamp values to safe ranges to prevent LLM injection."""
+        if not isinstance(v, dict):
+            return {}
+        sanitized = {}
+        allowed = cls.ALLOWED_CONFIG_KEYS
+        for section, values in v.items():
+            if section not in allowed:
+                continue
+            if not isinstance(values, dict):
+                continue
+            sanitized[section] = {}
+            for key, val in values.items():
+                if key not in allowed[section]:
+                    continue
+                try:
+                    val = float(val)
+                    lo, hi = allowed[section][key]
+                    sanitized[section][key] = max(lo, min(hi, val))
+                except (ValueError, TypeError):
+                    continue
+        return sanitized
 
 # ── Agentic Strategist v2.0 ──
 
@@ -78,21 +123,16 @@ class AgenticStrategist:
             
             # attempt safe JSON serialization of onchain data
             onchain_data = market_data.get('onchain', {})
-            # print for debug since logger may hide details
-            print("DEBUG raw onchain_data type", type(onchain_data), "value", onchain_data)
             # sanitize unexpected set types
             if isinstance(onchain_data, set):
-                print("DEBUG converting onchain_data set to list")
                 try:
                     onchain_data = list(onchain_data)
-                except Exception as e:
-                    print("DEBUG failed to convert set to list", e)
+                except Exception:
                     onchain_data = {}
             try:
                 onchain_serial = json.dumps(onchain_data)
             except Exception as e:
-                print("DEBUG serialization failure", e)
-                self.logger.error(f"Failed to JSON serialize onchain_data: {e}; type={type(onchain_data)}; repr={repr(onchain_data)}")
+                self.logger.error(f"Failed to JSON serialize onchain_data: {e}")
                 onchain_serial = "{}"
 
             prompt = f"""
@@ -209,8 +249,6 @@ class AgenticStrategist:
             tb = traceback.format_exc()
             self.logger.error(f"Critical error in analyze_performance: {e}\nTraceback:\n{tb}")
             return self._get_fallback_decision(f"Analysis error: {str(e)[:50]}")
-
-        return decision
 
     def analyze_trade(self, asset: str, entry_price: float, entry_side: str, 
                       l1_signal: Dict, l2_sentiment: Dict, l3_risk: Dict, 
@@ -485,8 +523,7 @@ Keep response to 2-3 sentences maximum. Be specific about the reasoning.
         """Shared logic to execute prompt against local Ollama / LM Studio."""
         import requests
         
-        # If the top provider is google, default local model to llama3. If provider is local, use model_name.
-        model_id = self.model_name if self.provider == "local" else "llama3"
+        model_id = self.model_name if self.provider == "local" else "neural-chat"
         self.logger.info(f"[LOCAL-LLM] Calling Local Reasoning Engine: {model_id}")
         
         endpoints = [
@@ -516,7 +553,7 @@ Keep response to 2-3 sentences maximum. Be specific about the reasoning.
                         ],
                         "temperature": 0.1
                     }
-                resp = requests.post(url, json=payload, timeout=30)
+                resp = requests.post(url, json=payload, timeout=(5, 120))
                 if resp.status_code == 200:
                     response = resp
                     break

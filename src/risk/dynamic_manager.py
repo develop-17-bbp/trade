@@ -164,17 +164,17 @@ class DynamicRiskManager:
 
     def _update_circuit_breakers(self):
         """Update circuit breaker states based on current conditions."""
-        # Daily loss breaker
-        daily_loss_pct = abs(self.daily_pnl) / self.current_capital
+        # Daily loss breaker (only count actual losses, not profits)
+        daily_loss_pct = abs(self.daily_pnl) / self.current_capital if self.daily_pnl < 0 else 0.0
         self.circuit_breakers["daily_loss"].current_value = daily_loss_pct
 
-        # Weekly loss breaker
-        weekly_loss_pct = abs(self.weekly_pnl) / self.current_capital
+        # Weekly loss breaker (only count actual losses)
+        weekly_loss_pct = abs(self.weekly_pnl) / self.current_capital if self.weekly_pnl < 0 else 0.0
         self.circuit_breakers["weekly_loss"].current_value = weekly_loss_pct
-        
-        # Max Drawdown breaker
-        peak_capital = max(self.initial_capital, max([p["daily_total"] for p in self.pnl_history] + [self.initial_capital]))
-        current_drawdown = (peak_capital - (self.current_capital + self.daily_pnl)) / peak_capital
+
+        # Max Drawdown breaker - track peak capital properly
+        self.peak_capital = max(self.peak_capital, self.current_capital)
+        current_drawdown = (self.peak_capital - self.current_capital) / self.peak_capital if self.peak_capital > 0 else 0.0
         if current_drawdown > 0:
             self.circuit_breakers["max_drawdown"].current_value = current_drawdown
 
@@ -189,11 +189,20 @@ class DynamicRiskManager:
                 # All other breakers trigger when threshold is exceeded positively
                 breaker.is_triggered = breaker.current_value >= breaker.threshold
 
-            # Log if newly triggered
+            # Log and alert if newly triggered
             if breaker.is_triggered and not was_triggered:
                 breaker.last_triggered = datetime.now().isoformat()
                 logger.warning(f"Circuit breaker triggered: {breaker.name} "
                              f"(value: {breaker.current_value:.3f}, threshold: {breaker.threshold:.3f})")
+                try:
+                    from src.monitoring.alerting import alert_critical
+                    alert_critical(
+                        f"Circuit Breaker: {breaker.name}",
+                        f"{breaker.name} triggered (value={breaker.current_value:.3f}, threshold={breaker.threshold:.3f})",
+                        {'breaker': breaker.name, 'value': breaker.current_value, 'threshold': breaker.threshold}
+                    )
+                except Exception:
+                    pass
 
     def _check_recovery_mode(self):
         """Check if system should enter recovery mode."""
@@ -201,10 +210,12 @@ class DynamicRiskManager:
         recent_pnl = sum(p["pnl"] for p in self.pnl_history[-10:])  # Last 10 trades
         recent_loss_pct = abs(recent_pnl) / self.current_capital
 
-        # Exit recovery if recent performance improves
-        if self.recovery_mode and recent_pnl > 0:
-            self.recovery_mode = False
-            logger.info("Exiting recovery mode - performance improved")
+        # Exit recovery only if sustained improvement (3+ consecutive wins in last 5 trades)
+        if self.recovery_mode:
+            recent_wins = sum(1 for p in self.pnl_history[-5:] if p["pnl"] > 0)
+            if recent_wins >= 3 and recent_pnl > 0:
+                self.recovery_mode = False
+                logger.info("Exiting recovery mode - sustained improvement (3+ wins in last 5)")
 
         # Enter recovery if recent losses are significant
         elif not self.recovery_mode and recent_loss_pct > 0.03:  # 3% recent loss
@@ -297,13 +308,29 @@ class DynamicRiskManager:
         self.drawdown = (self.peak_capital - self.current_capital) / self.peak_capital
         
         # 2. Check for Global Kill Switches
-        if self.drawdown > self.risk_limits.max_drawdown_limit_pct:
+        if self.drawdown >= self.risk_limits.max_drawdown_limit_pct:
             self.is_shutdown = True
-            return False, f"CRITICAL: Portfolio Drawdown {self.drawdown:.2%} hit shutdown limit."
-            
+            msg = f"CRITICAL: Portfolio Drawdown {self.drawdown:.2%} hit shutdown limit."
+            try:
+                from src.monitoring.alerting import alert_critical
+                alert_critical("Kill Switch: Max Drawdown", msg, {
+                    'drawdown': self.drawdown, 'limit': self.risk_limits.max_drawdown_limit_pct
+                })
+            except Exception:
+                pass
+            return False, msg
+
         if abs(self.daily_pnl) / self.initial_capital > self.risk_limits.kill_switch_daily_loss_pct:
             self.is_shutdown = True
-            return False, f"CRITICAL: Daily Loss exceeded {self.risk_limits.kill_switch_daily_loss_pct:.2%} kill switch."
+            msg = f"CRITICAL: Daily Loss exceeded {self.risk_limits.kill_switch_daily_loss_pct:.2%} kill switch."
+            try:
+                from src.monitoring.alerting import alert_critical
+                alert_critical("Kill Switch: Daily Loss", msg, {
+                    'daily_pnl': self.daily_pnl, 'limit': self.risk_limits.kill_switch_daily_loss_pct
+                })
+            except Exception:
+                pass
+            return False, msg
 
         # Check circuit breakers
         active_breakers = [b for b in self.circuit_breakers.values() if b.is_triggered]
@@ -328,15 +355,13 @@ class DynamicRiskManager:
 
         return True, "Trade allowed"
 
-        return True, "Trade allowed"
-
     def register_trade_open(self, asset: str, direction: int, 
                             entry_price: float, size_pct: float,
-                            atr_value: float = 0.0):
+                            atr_value: float = 0.0, order_id: str = ""):
         """Record a new open position and calculate its stops."""
         # Convert size_pct to absolute size for TradeRecord
         size = (size_pct * self.current_capital) / entry_price
-        record = TradeRecord(asset, direction, entry_price, size)
+        record = TradeRecord(asset, direction, entry_price, size, order_id=order_id)
         
         # Calculate stops using ATR
         if atr_value <= 0:
