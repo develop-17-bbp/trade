@@ -168,6 +168,56 @@ def load_benchmark_history() -> list:
     return []
 
 
+@st.cache_data(ttl=10)
+def load_retrain_history() -> list:
+    """Load continuous training history from retrain_history.json."""
+    hist_file = "models/retrain_history.json"
+    try:
+        if os.path.exists(hist_file):
+            with open(hist_file, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+
+@st.cache_data(ttl=5)
+def load_training_state() -> dict:
+    """Load live training state (current model being trained)."""
+    state_file = "logs/training_state.json"
+    try:
+        if os.path.exists(state_file):
+            with open(state_file, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+@st.cache_data(ttl=30)
+def load_model_inventory() -> list:
+    """Scan models/ directory for all trained LightGBM models."""
+    model_dir = "models"
+    inventory = []
+    if not os.path.exists(model_dir):
+        return inventory
+
+    for fname in sorted(os.listdir(model_dir)):
+        if fname.startswith("lgbm_") and fname.endswith(".txt"):
+            fpath = os.path.join(model_dir, fname)
+            stat = os.stat(fpath)
+            # Parse asset + timeframe from filename
+            parts = fname.replace("lgbm_", "").replace(".txt", "").replace("_optimized", " (opt)")
+            inventory.append({
+                'filename': fname,
+                'asset': parts.upper(),
+                'size_kb': round(stat.st_size / 1024, 1),
+                'modified': datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                'path': fpath,
+            })
+    return inventory
+
+
 def get_leaderboard() -> dict:
     try:
         from src.models.benchmark import GLOBAL_LEADERBOARD
@@ -755,40 +805,87 @@ def render_section_ensemble(state: dict):
 def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
     st.markdown('<div class="section-title">TRAINING PROGRESS</div>', unsafe_allow_html=True)
 
-    # ── Status Cards ──
-    c1, c2, c3, c4 = st.columns(4)
+    # Load continuous training data
+    train_state = load_training_state()
+    retrain_hist = load_retrain_history()
+    model_inv = load_model_inventory()
+
+    # ── Row 1: Live Training Status Cards ──
+    c1, c2, c3, c4, c5 = st.columns(5)
+
     with c1:
-        version = state.get("model_version", "v6.0")
+        ct_status = train_state.get("status", state.get("training_status", "IDLE"))
+        status_color = "metric-value-green" if ct_status in ("IDLE", "COMPLETED") else "metric-value-orange" if ct_status == "IN_PROGRESS" else "metric-value-cyan"
+        st.markdown(f"""<div class="glass-card">
+            <div class="metric-label">TRAINING STATUS</div>
+            <div class="metric-value {status_color}">{ct_status}</div>
+        </div>""", unsafe_allow_html=True)
+
+    with c2:
+        total_models = train_state.get("total_models_trained", len(model_inv))
+        st.markdown(f"""<div class="glass-card">
+            <div class="metric-label">MODELS TRAINED</div>
+            <div class="metric-value metric-value-cyan">{total_models}</div>
+        </div>""", unsafe_allow_html=True)
+
+    with c3:
+        # Best accuracy from history
+        best_acc = 0
+        if retrain_hist:
+            best_acc = max(r.get("new_accuracy", 0) for r in retrain_hist)
+        elif train_state.get("last_accuracy"):
+            best_acc = train_state["last_accuracy"]
+        color = "metric-value-green" if best_acc > 0.55 else "metric-value-orange"
+        st.markdown(f"""<div class="glass-card">
+            <div class="metric-label">BEST ACCURACY</div>
+            <div class="metric-value {color}">{best_acc:.1%}</div>
+        </div>""", unsafe_allow_html=True)
+
+    with c4:
+        # Current training target
+        cur_sym = train_state.get("current_symbol", "—")
+        cur_tf = train_state.get("current_timeframe", "")
+        display_target = f"{cur_sym}/{cur_tf}" if cur_tf else cur_sym
+        st.markdown(f"""<div class="glass-card">
+            <div class="metric-label">CURRENT TARGET</div>
+            <div class="metric-value" style="font-size:1.1rem; color:#ffa500;">{display_target}</div>
+        </div>""", unsafe_allow_html=True)
+
+    with c5:
+        version = state.get("model_version", "v6.5")
         st.markdown(f"""<div class="glass-card">
             <div class="metric-label">MODEL VERSION</div>
             <div class="metric-value metric-value-cyan">{version}</div>
         </div>""", unsafe_allow_html=True)
 
-    with c2:
-        status = state.get("training_status", "IDLE")
-        status_color = "metric-value-green" if status == "IDLE" else "metric-value-orange"
-        st.markdown(f"""<div class="glass-card">
-            <div class="metric-label">TRAINING STATUS</div>
-            <div class="metric-value {status_color}">{status}</div>
-        </div>""", unsafe_allow_html=True)
+    # ── Row 2: Model Inventory Table + Feature Importance ──
+    col_inv, col_fi = st.columns([1.2, 1])
 
-    with c3:
-        gain = float(state.get("performance_gain", 0))
-        color = "metric-value-green" if gain > 0 else "metric-value-red"
-        st.markdown(f"""<div class="glass-card">
-            <div class="metric-label">IMPROVEMENT DELTA</div>
-            <div class="metric-value {color}">{gain:+.1f}%</div>
-        </div>""", unsafe_allow_html=True)
+    with col_inv:
+        if model_inv:
+            st.markdown("**Trained Model Inventory**")
+            # Build accuracy lookup from retrain history
+            acc_lookup = {}
+            if retrain_hist:
+                for r in retrain_hist:
+                    key = r.get('model_path', '')
+                    if not key:
+                        key = f"{r.get('asset', '').lower()}_{r.get('timeframe', '1h')}"
+                    acc_lookup[key] = r.get('new_accuracy', 0)
 
-    with c4:
-        next_train = state.get("next_training", "Not scheduled")
-        st.markdown(f"""<div class="glass-card">
-            <div class="metric-label">NEXT TRAINING</div>
-            <div class="metric-value" style="font-size:1.1rem; color:#8b8ba7;">{next_train or 'Not scheduled'}</div>
-        </div>""", unsafe_allow_html=True)
-
-    # ── Feature Importance + Calibration ──
-    col_fi, col_cal = st.columns(2)
+            inv_data = []
+            for m in model_inv:
+                acc = acc_lookup.get(m['path'], acc_lookup.get(m['asset'].lower().replace(' (opt)', ''), 0))
+                inv_data.append({
+                    'Model': m['asset'],
+                    'Size (KB)': m['size_kb'],
+                    'Accuracy': f"{acc:.1%}" if acc > 0 else "—",
+                    'Last Trained': m['modified'],
+                })
+            inv_df = pd.DataFrame(inv_data)
+            st.dataframe(inv_df, use_container_width=True, hide_index=True, height=250)
+        else:
+            st.info("No trained models found in models/ directory.")
 
     with col_fi:
         if not fi_df.empty and len(fi_df) > 0:
@@ -803,19 +900,71 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                 textposition="auto", textfont=dict(color="#fff"),
             ))
             fig_fi.update_layout(**_plotly_layout(
-                title="LightGBM Feature Importance (Top 10)", height=350,
-                margin=dict(l=160, r=20, t=40, b=40),
+                title="Feature Importance (Top 10)", height=280,
+                margin=dict(l=140, r=20, t=40, b=40),
             ))
             st.plotly_chart(fig_fi, use_container_width=True)
         else:
-            st.info("Feature importance data not available. Run training to generate.")
+            st.info("Feature importance not available. Run training to generate.")
+
+    # ── Row 3: Accuracy Over Time + Calibration ──
+    col_timeline, col_cal = st.columns(2)
+
+    with col_timeline:
+        # Training accuracy timeline from retrain_history
+        if retrain_hist and len(retrain_hist) >= 2:
+            timestamps = [r.get("timestamp", "")[:16] for r in retrain_hist[-50:]]
+            accuracies = [r.get("new_accuracy", 0) for r in retrain_hist[-50:]]
+            hc_accs = [r.get("new_high_conf_accuracy", 0) for r in retrain_hist[-50:]]
+            labels_ts = [f"{r.get('asset','?')}/{r.get('timeframe','?')}" for r in retrain_hist[-50:]]
+
+            fig_acc = go.Figure()
+            fig_acc.add_trace(go.Scatter(
+                x=timestamps, y=accuracies, mode="lines+markers",
+                name="Test Accuracy", text=labels_ts,
+                marker=dict(size=6, color="#00eaff"),
+                line=dict(color="#00eaff", width=2),
+                hovertemplate="%{text}<br>Acc: %{y:.1%}<br>%{x}<extra></extra>",
+            ))
+            if any(h > 0 for h in hc_accs):
+                fig_acc.add_trace(go.Scatter(
+                    x=timestamps, y=hc_accs, mode="lines+markers",
+                    name="High-Conf Accuracy",
+                    marker=dict(size=5, color="#00ff9d"),
+                    line=dict(color="#00ff9d", width=1, dash="dot"),
+                ))
+            # Target line
+            fig_acc.add_hline(y=0.60, line_dash="dash", line_color="#ffa500",
+                              annotation_text="60% Target", annotation_position="top left")
+            fig_acc.update_layout(**_plotly_layout(
+                title="Training Accuracy Over Time", height=320,
+                yaxis=dict(tickformat=".0%", range=[0.3, 0.8]),
+            ))
+            st.plotly_chart(fig_acc, use_container_width=True)
+        else:
+            # Fallback: benchmark history
+            history = load_benchmark_history()
+            if history and len(history) >= 2:
+                timestamps = [s.get("timestamp", "")[:16] for s in history[-50:]]
+                accs = [s.get("results", {}).get("lgbm_direction_accuracy", {}).get("value", 0) for s in history[-50:]]
+                fig_bh = go.Figure(go.Scatter(
+                    x=timestamps, y=accs, mode="lines+markers",
+                    name="Direction Accuracy",
+                    marker=dict(size=5, color="#00eaff"),
+                    line=dict(color="#00eaff", width=2),
+                ))
+                fig_bh.update_layout(**_plotly_layout(
+                    title="Benchmark History", height=320,
+                    yaxis=dict(tickformat=".0%"),
+                ))
+                st.plotly_chart(fig_bh, use_container_width=True)
+            else:
+                st.info("No training history yet. Run continuous training to populate.")
 
     with col_cal:
-        # Calibration Plot: bucket predictions by confidence, check actual accuracy
-        # Use closed trades if available, otherwise use open trades with unrealized P&L
+        # Calibration Plot
         closed_trades = [t for t in journal if t.get("status") == "CLOSED" and t.get("confidence")]
         if len(closed_trades) < 10:
-            # Fall back to all trades with confidence (use direction match as proxy)
             closed_trades = [t for t in journal if t.get("confidence")]
         if len(closed_trades) >= 10:
             buckets = [(0, 0.4), (0.4, 0.5), (0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 1.0)]
@@ -848,7 +997,7 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                     line=dict(color="#555", dash="dash"),
                 ))
                 fig_cal.update_layout(**_plotly_layout(
-                    title="Model Calibration (Confidence vs Win Rate)", height=350,
+                    title="Model Calibration (Confidence vs Win Rate)", height=320,
                     xaxis=dict(tickformat=".0%", title="Predicted Confidence"),
                     yaxis=dict(tickformat=".0%", title="Actual Win Rate", range=[0, 1]),
                 ))
@@ -856,37 +1005,51 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
             else:
                 st.info("Insufficient closed trades for calibration plot.")
         else:
-            st.info("Need 10+ closed trades with confidence scores for calibration analysis.")
+            st.info("Need 10+ trades with confidence scores for calibration analysis.")
 
-    # ── Benchmark History Timeline ──
-    history = load_benchmark_history()
-    if history and len(history) >= 2:
-        with st.expander("Benchmark History Timeline"):
-            timestamps = []
-            metrics_over_time: Dict[str, list] = {}
-            for snap in history[-50:]:
-                ts = snap.get("timestamp", "")
-                timestamps.append(ts[:16] if ts else "")
-                results = snap.get("results", {})
-                for metric_key, result in results.items():
-                    if metric_key not in metrics_over_time:
-                        metrics_over_time[metric_key] = []
-                    metrics_over_time[metric_key].append(float(result.get("value", 0)))
+    # ── Row 4: Per-Asset Accuracy Comparison (if history exists) ──
+    if retrain_hist and len(retrain_hist) >= 3:
+        with st.expander("Per-Asset Training Breakdown", expanded=False):
+            # Group by asset
+            asset_metrics = {}
+            for r in retrain_hist:
+                asset = r.get("asset", "?")
+                if asset not in asset_metrics:
+                    asset_metrics[asset] = []
+                asset_metrics[asset].append(r.get("new_accuracy", 0))
 
-            fig_hist = go.Figure()
-            colors = ["#00eaff", "#00ff9d", "#ffa500", "#ff4d6d", "#9b59b6"]
-            for i, (mk, vals) in enumerate(metrics_over_time.items()):
-                fig_hist.add_trace(go.Scatter(
-                    x=timestamps[:len(vals)], y=vals, mode="lines+markers",
-                    name=mk.replace("_", " ").title(),
-                    line=dict(color=colors[i % len(colors)], width=2),
-                    marker=dict(size=5),
+            if asset_metrics:
+                assets = list(asset_metrics.keys())
+                avg_accs = [np.mean(v) for v in asset_metrics.values()]
+                best_accs = [max(v) for v in asset_metrics.values()]
+                counts = [len(v) for v in asset_metrics.values()]
+
+                fig_asset = go.Figure()
+                fig_asset.add_trace(go.Bar(
+                    x=assets, y=avg_accs, name="Avg Accuracy",
+                    marker_color="#3498db", text=[f"{a:.1%}" for a in avg_accs],
+                    textposition="auto", textfont=dict(color="#fff"),
                 ))
-            fig_hist.update_layout(**_plotly_layout(
-                title="Model Performance Over Time", height=350,
-                yaxis=dict(tickformat=".0%"),
-            ))
-            st.plotly_chart(fig_hist, use_container_width=True)
+                fig_asset.add_trace(go.Bar(
+                    x=assets, y=best_accs, name="Best Accuracy",
+                    marker_color="#00ff9d", text=[f"{a:.1%}" for a in best_accs],
+                    textposition="auto", textfont=dict(color="#fff"),
+                ))
+                fig_asset.update_layout(**_plotly_layout(
+                    title="Per-Asset Training Results", height=300,
+                    barmode="group",
+                    yaxis=dict(tickformat=".0%"),
+                ))
+                st.plotly_chart(fig_asset, use_container_width=True)
+
+                # Training count per asset
+                c_cols = st.columns(len(assets))
+                for i, asset in enumerate(assets):
+                    with c_cols[i]:
+                        st.markdown(f"""<div class="glass-card" style="text-align:center;">
+                            <div class="metric-label">{asset} RUNS</div>
+                            <div class="metric-value metric-value-cyan">{counts[i]}</div>
+                        </div>""", unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════

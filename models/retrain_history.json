@@ -1,0 +1,70 @@
+[
+  {
+    "timestamp": "2026-03-12T05:09:28.815671",
+    "asset": "AAVE",
+    "symbol": "AAVEUSDT",
+    "timeframe": "1h",
+    "bars_used": 10000,
+    "model_path": "models\\lgbm_aave.txt",
+    "new_accuracy": 0.0,
+    "new_high_conf_accuracy": 0.0,
+    "avg_confidence": 0.0,
+    "best_params": {},
+    "per_class": {
+      "short_acc": 0,
+      "flat_acc": 0,
+      "long_acc": 0
+    }
+  },
+  {
+    "timestamp": "2026-03-12T22:27:01.659073",
+    "asset": "BTC",
+    "symbol": "BTCUSDT",
+    "timeframe": "1h",
+    "bars_used": 10000,
+    "model_path": "models\\lgbm_btc.txt",
+    "new_accuracy": 0.0,
+    "new_high_conf_accuracy": 0.0,
+    "avg_confidence": 0.0,
+    "best_params": {},
+    "per_class": {
+      "short_acc": 0,
+      "flat_acc": 0,
+      "long_acc": 0
+    }
+  },
+  {
+    "timestamp": "2026-03-12T22:27:19.778109",
+    "asset": "ETH",
+    "symbol": "ETHUSDT",
+    "timeframe": "1h",
+    "bars_used": 10000,
+    "model_path": "models\\lgbm_eth.txt",
+    "new_accuracy": 0.0,
+    "new_high_conf_accuracy": 0.0,
+    "avg_confidence": 0.0,
+    "best_params": {},
+    "per_class": {
+      "short_acc": 0,
+      "flat_acc": 0,
+      "long_acc": 0
+    }
+  },
+  {
+    "timestamp": "2026-03-10T22:36:52.385344",
+    "asset": "BTC",
+    "symbol": "BTCUSDT",
+    "timeframe": "1h",
+    "bars_used": 10000,
+    "model_path": "models\\lgbm_model.txt",
+    "new_accuracy": 0.0,
+    "new_high_conf_accuracy": 0.0,
+    "avg_confidence": 0.0,
+    "best_params": {},
+    "per_class": {
+      "short_acc": 0,
+      "flat_acc": 0,
+      "long_acc": 0
+    }
+  }
+]
