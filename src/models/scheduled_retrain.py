@@ -93,15 +93,20 @@ def fetch_training_data(symbol: str, timeframe: str = '1h',
     """
     # Primary: Binance Vision (bypasses 451 region blocks)
     try:
+        logger.info("Trying Binance Vision (S3) for data...")
         from download_vision_data import fetch_vision_ohlcv
         df = fetch_vision_ohlcv(symbol, timeframe)
         if not df.empty:
+            logger.info(f"Vision SUCCESS: {len(df)} bars for {symbol}")
             # Trim to requested limit (most recent bars)
             if len(df) > limit:
                 df = df.tail(limit).reset_index(drop=True)
             return df
-    except ImportError:
-        logger.info("download_vision_data not available, trying CCXT...")
+        else:
+            logger.warning(f"Vision returned empty DataFrame for {symbol}")
+    except ImportError as ie:
+        logger.warning(f"download_vision_data.py NOT FOUND — import failed: {ie}")
+        logger.warning("Make sure download_vision_data.py is in the project root!")
     except Exception as e:
         logger.warning(f"Vision download failed: {e}, trying CCXT...")
 

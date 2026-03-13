@@ -154,7 +154,7 @@ def download_monthly_zip(symbol: str, timeframe: str, year: int, month: int,
 
 def download_symbol(symbol: str, timeframe: str = "1h",
                     start_year: int = 2020, end_year: int = 2026,
-                    output_dir: str = "data") -> Optional[str]:
+                    output_dir: str = "data", force: bool = False) -> Optional[str]:
     """
     Download all available monthly data for a symbol.
     Saves as .parquet file. Returns output path or None.
@@ -162,11 +162,14 @@ def download_symbol(symbol: str, timeframe: str = "1h",
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"{symbol}-{timeframe}.parquet")
 
-    # Check if already downloaded
-    if os.path.exists(output_path):
+    # Check if already downloaded (skip with force=True)
+    if os.path.exists(output_path) and not force:
         existing = pd.read_parquet(output_path)
         logger.info(f"  {symbol}: Already have {len(existing)} rows in {output_path}")
         return output_path
+    elif os.path.exists(output_path) and force:
+        logger.info(f"  {symbol}: Force re-download — removing old {output_path}")
+        os.remove(output_path)
 
     months = generate_month_list(start_year, end_year)
     all_dfs = []
@@ -193,6 +196,15 @@ def download_symbol(symbol: str, timeframe: str = "1h",
 
     # Combine and deduplicate
     combined = pd.concat(all_dfs, ignore_index=True)
+
+    # Safety: strip any lingering header rows that slipped through per-month detection
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        if col in combined.columns:
+            combined[col] = pd.to_numeric(combined[col], errors='coerce')
+    if 'timestamp' in combined.columns:
+        combined['timestamp'] = pd.to_datetime(combined['timestamp'], errors='coerce')
+    combined = combined.dropna(subset=['timestamp', 'open', 'close'])
+
     combined = combined.drop_duplicates(subset=['timestamp']).sort_values('timestamp').reset_index(drop=True)
 
     # Save as parquet
@@ -358,7 +370,17 @@ def main():
                         help=f'Output directory (default: {OUTPUT_DIR})')
     parser.add_argument('--train', action='store_true',
                         help='Also train LightGBM models after downloading')
+    parser.add_argument('--force', action='store_true',
+                        help='Force re-download even if parquet files exist')
     args = parser.parse_args()
+
+    # Pass force flag to download functions
+    if hasattr(args, 'force') and args.force:
+        # Monkey-patch to pass force through
+        original_download = download_symbol
+        def forced_download(symbol, timeframe="1h", start_year=2020, end_year=2026, output_dir="data", force=True):
+            return original_download(symbol, timeframe, start_year, end_year, output_dir, force=True)
+        globals()['download_symbol'] = forced_download
 
     if args.train:
         results = download_and_train(args.symbols, args.timeframe, args.start_year, args.output_dir)
