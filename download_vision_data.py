@@ -229,13 +229,23 @@ def download_all(symbols: List[str] = None, timeframe: str = "1h",
         path = download_symbol(symbol, timeframe, start_year, DEFAULT_END_YEAR, output_dir)
         if path:
             df = pd.read_parquet(path)
+            # Ensure timestamp is datetime (some parquets have raw int64 ms)
+            if 'timestamp' in df.columns and not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce')
+            try:
+                start_dt = df['timestamp'].iloc[0]
+                end_dt = df['timestamp'].iloc[-1]
+                start_str = str(start_dt.date()) if hasattr(start_dt, 'date') else str(start_dt)
+                end_str = str(end_dt.date()) if hasattr(end_dt, 'date') else str(end_dt)
+            except Exception:
+                start_str, end_str = '?', '?'
             results[symbol] = {
                 'path': path,
                 'rows': len(df),
-                'start': str(df['timestamp'].iloc[0].date()),
-                'end': str(df['timestamp'].iloc[-1].date()),
+                'start': start_str,
+                'end': end_str,
             }
-            logger.info(f"  {symbol}: {len(df)} rows ({df['timestamp'].iloc[0].date()} to {df['timestamp'].iloc[-1].date()})")
+            logger.info(f"  {symbol}: {len(df)} rows ({start_str} to {end_str})")
 
     return results
 
@@ -265,6 +275,9 @@ def fetch_vision_ohlcv(symbol: str, timeframe: str = '1h',
     parquet_path = os.path.join(data_dir, f"{clean_symbol}-{timeframe}.parquet")
     if os.path.exists(parquet_path):
         df = pd.read_parquet(parquet_path)
+        # Ensure timestamp is datetime (some parquets saved raw int64 ms)
+        if 'timestamp' in df.columns and not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce')
         logger.info(f"Loaded {len(df)} bars from {parquet_path}")
         return df
 
