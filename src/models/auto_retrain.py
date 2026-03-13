@@ -49,27 +49,35 @@ def fetch_latest_ohlcv(symbol: str, timeframe: str = '1h', limit: int = 10000) -
     """
     # Primary: Binance Vision (no region blocks)
     try:
+        print("Trying Binance Vision (S3) for data...")
         from download_vision_data import fetch_vision_ohlcv
         df = fetch_vision_ohlcv(symbol, timeframe)
         if not df.empty:
             if len(df) > limit:
                 df = df.tail(limit).reset_index(drop=True)
-            print(f"Loaded {len(df)} bars from Binance Vision")
+            print(f"Vision SUCCESS: {len(df)} bars from Binance Vision")
             return df
-    except ImportError:
-        pass
+        else:
+            print(f"Vision returned empty for {symbol}")
+    except ImportError as ie:
+        print(f"[ERROR] download_vision_data.py NOT FOUND: {ie}")
+        print("Make sure download_vision_data.py is in the project root!")
     except Exception as e:
         print(f"Vision download failed ({e}), trying CCXT...")
 
     # Fallback: CCXT
-    exchange = ccxt.binance({
-        'enableRateLimit': True,
-        'options': {'defaultType': 'future'},
-    })
-
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    return df
+    print("Falling back to CCXT Binance API (may fail with 451 in US)...")
+    try:
+        exchange = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {'defaultType': 'future'},
+        })
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        return df
+    except Exception as e:
+        print(f"[ERROR] CCXT also failed: {e}")
+        return pd.DataFrame()
 
 
 def build_dataset(df: pd.DataFrame) -> (List[Dict[str, float]], List[int]):
