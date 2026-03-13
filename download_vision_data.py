@@ -278,6 +278,12 @@ def fetch_vision_ohlcv(symbol: str, timeframe: str = '1h',
         # Ensure timestamp is datetime (some parquets saved raw int64 ms)
         if 'timestamp' in df.columns and not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', errors='coerce')
+            # Re-save with proper datetime so this fix is permanent
+            try:
+                df.to_parquet(parquet_path, index=False, engine='pyarrow')
+                logger.info(f"Fixed int64 timestamps in {parquet_path}")
+            except Exception:
+                pass
         logger.info(f"Loaded {len(df)} bars from {parquet_path}")
         return df
 
