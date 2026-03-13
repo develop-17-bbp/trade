@@ -1,0 +1,58 @@
+[
+  {
+    "timestamp": "2026-03-12T05:09:28.815671",
+    "model_version": "AAVE_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-12T22:27:01.659073",
+    "model_version": "BTC_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-12T22:27:19.778109",
+    "model_version": "ETH_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-10T22:36:52.385344",
+    "model_version": "BTC_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.0,
+        "samples": 0
+      }
+    }
+  }
+]
