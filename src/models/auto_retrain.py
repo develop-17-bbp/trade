@@ -35,7 +35,9 @@ from src.models.lightgbm_classifier import LightGBMClassifier
 
 def fetch_latest_ohlcv(symbol: str, timeframe: str = '1h', limit: int = 10000) -> pd.DataFrame:
     """
-    Fetch the latest OHLCV data from Binance.
+    Fetch the latest OHLCV data.
+    Primary: Binance Vision (S3 — works in all regions, bypasses 451).
+    Fallback: Binance API via CCXT.
 
     Args:
         symbol: Trading pair (e.g., 'AAVE/USDT')
@@ -45,12 +47,26 @@ def fetch_latest_ohlcv(symbol: str, timeframe: str = '1h', limit: int = 10000) -
     Returns:
         DataFrame with OHLCV data
     """
+    # Primary: Binance Vision (no region blocks)
+    try:
+        from download_vision_data import fetch_vision_ohlcv
+        df = fetch_vision_ohlcv(symbol, timeframe)
+        if not df.empty:
+            if len(df) > limit:
+                df = df.tail(limit).reset_index(drop=True)
+            print(f"Loaded {len(df)} bars from Binance Vision")
+            return df
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"Vision download failed ({e}), trying CCXT...")
+
+    # Fallback: CCXT
     exchange = ccxt.binance({
         'enableRateLimit': True,
         'options': {'defaultType': 'future'},
     })
 
-    # Fetch latest data
     ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df

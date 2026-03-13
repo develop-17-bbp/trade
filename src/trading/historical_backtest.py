@@ -53,11 +53,30 @@ except ImportError:
 def fetch_historical_ohlcv(symbol: str, months: int = 6,
                            timeframe: str = '1h') -> pd.DataFrame:
     """
-    Fetch historical OHLCV from Binance via CCXT.
-    Paginates automatically for large requests.
+    Fetch historical OHLCV data.
+    Primary: Binance Vision (S3 — works in all regions, bypasses 451).
+    Fallback: Binance API via CCXT.
     """
+    # Primary: Binance Vision
+    try:
+        from download_vision_data import fetch_vision_ohlcv
+        df = fetch_vision_ohlcv(symbol, timeframe)
+        if not df.empty:
+            # Filter to requested months
+            if 'timestamp' in df.columns:
+                cutoff = datetime.utcnow() - timedelta(days=months * 30)
+                df = df[df['timestamp'] >= cutoff].reset_index(drop=True)
+            if not df.empty:
+                logger.info(f"Loaded {len(df)} bars from Binance Vision")
+                return df
+    except ImportError:
+        logger.info("download_vision_data not available, trying CCXT...")
+    except Exception as e:
+        logger.warning(f"Vision download failed: {e}, trying CCXT...")
+
+    # Fallback: CCXT
     if not HAS_CCXT:
-        logger.error("ccxt required")
+        logger.error("Neither Vision data nor CCXT available")
         return pd.DataFrame()
 
     exchange = ccxt.binance({

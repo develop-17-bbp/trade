@@ -229,6 +229,74 @@ def download_all(symbols: List[str] = None, timeframe: str = "1h",
 
 
 # ============================================================================
+# SHARED UTILITY: Used by all training scripts as primary data source
+# ============================================================================
+
+def fetch_vision_ohlcv(symbol: str, timeframe: str = '1h',
+                       start_year: int = 2020, data_dir: str = 'data') -> pd.DataFrame:
+    """
+    Primary data source for ALL training scripts.
+    Downloads from Binance Vision (S3) — works even when Binance API returns 451.
+
+    1. Checks for existing parquet file
+    2. Downloads from Vision if missing
+    3. Returns DataFrame with columns: [timestamp, open, high, low, close, volume]
+
+    Usage (from any training script):
+        from download_vision_data import fetch_vision_ohlcv
+        df = fetch_vision_ohlcv('BTC/USDT')  # or 'BTCUSDT'
+    """
+    # Normalize symbol: 'BTC/USDT' -> 'BTCUSDT'
+    clean_symbol = symbol.replace('/', '')
+
+    # Check for existing parquet
+    parquet_path = os.path.join(data_dir, f"{clean_symbol}-{timeframe}.parquet")
+    if os.path.exists(parquet_path):
+        df = pd.read_parquet(parquet_path)
+        logger.info(f"Loaded {len(df)} bars from {parquet_path}")
+        return df
+
+    # Check for existing CSV (legacy naming)
+    csv_candidates = [
+        os.path.join(data_dir, f"{clean_symbol}-{timeframe}.csv"),
+        os.path.join(data_dir, f"{clean_symbol.replace('USDT','')}_USDT_{timeframe}.csv"),
+        os.path.join('data', f"{clean_symbol.replace('USDT','')}_USDT_{timeframe}.csv"),
+    ]
+    for csv_path in csv_candidates:
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+            # Normalize columns
+            col_map = {}
+            for c in df.columns:
+                low = c.lower().strip()
+                if low in ('timestamp', 'time', 'date', 'open_time', 'datetime'):
+                    col_map[c] = 'timestamp'
+                elif low == 'open': col_map[c] = 'open'
+                elif low == 'high': col_map[c] = 'high'
+                elif low == 'low': col_map[c] = 'low'
+                elif low == 'close': col_map[c] = 'close'
+                elif low in ('volume', 'vol'): col_map[c] = 'volume'
+            df = df.rename(columns=col_map)
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            logger.info(f"Loaded {len(df)} bars from {csv_path}")
+            return df
+
+    # Download from Binance Vision
+    path = download_symbol(clean_symbol, timeframe, start_year, DEFAULT_END_YEAR, data_dir)
+    if path:
+        df = pd.read_parquet(path)
+        logger.info(f"Downloaded {len(df)} bars for {clean_symbol} via Binance Vision")
+        return df
+
+    logger.error(f"Could not fetch data for {clean_symbol}/{timeframe}")
+    return pd.DataFrame()
+
+
+# ============================================================================
 # TRAINING INTEGRATION
 # ============================================================================
 
