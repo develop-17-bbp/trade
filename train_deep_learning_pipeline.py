@@ -66,8 +66,22 @@ class PatchTST(nn.Module):
         
         return prob_up, prob_shock
 
-def fetch_data(symbol='AAVE/USDT', days=1825):
+def fetch_data(symbol='BTC/USDT', days=1825):
     _safe_print(f"\n[DATA] Fetching {days} days of {symbol} for PatchTST training...")
+
+    # Primary: Binance Vision (S3 — works in all regions, bypasses 451)
+    try:
+        from download_vision_data import fetch_vision_ohlcv
+        df = fetch_vision_ohlcv(symbol, '1h')
+        if not df.empty:
+            _safe_print(f"  Loaded {len(df)} candles from Binance Vision.")
+            return df['close'].values
+    except ImportError:
+        _safe_print("  download_vision_data not available, trying CCXT...")
+    except Exception as e:
+        _safe_print(f"  Vision download failed: {e}")
+
+    # Fallback: CCXT
     try:
         exchange = ccxt.binance()
         since = exchange.parse8601((datetime.now(UTC) - timedelta(days=days)).isoformat())
@@ -78,10 +92,10 @@ def fetch_data(symbol='AAVE/USDT', days=1825):
             ohlcv.extend(batch)
             since = batch[-1][0] + 1000
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        _safe_print(f"  Loaded {len(df)} candles.")
+        _safe_print(f"  Loaded {len(df)} candles from CCXT.")
         return df['close'].values
     except Exception as e:
-        _safe_print(f"  Failed: {e}. Generating synthetic data.")
+        _safe_print(f"  CCXT failed: {e}. Generating synthetic data.")
         return np.cumsum(np.random.randn(days*24)) + 60000
 
 def train_patchtst():

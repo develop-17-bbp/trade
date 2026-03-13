@@ -32,6 +32,24 @@ from src.indicators.indicators import sma  # ensure import for feature generatio
 
 
 def fetch_ohlcv(symbol: str, timeframe: str, since: int, until: int) -> pd.DataFrame:
+    # Primary: Binance Vision (S3 — bypasses 451 region blocks)
+    try:
+        from download_vision_data import fetch_vision_ohlcv
+        df = fetch_vision_ohlcv(symbol, timeframe)
+        if not df.empty:
+            # Filter to requested date range if since/until provided
+            if 'timestamp' in df.columns and since and until:
+                df['_ts_ms'] = df['timestamp'].astype('int64') // 10**6
+                df = df[(df['_ts_ms'] >= since) & (df['_ts_ms'] <= until)].drop(columns=['_ts_ms'])
+                df = df.reset_index(drop=True)
+            print(f"Loaded {len(df)} bars from Binance Vision")
+            return df
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"Vision download failed ({e}), trying CCXT...")
+
+    # Fallback: CCXT
     exchange = ccxt.binance({
         'enableRateLimit': True,
         'options': {'defaultType': 'future'},

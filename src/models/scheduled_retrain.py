@@ -87,11 +87,27 @@ ASSETS = {
 def fetch_training_data(symbol: str, timeframe: str = '1h',
                         limit: int = 15000) -> pd.DataFrame:
     """
-    Fetch historical OHLCV data from Binance.
-    Handles pagination for >1000 bars.
+    Fetch historical OHLCV data.
+    Primary: Binance Vision (S3 downloads — works in all regions).
+    Fallback: Binance API via CCXT.
     """
+    # Primary: Binance Vision (bypasses 451 region blocks)
+    try:
+        from download_vision_data import fetch_vision_ohlcv
+        df = fetch_vision_ohlcv(symbol, timeframe)
+        if not df.empty:
+            # Trim to requested limit (most recent bars)
+            if len(df) > limit:
+                df = df.tail(limit).reset_index(drop=True)
+            return df
+    except ImportError:
+        logger.info("download_vision_data not available, trying CCXT...")
+    except Exception as e:
+        logger.warning(f"Vision download failed: {e}, trying CCXT...")
+
+    # Fallback: Binance API via CCXT
     if not HAS_CCXT:
-        logger.error("ccxt required for data fetching")
+        logger.error("Neither Vision data nor CCXT available")
         return pd.DataFrame()
 
     exchange = ccxt.binance({
@@ -103,7 +119,6 @@ def fetch_training_data(symbol: str, timeframe: str = '1h',
     since = None
     remaining = limit
 
-    # Paginate (Binance max 1000 per request)
     while remaining > 0:
         batch_size = min(remaining, 1000)
         try:
@@ -113,12 +128,12 @@ def fetch_training_data(symbol: str, timeframe: str = '1h',
             if not ohlcv:
                 break
             all_data.extend(ohlcv)
-            since = ohlcv[-1][0] + 1  # Next timestamp after last bar
+            since = ohlcv[-1][0] + 1
             remaining -= len(ohlcv)
             if len(ohlcv) < batch_size:
-                break  # No more data
+                break
         except Exception as e:
-            logger.warning(f"Fetch batch failed: {e}")
+            logger.warning(f"CCXT fetch failed: {e}")
             break
 
     if not all_data:
@@ -128,7 +143,7 @@ def fetch_training_data(symbol: str, timeframe: str = '1h',
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df = df.drop_duplicates(subset=['timestamp']).sort_values('timestamp').reset_index(drop=True)
 
-    logger.info(f"Fetched {len(df)} bars for {symbol} ({df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]})")
+    logger.info(f"Fetched {len(df)} bars for {symbol} via CCXT ({df['timestamp'].iloc[0]} to {df['timestamp'].iloc[-1]})")
     return df
 
 
