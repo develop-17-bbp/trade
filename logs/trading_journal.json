@@ -14574,10 +14574,11 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null
+    "status": "CLOSED",
+    "pnl": -18.013435819284926,
+    "exit_price": 44993.4,
+    "exit_time": "2026-03-14T03:32:21.026811",
+    "return_pct": -0.36018267899808676
   },
   {
     "timestamp": "2026-03-12T04:16:07.712094",
@@ -14610,10 +14611,11 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null
+    "status": "CLOSED",
+    "pnl": -10.625335958864241,
+    "exit_price": 2502.4,
+    "exit_time": "2026-03-16T20:38:43.401781",
+    "return_pct": -0.21245596949479398
   },
   {
     "timestamp": "2026-03-12T04:20:57.567716",
@@ -14646,9 +14648,10 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null
+    "status": "CLOSED",
+    "pnl": 1073.9811786172925,
+    "exit_price": 2498.04,
+    "exit_time": "2026-03-15T03:21:58.155773",
+    "return_pct": 21.474493927125504
   }
 ]

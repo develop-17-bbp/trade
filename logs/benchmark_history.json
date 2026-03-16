@@ -6998,5 +6998,113 @@
         "samples": 4703
       }
     }
+  },
+  {
+    "timestamp": "2026-03-14T03:32:21.085461",
+    "model_version": "v6.5",
+    "overall_score": 0.0,
+    "overall_rank": "\ud83d\udcc8 BASELINE",
+    "results": {
+      "win_rate": {
+        "timestamp": "2026-03-14T03:32:21.086160",
+        "metric_name": "Trading Win Rate",
+        "metric_key": "win_rate",
+        "value": 0.0,
+        "num_samples": 1,
+        "model_version": "v6.5",
+        "config_snapshot": {},
+        "leaderboard_rank": 0,
+        "leaderboard_total": 0,
+        "beats_models": [],
+        "loses_to_models": [],
+        "percentile": 0.0
+      },
+      "sharpe_ratio": {
+        "timestamp": "2026-03-14T03:32:21.088256",
+        "metric_name": "sharpe_ratio",
+        "metric_key": "sharpe_ratio",
+        "value": 0.0,
+        "num_samples": 0,
+        "model_version": "v6.5",
+        "config_snapshot": {},
+        "leaderboard_rank": 0,
+        "leaderboard_total": 0,
+        "beats_models": [],
+        "loses_to_models": [],
+        "percentile": 0.0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-15T03:21:58.244158",
+    "model_version": "v6.5",
+    "overall_score": 0.0,
+    "overall_rank": "\ud83d\udcc8 BASELINE",
+    "results": {
+      "win_rate": {
+        "timestamp": "2026-03-15T03:21:58.245099",
+        "metric_name": "Trading Win Rate",
+        "metric_key": "win_rate",
+        "value": 1.0,
+        "num_samples": 1,
+        "model_version": "v6.5",
+        "config_snapshot": {},
+        "leaderboard_rank": 0,
+        "leaderboard_total": 0,
+        "beats_models": [],
+        "loses_to_models": [],
+        "percentile": 0.0
+      },
+      "sharpe_ratio": {
+        "timestamp": "2026-03-15T03:21:58.247778",
+        "metric_name": "sharpe_ratio",
+        "metric_key": "sharpe_ratio",
+        "value": 0.0,
+        "num_samples": 0,
+        "model_version": "v6.5",
+        "config_snapshot": {},
+        "leaderboard_rank": 0,
+        "leaderboard_total": 0,
+        "beats_models": [],
+        "loses_to_models": [],
+        "percentile": 0.0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T20:38:43.459305",
+    "model_version": "v6.5",
+    "overall_score": 0.0,
+    "overall_rank": "\ud83d\udcc8 BASELINE",
+    "results": {
+      "win_rate": {
+        "timestamp": "2026-03-16T20:38:43.459353",
+        "metric_name": "Trading Win Rate",
+        "metric_key": "win_rate",
+        "value": 0.5,
+        "num_samples": 2,
+        "model_version": "v6.5",
+        "config_snapshot": {},
+        "leaderboard_rank": 0,
+        "leaderboard_total": 0,
+        "beats_models": [],
+        "loses_to_models": [],
+        "percentile": 0.0
+      },
+      "sharpe_ratio": {
+        "timestamp": "2026-03-16T20:38:43.460820",
+        "metric_name": "Backtest Sharpe Ratio",
+        "metric_key": "sharpe_ratio",
+        "value": 15.5635,
+        "num_samples": 2,
+        "model_version": "v6.5",
+        "config_snapshot": {},
+        "leaderboard_rank": 0,
+        "leaderboard_total": 0,
+        "beats_models": [],
+        "loses_to_models": [],
+        "percentile": 0.0
+      }
+    }
   }
 ]

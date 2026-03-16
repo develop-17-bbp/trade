@@ -195,15 +195,66 @@ class L1SignalEngine:
         dom_period = cycles[0][0] if cycles else 30
         cycle_signal = self._compute_cycle_signal(phase)
 
+        # ----- 7. KALMAN FILTER TREND (quant upgrade) -----
+        kalman_signal = [0.0] * n
+        kalman_data = {}
+        try:
+            from src.models.kalman_filter import KalmanTrendFilter
+            kf = KalmanTrendFilter()
+            import numpy as _np
+            kalman_data = kf.filter(_np.array(closes, dtype=float))
+            # Convert slope to [-1, +1] signal
+            for i in range(n):
+                slope = kalman_data['slope'][i]
+                snr = kalman_data['snr'][i]
+                # Scale slope by SNR: clear signal → strong signal
+                kalman_signal[i] = max(-1.0, min(1.0, slope * 50 * min(snr, 3.0)))
+        except Exception:
+            pass
+
+        # ----- 8. HURST-WEIGHTED OU MEAN REVERSION (quant upgrade) -----
+        ou_signal = [0.0] * n
+        hurst_data = {}
+        ou_data = {}
+        try:
+            from src.models.hurst import HurstExponent
+            from src.models.ou_process import OUProcess
+            import numpy as _np
+            arr = _np.array(closes, dtype=float)
+
+            h_est = HurstExponent()
+            hurst_data = h_est.compute(arr, window=min(200, n))
+
+            ou = OUProcess()
+            ou_data = ou.fit_and_signal(arr, window=min(252, n))
+
+            # Only use OU signal when Hurst confirms mean reversion
+            if hurst_data.get('regime') == 'mean_reverting' and ou_data.get('ou_is_stationary'):
+                ou_z = ou_data.get('ou_z_score', 0)
+                # Last bar gets the OU signal; rest stay 0
+                ou_signal[-1] = max(-1.0, min(1.0, -ou_z / 2.0))
+        except Exception:
+            pass
+
         # ----- COMPOSITE -----
         composite: List[float] = []
+        # Rebalance weights to include new quant signals
+        w = self.weights.copy()
+        # Allocate 5% each to Kalman and OU (taken from trend and mean_reversion)
+        w_kalman = 0.05
+        w_ou = 0.05
+        w_trend_adj = max(0.0, w['trend'] - 0.025)
+        w_mr_adj = max(0.0, w['mean_reversion'] - 0.025)
+
         for i in range(n):
-            s = (self.weights['trend'] * trend_signal[i]
-                 + self.weights['mean_reversion'] * mr_signal[i]
-                 + self.weights['momentum'] * mom_signal[i]
-                 + self.weights['volatility'] * vol_signal[i]
-                 + self.weights.get('forecast',0) * forecast_signal[i]
-                 + self.weights['cycle'] * cycle_signal[i])
+            s = (w_trend_adj * trend_signal[i]
+                 + w_mr_adj * mr_signal[i]
+                 + w['momentum'] * mom_signal[i]
+                 + w['volatility'] * vol_signal[i]
+                 + w.get('forecast', 0) * forecast_signal[i]
+                 + w['cycle'] * cycle_signal[i]
+                 + w_kalman * kalman_signal[i]
+                 + w_ou * ou_signal[i])
             # Clamp to [-1, +1]
             composite.append(max(-1.0, min(1.0, s)))
 
@@ -219,6 +270,8 @@ class L1SignalEngine:
             'volatility_signal': vol_signal,
             'forecast_signal': forecast_signal,
             'cycle_signal': cycle_signal,
+            'kalman_signal': kalman_signal,
+            'ou_signal': ou_signal,
             'short_ma': short_ma,
             'long_ma': long_ma,
             'rsi': rsi_vals,
@@ -233,6 +286,9 @@ class L1SignalEngine:
             'dominant_cycles': cycles,
             'holding_period': adaptive_holding_period(dom_period, phase),
             'l1_features': l1_features,
+            'kalman_data': kalman_data,
+            'hurst_data': hurst_data,
+            'ou_data': ou_data,
         }
 
     def _compute_trend_signal(self, closes, short_ma, long_ma, crossover,
