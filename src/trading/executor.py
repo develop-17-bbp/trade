@@ -1017,7 +1017,14 @@ class TradingExecutor:
                     ds.add_layer_log("L2", f"Sentiment: {label} ({sc:.2f})", "INFO")
                     ds.add_layer_log("L3", f"Risk veto: {'ACTIVE' if veto_active else 'CLEAR'}", "WARN" if veto_active else "INFO")
                     ds.add_layer_log("L4", f"Signal fusion: L1={attr['l1']:.2f} L2={attr['l2']:.2f} L3={attr['l3']:.2f}", "INFO")
-                    ds.add_layer_log("L5", "Execution: Order processed successfully", "INFO")
+                    if veto_active:
+                        ds.add_layer_log("L5", "Execution blocked: VPIN risk veto active", "WARN")
+                    elif _force_trade_mode and last_signal == 0:
+                        ds.add_layer_log("L5", "Execution pending: force-trade override active", "WARN")
+                    elif last_signal != 0 or _force_trade_mode:
+                        ds.add_layer_log("L5", "Execution pending: trade evaluation in progress", "INFO")
+                    else:
+                        ds.add_layer_log("L5", "No execution: signal remained flat", "INFO")
                     ds.add_layer_log("L6", f"Strategist confidence: {conf:.2f}", "INFO")
                     ds.add_layer_log("L7", "Pattern detection: Active", "INFO")
                     ds.add_layer_log("L8", "Memory retrieval: 87% similarity", "INFO")
@@ -1173,8 +1180,26 @@ class TradingExecutor:
             vpin_status = self.vpin.is_flow_toxic()
             if vpin_status['is_toxic']:
                 if _force_trade:
+                    try:
+                        from src.api.state import DashboardState
+                        DashboardState().add_layer_log(
+                            "L5",
+                            f"Execution override: forcing trade despite VPIN {vpin_status['vpin']:.2f}",
+                            "WARN",
+                        )
+                    except Exception:
+                        pass
                     _safe_print(f"  [FORCE-TRADE] VPIN toxic ({vpin_status['vpin']:.2f}) — overriding veto for testnet")
                 else:
+                    try:
+                        from src.api.state import DashboardState
+                        DashboardState().add_layer_log(
+                            "L5",
+                            f"Execution blocked: VPIN {vpin_status['vpin']:.2f} triggered risk veto",
+                            "WARN",
+                        )
+                    except Exception:
+                        pass
                     _safe_print(f"  [VETO] Adverse Selection Protect: VPIN {vpin_status['vpin']:.2f} is Toxic. Blocking.")
                     return
 
@@ -1294,6 +1319,11 @@ class TradingExecutor:
             )
             
             if execution_id != "FAILED":
+                try:
+                    from src.api.state import DashboardState
+                    DashboardState().add_layer_log("L5", f"Execution succeeded: order {execution_id}", "INFO")
+                except Exception:
+                    pass
                 # ═══ LAYER 6: Per-Trade LLM Analysis (NEW) ═══
                 # Generate detailed reasoning for THIS SPECIFIC TRADE
                 llm_reasoning = ""
@@ -1373,6 +1403,12 @@ class TradingExecutor:
                         'timestamp': time.time(),
                         'direction': final_direction,
                     })
+                except Exception:
+                    pass
+            else:
+                try:
+                    from src.api.state import DashboardState
+                    DashboardState().add_layer_log("L5", "Execution failed: router returned FAILED", "ERROR")
                 except Exception:
                     pass
 
