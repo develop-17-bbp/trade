@@ -88,8 +88,9 @@ class RiskManager:
                  max_trades_per_day: int = 20,
                  cooldown_after_loss: float = 30.0,
                  **kwargs):
-        # Position limits
-        self.max_position_pct = kwargs.get('max_position_size_pct', max_position_pct)
+        # Position limits (static baselines — MC can tighten dynamically)
+        self._base_max_position_pct = kwargs.get('max_position_size_pct', max_position_pct)
+        self.max_position_pct = self._base_max_position_pct
         self.max_portfolio_pct = max_portfolio_pct
 
         # Loss controls
@@ -107,6 +108,10 @@ class RiskManager:
         self.max_trades_per_day = max_trades_per_day
         self.cooldown_after_loss = cooldown_after_loss  # minutes
 
+        # Monte Carlo dynamic risk adjustment
+        self._mc_risk_score = 0.5
+        self._mc_position_scale = 1.0
+
         # State tracking
         self.daily_loss = 0.0
         self.daily_trades = 0
@@ -119,7 +124,25 @@ class RiskManager:
         self._last_loss_time = 0.0
         self._veto_active = False
 
-    def is_trade_safe(self, current_price: float, direction: int, 
+    def update_mc_risk(self, mc_risk_score: float = 0.5, mc_position_scale: float = 1.0):
+        """
+        Update risk limits dynamically from Monte Carlo VaR/CVaR engine.
+
+        When MC risk is elevated (score > 0.7), position limits tighten automatically.
+        This replaces static percentage limits with forward-looking risk assessment.
+        """
+        self._mc_risk_score = mc_risk_score
+        self._mc_position_scale = mc_position_scale
+
+        # Dynamic position limit: tighten when MC says risk is high
+        if mc_risk_score > 0.7:
+            self.max_position_pct = self._base_max_position_pct * 0.5
+        elif mc_risk_score > 0.5:
+            self.max_position_pct = self._base_max_position_pct * 0.75
+        else:
+            self.max_position_pct = self._base_max_position_pct
+
+    def is_trade_safe(self, current_price: float, direction: int,
                         atr_value: float, account_balance: float) -> Tuple[bool, str]:
         """Wrapper for evaluate_trade to match HybridStrategy interface."""
         res = self.evaluate_trade(

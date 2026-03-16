@@ -3,13 +3,18 @@ L4 Meta-Controller Orchestration Layer
 ========================================
 Fuses v5.5 (LightGBM Core) and v6.0 (RL Agent) actions via an XGBoost
 Arbitrator (mocked conceptually here) trained on historical alignments.
+
+Quant Finance Integration:
+  - HMM regime → dynamic model weight allocation (crisis→RL, bull→LGB)
+  - Kalman SNR → confidence multiplier (high SNR = clear signal)
+  - MC risk score → position scale reduction under elevated risk
 """
 from typing import Dict, Tuple, Optional
 
 class MetaController:
     """
     Arbitrates and outputs a Unified Signal with Confidence and Size Rec.
-    Veto Logic (Enhanced): LightGBM Long + FinBERT Bearish -> Halve size (v5.5); 
+    Veto Logic (Enhanced): LightGBM Long + FinBERT Bearish -> Halve size (v5.5);
     RL simulates flip risk -> Full veto if >10% drawdown prob.
     """
     def __init__(self, config: Optional[Dict] = None):
@@ -18,16 +23,21 @@ class MetaController:
         # small values (0.0-0.1) gently tilt confidence
         self.bias = self.config.get('bias', 0.0)
 
-    def arbitrate(self, 
-                  lgb_class: int, lgb_conf: float, 
-                  rl_action: int, rl_prob: float, 
+    def arbitrate(self,
+                  lgb_class: int, lgb_conf: float,
+                  rl_action: int, rl_prob: float,
                   features: Dict[str, float],
                   finbert_score: float,
                   patch_result: Optional[Dict] = None,
                   asset_name: str = 'BTC',
-                  agentic_bias: float = 0.0) -> Tuple[int, float, float]:
+                  agentic_bias: float = 0.0,
+                  hmm_regime: str = 'sideways',
+                  hmm_crisis_prob: float = 0.0,
+                  kalman_snr: float = 1.0,
+                  mc_risk_score: float = 0.5,
+                  mc_position_scale: float = 1.0) -> Tuple[int, float, float]:
         """
-        Returns: 
+        Returns:
            final_direction (-1, 0, 1)
            final_confidence (0.0 - 1.0)
            position_scale (0.0 - 1.0) -> Multiplier for sizing (1.0 = full size)
@@ -36,20 +46,41 @@ class MetaController:
             return 0, 1.0, 0.0
 
         vol = features.get('ewma_vol', 0.0)
-        
-        # Dynamic Weighting Based on Volatility Regime
-        # Ramps up RL weight to 80% and LightGBM to 20% in high volatility
-        if vol > 0.04:  # Simulated threshold
-            lgb_weight = 0.15
-            rl_weight = 0.70
+
+        # ── HMM Regime-Based Dynamic Weighting ──
+        # Replaces simple vol threshold with 4-state regime model
+        if hmm_regime == 'crisis' or hmm_crisis_prob > 0.5:
+            # Crisis: RL dominates (designed for drawdown management)
+            lgb_weight = 0.10
+            rl_weight = 0.75
             patch_weight = 0.15
-        else:
-            lgb_weight = 0.50
-            rl_weight = 0.30
+        elif hmm_regime == 'bull':
+            # Bull: LGB dominates (strong at capturing directional trends)
+            lgb_weight = 0.55
+            rl_weight = 0.25
             patch_weight = 0.20
+        elif hmm_regime == 'bear':
+            # Bear: balanced with RL edge (needs drawdown protection)
+            lgb_weight = 0.30
+            rl_weight = 0.50
+            patch_weight = 0.20
+        else:
+            # Sideways or unknown: use vol-based fallback
+            if vol > 0.04:
+                lgb_weight = 0.15
+                rl_weight = 0.70
+                patch_weight = 0.15
+            else:
+                lgb_weight = 0.50
+                rl_weight = 0.30
+                patch_weight = 0.20
 
         position_scale = 1.0
-        
+
+        # ── HMM Crisis Veto ──
+        if hmm_crisis_prob > 0.70:
+            position_scale *= 0.3  # Severe reduction in crisis regime
+
         # --- Veto Rules ---
         # LightGBM Long + FinBERT Bearish -> Halve size (v5.5)
         if lgb_class == 1 and finbert_score < -0.1:
@@ -72,7 +103,7 @@ class MetaController:
             final_class = lgb_class
             # Aggregate confidence
             final_conf = min(1.0, (lgb_conf * lgb_weight) + (rl_prob * rl_weight))
-            
+
             # Boost scale if alignment is strong
             if lgb_class != 0 and (vol * 2 > 0.02) and (features.get('vol_adj_momentum', 0) > 0.85):
                 position_scale = min(1.0, position_scale * 1.5)  # 1% stretch target unlocked!
@@ -97,30 +128,41 @@ class MetaController:
                 final_conf = 1.0 - abs(combined_score)
                 position_scale = 0.0
 
+        # ── Kalman SNR Confidence Multiplier ──
+        # High SNR = clear signal → boost confidence; Low SNR = noise → reduce
+        if kalman_snr > 2.0:
+            final_conf = min(1.0, final_conf * 1.15)  # +15% confidence boost
+        elif kalman_snr < 0.3:
+            final_conf *= 0.7  # -30% confidence penalty (noisy regime)
+
         # apply bias toward a direction by adjusting confidence
         if self.bias and final_class != 0:
             adj = self.bias if final_class > 0 else -self.bias
             final_conf = float(min(1.0, max(0.0, float(final_conf) + float(adj))))
-            
-        # --- NEW: Agentic Macro Bias ---
+
+        # --- Agentic Macro Bias ---
         if agentic_bias and final_class != 0:
-            # Shift confidence based on LLM Macro Analysis
             agent_adj = agentic_bias if final_class > 0 else -agentic_bias
             final_conf = float(min(1.0, max(0.0, float(final_conf) + float(agent_adj))))
 
-        # --- NEW ACCURACY STEP: KELLY SIZING ---
+        # --- KELLY SIZING ---
         from src.models.meta_sizer import MetaSizer
         ms = MetaSizer()
         kelly_factor = ms.size(features, win_prob=final_conf, win_loss_ratio=2.0)
         position_scale = float(position_scale) * kelly_factor
 
-        # --- NEW ACCURACY STEP: CORRELATION VETO ---
+        # --- CORRELATION VETO ---
         from src.trading.correlation_monitor import CorrelationMonitor
         corr_mon = CorrelationMonitor()
-        # If this is the second trade in a highly correlated market, reduce size
         if asset_name != 'BTC':
             corr = corr_mon.get_correlation('BTC', asset_name)
             if corr > 0.90:
-                position_scale *= 0.5 # Reduce exposure to correlated "herds"
-        
+                position_scale *= 0.5
+
+        # ── Monte Carlo Risk Scaling ──
+        # MC-derived position scale caps sizing based on forward-looking VaR
+        if mc_risk_score > 0.7:
+            position_scale *= 0.5  # Cut size in half under elevated risk
+        position_scale = min(position_scale, mc_position_scale)
+
         return final_class, float(final_conf), float(position_scale)

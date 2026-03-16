@@ -61,31 +61,53 @@ class AdaptiveEngine:
             asset_type='BTC'
         )
 
-    def select_best_strategy(self, 
-                             sentiment_score: float, 
-                             volatility: float, 
+    def select_best_strategy(self,
+                             sentiment_score: float,
+                             volatility: float,
                              trend_strength: float,
                              chop_index: float = 50.0,
-                             asset_type: str = 'BTC') -> str:
+                             asset_type: str = 'BTC',
+                             hurst_regime: str = '',
+                             hmm_regime: str = '') -> str:
         """
         Logic to pick the core strategy for the current market state.
+
+        Quant upgrades:
+          - Hurst exponent regime replaces crude chop index for trend/reversion detection
+          - HMM regime adds crisis awareness for defensive positioning
         """
+        # ── HMM Crisis Override ──
+        if hmm_regime == 'crisis':
+            return 'scalping'  # Minimal exposure during crisis regime
+
+        # ── Hurst-Based Strategy Selection ── (takes priority when available)
+        if hurst_regime:
+            if hurst_regime == 'trending':
+                # Mathematically confirmed persistent series → trend follow
+                if volatility > 0.05:
+                    return 'volatility_breakout'
+                return 'trend_following'
+            elif hurst_regime == 'mean_reverting':
+                # Anti-persistent series → mean reversion is statistically grounded
+                return 'mean_reversion'
+            # hurst_regime == 'random' → fall through to legacy logic
+
         # Logic 1: Extreme Volatility -> Breakout
         if volatility > 0.05:
             return 'volatility_breakout'
-        
+
         # Logic 2: Choppy Market (CHOP > 60) -> Scalping
         if chop_index > 60.0:
             return 'scalping'
-        
+
         # Logic 3: Strong Trend + Positive Sentiment -> Trend Following
         if abs(trend_strength) > 0.7 and abs(sentiment_score) > 0.2:
             return 'trend_following'
-        
+
         # Logic 4: Low Volatility + Neutral Sentiment -> Mean Reversion
         if volatility < 0.02 and abs(sentiment_score) < 0.1:
             return 'mean_reversion'
-        
+
         # Default: Pick based on historical performance (Learning)
         best_strat = max(self.perf_scores, key=self.perf_scores.get)
         return best_strat
@@ -104,15 +126,17 @@ class AdaptiveEngine:
             self.perf_scores[strategy_used] = max(0.1, min(2.0, self.perf_scores[strategy_used]))
             self._save_memory()
 
-    def generate_adaptive_signal(self, 
-                                 prices: List[float], 
-                                 highs: List[float], 
-                                 lows: List[float], 
+    def generate_adaptive_signal(self,
+                                 prices: List[float],
+                                 highs: List[float],
+                                 lows: List[float],
                                  volumes: List[float],
                                  sentiment_score: float,
-                                 asset: str = 'BTC') -> Dict:
+                                 asset: str = 'BTC',
+                                 hmm_regime: str = '') -> Dict:
         """
         The main entry point: Analyzes market -> Picks Strategy -> Generates Signal.
+        Now includes Hurst exponent for mathematically-grounded strategy selection.
         """
         # Calculate market state
         arr_prices = np.asarray(prices)
@@ -124,26 +148,45 @@ class AdaptiveEngine:
             }
 
         vol = (np.max(arr_prices[-20:]) - np.min(arr_prices[-20:])) / np.mean(arr_prices[-20:])
-        
+
         from src.indicators.indicators import sma, choppiness_index
         ma20 = sma(prices, 20)
         ma50 = sma(prices, 50) if len(prices) >= 50 else ma20
         trend = 1.0 if ma20[-1] > ma50[-1] else -1.0
-        
+
         chop_vals = choppiness_index(highs, lows, prices, 14)
         chop = chop_vals[-1] if len(chop_vals) > 0 else 50.0
-        
-        strategy_name = self.select_best_strategy(sentiment_score, vol, trend, chop, asset)
+
+        # ── Compute Hurst Exponent ──
+        hurst_regime = ''
+        hurst_value = 0.5
+        if len(arr_prices) >= 100:
+            try:
+                from src.models.hurst import HurstExponent
+                h = HurstExponent()
+                hurst_result = h.compute(arr_prices, window=min(200, len(arr_prices)))
+                hurst_regime = hurst_result.get('regime', '')
+                hurst_value = hurst_result.get('hurst', 0.5)
+            except Exception:
+                pass
+
+        strategy_name = self.select_best_strategy(
+            sentiment_score, vol, trend, chop, asset,
+            hurst_regime=hurst_regime, hmm_regime=hmm_regime
+        )
         strategy = self.strategies[strategy_name]
-        
+
         raw_signal = strategy.generate_signal(prices, highs, lows, volumes)
-        
+
         return {
             'strategy_selected': strategy_name,
             'signal': raw_signal,
             'market_state': {
                 'volatility': vol,
                 'trend': trend,
-                'sentiment': sentiment_score
+                'sentiment': sentiment_score,
+                'hurst': hurst_value,
+                'hurst_regime': hurst_regime,
+                'hmm_regime': hmm_regime,
             }
         }
