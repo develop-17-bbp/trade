@@ -101,6 +101,30 @@ class AgenticStrategist:
         self.gemini_quota_exhausted_until = 0.0  # Timestamp
         self.fallback_mode = False  # Switch to rule-based if quota hit
 
+        # ── NEW: Constrained LLM System (Math Injection + Prompt Constraints) ──
+        # Pluggable LLM router with automatic fallback chain
+        self._constrained_analyst = None
+        self._lora_trainer = None
+        try:
+            from src.ai.llm_provider import LLMRouter, LLMConfig
+            from src.ai.prompt_constraints import ConstrainedLLMAnalyst
+            router = LLMRouter()
+            # Register current provider
+            router.add_provider('primary', LLMConfig(
+                provider=self.provider,
+                api_key=self.api_key or '',
+                model=self.model_name,
+            ))
+            # Always add local fallback
+            if self.provider != 'local':
+                router.add_provider('local', LLMConfig(
+                    provider='ollama', model='mistral',
+                ))
+            self._constrained_analyst = ConstrainedLLMAnalyst(llm_router=router)
+            self.logger.info("Constrained LLM analyst initialized with math injection + prompt constraints")
+        except Exception as e:
+            self.logger.debug(f"Constrained LLM init skipped: {e}")
+
     def analyze_performance(self, trade_history: List[Dict], current_config: Dict, market_data: Dict) -> StrategistDecision:
         """
         Perceives trade history and market state to provide a structured strategic update.
@@ -611,6 +635,85 @@ Keep response to 2-3 sentences maximum. Be specific about the reasoning.
             suggested_config_update={},
             macro_bias=0.0
         )
+
+    # ── NEW: Constrained Analysis (Math Injection + Prompt Constraints) ──
+
+    def constrained_analyze(self, prices, highs, lows, volumes,
+                            sentiment_score: float = 0.0,
+                            asset: str = 'BTCUSDT',
+                            account_balance: float = 10000.0,
+                            trade_history_text: str = '',
+                            fallback_chain: List[str] = None) -> StrategistDecision:
+        """
+        Run LLM analysis with full math injection and prompt constraints.
+
+        This is the RECOMMENDED way to call the LLM. It:
+          1. Pre-computes ALL quant features from raw data (MathInjector)
+          2. Injects them into the prompt as GROUND TRUTH
+          3. Applies safety constraints (PromptConstraintEngine)
+          4. Routes to best available LLM (LLMRouter with fallback)
+          5. Validates response against allowed ranges
+          6. Logs decision for future LoRA fine-tuning
+
+        The LLM CANNOT hallucinate numbers because every value is pre-computed.
+        """
+        if self._constrained_analyst is None:
+            self.logger.warning("Constrained analyst not available, using rule-based")
+            return self._get_fallback_decision("Constrained analyst not initialized")
+
+        try:
+            result = self._constrained_analyst.analyze_market(
+                prices=prices, highs=highs, lows=lows, volumes=volumes,
+                sentiment_score=sentiment_score, asset=asset,
+                account_balance=account_balance,
+                trade_history=trade_history_text,
+                fallback_chain=fallback_chain,
+            )
+
+            # Log for LoRA training data collection
+            try:
+                if self._lora_trainer is None:
+                    from src.ai.lora_trainer import LoRATrainer
+                    self._lora_trainer = LoRATrainer()
+                quant_state = result.pop('_quant_state', {})
+                self._lora_trainer.log_decision(quant_state, result)
+            except Exception:
+                pass
+
+            # Convert to StrategistDecision
+            return StrategistDecision(
+                market_regime=result.get('market_regime', 'VOLATILE'),
+                reasoning_trace=result.get('reasoning_trace', 'No reasoning provided'),
+                confidence_score=int(result.get('confidence_score', 50)),
+                suggested_config_update=result.get('suggested_config_update', {}),
+                macro_bias=float(result.get('macro_bias', 0.0)),
+            )
+
+        except Exception as e:
+            self.logger.error(f"Constrained analysis failed: {e}")
+            return self._get_fallback_decision(f"Constrained analysis error: {str(e)[:100]}")
+
+    def constrained_explain_trade(self, prices, highs, lows, volumes,
+                                  asset: str, direction: int, entry_price: float,
+                                  l1_info: Dict = None, l2_info: Dict = None,
+                                  l3_info: Dict = None, market_info: Dict = None) -> str:
+        """
+        Generate constrained per-trade reasoning with math injection.
+        Returns a short explanation string.
+        """
+        if self._constrained_analyst is None:
+            return f"{'LONG' if direction > 0 else 'SHORT'} {asset} @ {entry_price} (LLM unavailable)"
+
+        try:
+            result = self._constrained_analyst.explain_trade(
+                prices=prices, highs=highs, lows=lows, volumes=volumes,
+                asset=asset, direction=direction, entry_price=entry_price,
+                l1_info=l1_info, l2_info=l2_info,
+                l3_info=l3_info, market_info=market_info,
+            )
+            return result.get('entry_reason', 'No explanation available')
+        except Exception as e:
+            return f"{'LONG' if direction > 0 else 'SHORT'} {asset} @ {entry_price} (Error: {str(e)[:50]})"
 
     def record_feedback(self, actual_success: bool, agent_predicted_confidence: int):
         """Bayesian update for historical accuracy."""

@@ -35,7 +35,12 @@ class MetaController:
                   hmm_crisis_prob: float = 0.0,
                   kalman_snr: float = 1.0,
                   mc_risk_score: float = 0.5,
-                  mc_position_scale: float = 1.0) -> Tuple[int, float, float]:
+                  mc_position_scale: float = 1.0,
+                  hawkes_intensity: float = 0.0,
+                  hawkes_trade_allowed: bool = True,
+                  alpha_freshness: float = 1.0,
+                  evt_risk_score: float = 0.3,
+                  evt_position_scale: float = 1.0) -> Tuple[int, float, float]:
         """
         Returns:
            final_direction (-1, 0, 1)
@@ -43,6 +48,11 @@ class MetaController:
            position_scale (0.0 - 1.0) -> Multiplier for sizing (1.0 = full size)
         """
         if not features:
+            return 0, 1.0, 0.0
+
+        # ── Hawkes Event Clustering Veto ──
+        # When event intensity is spiking (clustering), defer new entries
+        if not hawkes_trade_allowed:
             return 0, 1.0, 0.0
 
         vol = features.get('ewma_vol', 0.0)
@@ -164,5 +174,18 @@ class MetaController:
         if mc_risk_score > 0.7:
             position_scale *= 0.5  # Cut size in half under elevated risk
         position_scale = min(position_scale, mc_position_scale)
+
+        # ── Alpha Decay Confidence Adjustment ──
+        # Stale signals get reduced confidence; fresh signals preserved
+        if alpha_freshness < 1.0:
+            final_conf *= alpha_freshness
+
+        # ── EVT Tail Risk Scaling ──
+        # Extreme Value Theory: heavy tails → reduce position
+        if evt_risk_score > 0.7:
+            position_scale *= 0.4  # Heavy tail regime
+        elif evt_risk_score > 0.5:
+            position_scale *= 0.7
+        position_scale = min(position_scale, evt_position_scale)
 
         return final_class, float(final_conf), float(position_scale)
