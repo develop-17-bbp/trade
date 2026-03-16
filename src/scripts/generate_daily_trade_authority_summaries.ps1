@@ -235,6 +235,7 @@ while ($current -le $EndDate.Date) {
         "- Average recorded confidence: $([math]::Round($stats.AvgConfidence * 100, 1))%",
         "- Approximate total notional value of orders: USD $('{0:N2}' -f $stats.TotalNotional)",
         "- Recorded time window: $(if ($stats.FirstTimestamp) { $stats.FirstTimestamp } else { 'No entries recorded' }) to $(if ($stats.LastTimestamp) { $stats.LastTimestamp } else { 'No entries recorded' })",
+        "- Profit achieved for this day based on journaled trade P&L: USD $('{0:N2}' -f $stats.ClosedPnl)",
         "- Realized P&L from closed trades recorded for this day: USD $('{0:N2}' -f $stats.ClosedPnl)",
         "",
         "Breakdown by asset:"
@@ -252,6 +253,13 @@ while ($current -le $EndDate.Date) {
             "- The journal records both open and closed trades for this date."
         } else {
             "- There are no recorded positions to describe for this date."
+        }),
+        $(if ($stats.ClosedPnl -gt 0) {
+            "- The journal shows a positive profit of USD $('{0:N2}' -f $stats.ClosedPnl) achieved on this date."
+        } elseif ($stats.ClosedPnl -lt 0) {
+            "- The journal shows a net loss of USD $('{0:N2}' -f [math]::Abs($stats.ClosedPnl)) recorded on this date."
+        } else {
+            "- The journal does not yet show realized profit for this date."
         }),
         "",
         "What changed from the previous day:"
