@@ -1,57 +1,7001 @@
 [
   {
-    "timestamp": "2026-03-12T05:09:28.815671",
-    "model_version": "AAVE_1h",
+    "timestamp": "2026-03-16T17:10:03.036911",
+    "model_version": "BNBUSDT_4h",
     "results": {
       "lgbm_direction_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.42217484008528783,
+        "samples": 469
       },
       "lgbm_high_conf_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.42080378250591016,
+        "samples": 469
       }
     }
   },
   {
-    "timestamp": "2026-03-12T22:27:01.659073",
-    "model_version": "BTC_1h",
+    "timestamp": "2026-03-16T17:10:16.511849",
+    "model_version": "BTCUSDT_1h",
     "results": {
       "lgbm_direction_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.4515471558273115,
+        "samples": 5397
       },
       "lgbm_high_conf_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.4782051282051282,
+        "samples": 5397
       }
     }
   },
   {
-    "timestamp": "2026-03-12T22:27:19.778109",
-    "model_version": "ETH_1h",
+    "timestamp": "2026-03-16T17:10:17.740483",
+    "model_version": "ETHUSDT_1h",
     "results": {
       "lgbm_direction_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.4680063458487573,
+        "samples": 1891
       },
       "lgbm_high_conf_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.49504950495049505,
+        "samples": 1891
       }
     }
   },
   {
-    "timestamp": "2026-03-10T22:36:52.385344",
-    "model_version": "BTC_1h",
+    "timestamp": "2026-03-16T17:10:32.635396",
+    "model_version": "BNBUSDT_1h",
     "results": {
       "lgbm_direction_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.47268734559429043,
+        "samples": 3643
       },
       "lgbm_high_conf_accuracy": {
-        "value": 0.0,
-        "samples": 0
+        "value": 0.5205047318611987,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:10:34.052160",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4800815267741338,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5214723926380368,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:10:42.258998",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4881990219009143,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.489247311827957,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:10:59.659562",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.39451114922813035,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.41120478651074244,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:11:08.842150",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45773241624140226,
+        "samples": 4507
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5107296137339056,
+        "samples": 4507
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:11:15.287946",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46151066136610047,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48033924441017734,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:11:28.789928",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4719751809720786,
+        "samples": 4835
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6578947368421053,
+        "samples": 4835
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:11:37.454176",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4547858276044421,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43419788664745435,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:11:40.581759",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4925373134328358,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4831081081081081,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:11:52.149510",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4737853417513039,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5232198142414861,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:11:55.934054",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43975155279503103,
+        "samples": 805
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.41522491349480967,
+        "samples": 805
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:12:10.715900",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47680483118309086,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47692307692307695,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:12:13.786152",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44136460554371004,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4550408719346049,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:12:45.270823",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42644148304525664,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5872274143302181,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:13:23.233572",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42172696923215736,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.7272727272727273,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:13:27.859147",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4991119005328597,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5121412803532008,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:14:39.435888",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.422102754530843,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.513677811550152,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:14:51.498888",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4529234147680483,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46173688736027513,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:14:55.895791",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4694615106613661,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5555555555555556,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:15:12.266081",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4752607055691147,
+        "samples": 4507
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4759825327510917,
+        "samples": 4507
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:15:16.846630",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4349680170575693,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42824074074074076,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:15:54.192551",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4489531221048731,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4984391259105099,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:15:58.368390",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43196807626226236,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47577639751552797,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:16:12.375884",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4211686879823594,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4185714285714286,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:16:20.443363",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49500318945354027,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5233644859813084,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:16:46.046551",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42668129156097895,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4509394572025052,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:16:55.591436",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48394180620367827,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4878676470588235,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:17:05.040853",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44488615829418143,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48936170212765956,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:17:15.075217",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.3126795240049241,
+        "samples": 2437
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.16905444126074498,
+        "samples": 2437
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:17:17.882142",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42778390297684676,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4251412429378531,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:17:54.114700",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4330386594537538,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6450116009280742,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:18:06.630452",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4647268734559429,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46674182638105977,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:18:51.062890",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42762897479878614,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6166077738515902,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:18:55.127508",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49733570159857904,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4988066825775656,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:19:18.963595",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4376566829397018,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6223776223776224,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:19:23.632739",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48691860465116277,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5011764705882353,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:19:46.771944",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4603348888278891,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.543859649122807,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:20:26.070133",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4114409455923486,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4286626916524702,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:20:30.427871",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4635879218472469,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4652956298200514,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:20:55.644222",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.408643868988541,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.40419278996865204,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:05.140811",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48395662757247176,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.503968253968254,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:11.894037",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48378839590443684,
+        "samples": 1172
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4962264150943396,
+        "samples": 1172
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:13.971757",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4680232558139535,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46808510638297873,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:25.777744",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.430267845362185,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42038946162657503,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:33.541419",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4491384102279044,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4730639730639731,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:46.703851",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46729664628497314,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4924829157175399,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:52.925423",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4399014778325123,
+        "samples": 4060
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.350844277673546,
+        "samples": 4060
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:21:55.120914",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4792685519880927,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4854368932038835,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:22:40.618937",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4196561826322481,
+        "samples": 18091
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5145197319434103,
+        "samples": 18091
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:22:49.609449",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45247560534875314,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43424657534246575,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:22:53.322389",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46656976744186046,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47079646017699117,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:22:58.790233",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5071664829106945,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5063469675599436,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:23:44.653707",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4008444385802876,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5285714285714286,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:23:52.768485",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4267583289264939,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.41040462427745666,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:24:26.999462",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45163501748131896,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49782293178519593,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:24:31.938109",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48845470692717585,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49228395061728397,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:24:41.371389",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.475093399750934,
+        "samples": 4818
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46886446886446886,
+        "samples": 4818
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:25:04.291272",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41694154901702074,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.456441717791411,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:25:07.510083",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44197952218430037,
+        "samples": 586
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.441351888667992,
+        "samples": 586
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:25:23.484323",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4293442406649954,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44663930220625964,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:25:52.592003",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43579227401208226,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46310962901208835,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:26:01.506296",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46801590169859053,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5208333333333334,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:26:26.814032",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.3985635956444513,
+        "samples": 12949
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4608555286521388,
+        "samples": 12949
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:26:31.670547",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.38866396761133604,
+        "samples": 1482
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.3809128630705394,
+        "samples": 1482
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:26:52.065719",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4487052242172697,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.3904761904761905,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:06.207360",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44582593250444047,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43532058492688414,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:07.132441",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4345006485084306,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4725433526011561,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:18.421914",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4746173945502053,
+        "samples": 5358
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.696969696969697,
+        "samples": 5358
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:19.413186",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47581989994441354,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5963302752293578,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:31.605837",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4903253242611099,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5051602390005432,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:33.916162",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4919022783420258,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5370370370370371,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:43.618126",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46747752511898466,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45454545454545453,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:27:48.470962",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43660418963616315,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44772447724477243,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:28:04.483742",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43449003826362315,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46568627450980393,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:28:06.914966",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4840085287846482,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45893719806763283,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:32:46.531117",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4443209190290902,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4938461538461538,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:32:56.747657",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4697053918843802,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49328859060402686,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:33:00.120517",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48352115670848395,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5224719101123596,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:33:21.999937",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44839725773577915,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5212765957446809,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:33:38.203061",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4708171206225681,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5163511187607573,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:33:48.906977",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48075696364022963,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48220436280137774,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:33:58.000021",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4701843151427539,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46867167919799496,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:34:09.207315",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46765449945789667,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4881516587677725,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:34:46.821854",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43844834410872147,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6936026936026936,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:35:07.022042",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45939367116618723,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4887459807073955,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:35:12.381320",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44368059227921736,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43132108486439197,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:35:23.772633",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46825232678386763,
+        "samples": 4835
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4766208251473477,
+        "samples": 4835
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:35:27.418584",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4562899786780384,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45930232558139533,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:35:31.911899",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4257006874669487,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.416195856873823,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:35:38.083040",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46729309721720275,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4602422327540811,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:36:02.067823",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46362887729892943,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48007357449417537,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:36:04.864053",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5181236673773987,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4874551971326165,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:36:33.415401",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44202833167914823,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4672897196261682,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:36:37.112033",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4531422271223815,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4550898203592814,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:37:27.978731",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4291492424761774,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48868028713418,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:37:36.671107",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45861944344054933,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5204918032786885,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:37:49.300134",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.475626549160011,
+        "samples": 3631
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48513674197384066,
+        "samples": 3631
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:38:01.095221",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47170809095716554,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42045454545454547,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:38:16.518059",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.449584387423202,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5243243243243243,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:38:18.360191",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4452473596442468,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5223880597014925,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:38:32.748776",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47600518806744485,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4919454770755886,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:38:42.352690",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48011907293217093,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48597739640016746,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:39:08.157770",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43318596048001445,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43318596048001445,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:39:30.792425",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4200126319588559,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.41304347826086957,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:39:36.746041",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47256438969764836,
+        "samples": 5358
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.7142857142857143,
+        "samples": 5358
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:39:40.811991",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49822380106571934,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5131004366812227,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:39:44.364643",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48691860465116277,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48760330578512395,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:40:20.372634",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43228557672467155,
+        "samples": 14539
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4674615002483855,
+        "samples": 14539
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:40:31.438663",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4223512336719884,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43119266055045874,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:40:34.250155",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44349680170575695,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4501347708894879,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:40:41.948700",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46626273753786834,
+        "samples": 3631
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5039001560062403,
+        "samples": 3631
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:40:46.761366",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5134328358208955,
+        "samples": 1340
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5186046511627908,
+        "samples": 1340
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:40:58.111713",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42551787834806704,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4620253164556962,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:41:01.993905",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.511727078891258,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49171270718232046,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:41:07.033938",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4375,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47041420118343197,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:41:10.090488",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5074626865671642,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4957983193277311,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:41:13.454025",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43459302325581395,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.3779527559055118,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:41:55.964198",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.429052892220923,
+        "samples": 14539
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46296296296296297,
+        "samples": 14539
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:42:18.232488",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41929080573851846,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43715049841964504,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:42:37.009818",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45347241284655504,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:43:20.074008",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.3992611162422483,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:43:34.022083",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42993125330512955,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5093457943925234,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:44:15.798409",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44487678339818415,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49206349206349204,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:44:31.395510",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46766722253103576,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5193704600484261,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:44:42.417033",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4813948543482883,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4816053511705686,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:44:49.061272",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44978405429492013,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5093833780160858,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:45:12.944548",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4396823964630515,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47541766109785205,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:45:42.741862",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4552683896620278,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4927007299270073,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:45:47.971201",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48119681581114465,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48544698544698545,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:46:24.718149",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4050505830566067,
+        "samples": 12949
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4666666666666667,
+        "samples": 12949
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:46:36.074837",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42748091603053434,
+        "samples": 2358
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47761194029850745,
+        "samples": 2358
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:46:48.777032",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4857269307368887,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4857269307368887,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:46:52.064356",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4573712255772647,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44028103044496486,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:47:29.926792",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4179063549736066,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4490994518402506,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:47:50.517049",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42844508319053676,
+        "samples": 18091
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4636542239685658,
+        "samples": 18091
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:48:03.804867",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.421031798390289,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4765625,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:48:42.157616",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4200126319588559,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.68,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:48:45.922765",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5116279069767442,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.52,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:48:48.387804",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44136460554371004,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4174757281553398,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:49:08.332963",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4684533780011167,
+        "samples": 5373
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46627867168777815,
+        "samples": 5373
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:49:50.548891",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4170837046685405,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5982905982905983,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:50:05.142027",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4504354270891236,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46875,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:50:07.608346",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4558434690639873,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.40714285714285714,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:50:22.739827",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47452288308319435,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5212981744421906,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:50:23.555736",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44334883720930235,
+        "samples": 5375
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.471993410214168,
+        "samples": 5375
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:50:35.284377",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48288326600042525,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4893203883495146,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:51:39.537741",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4095243954962161,
+        "samples": 16253
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5483870967741935,
+        "samples": 16253
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:51:41.464156",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4898255813953488,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48711943793911006,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:51:43.649150",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4051172707889126,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4394904458598726,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:52:21.720027",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41434153698498666,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47017543859649125,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:52:50.311363",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42762897479878614,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5283993115318416,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:52:56.632429",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4946714031971581,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5116772823779193,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:54:12.116079",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42732976992795724,
+        "samples": 21515
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5099337748344371,
+        "samples": 21515
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:54:17.829220",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4550408719346049,
+        "samples": 367
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44857142857142857,
+        "samples": 367
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:54:29.578369",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46555037057370297,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46543597800471326,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:54:32.070613",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4334470989761092,
+        "samples": 586
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.425764192139738,
+        "samples": 586
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:54:34.213193",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42643923240938164,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.41379310344827586,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:54:38.457971",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4360248447204969,
+        "samples": 805
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4230769230769231,
+        "samples": 805
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:55:08.710923",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.40304971578092574,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4528985507246377,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:55:14.310097",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.477797513321492,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4969512195121951,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:55:20.616931",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48511576626240355,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4956063268892794,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:55:30.438964",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46113167636171337,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4618705035971223,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:55:59.887144",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44691495275152865,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4591503267973856,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:56:09.173547",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4711876968686307,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5144628099173554,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:56:20.416585",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47416542632362324,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4727403156384505,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:56:34.630720",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43528169943264283,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.692063492063492,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:56:42.865906",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47513321492007105,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45591939546599497,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:57:44.367994",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41888231717428553,
+        "samples": 18091
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48856209150326796,
+        "samples": 18091
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:57:46.954722",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45930232558139533,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:57:58.920558",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.31185884283955684,
+        "samples": 2437
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.2727272727272727,
+        "samples": 2437
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:58:05.698722",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49658703071672355,
+        "samples": 1172
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4976635514018692,
+        "samples": 1172
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:58:14.476729",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46555037057370297,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49888392857142855,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:58:17.529626",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47974413646055436,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4869281045751634,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:58:37.480368",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4691303385704802,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48847926267281105,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:58:51.878701",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.427892861855126,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45794392523364486,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:59:04.127086",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4427952999381571,
+        "samples": 3234
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42840166369578137,
+        "samples": 3234
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:59:30.365818",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44964694591074245,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4608717817996431,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:59:34.180455",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4652701212789416,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4595375722543353,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:59:42.051425",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42998897464167585,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43506493506493504,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T17:59:57.300816",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46536224219989425,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5131578947368421,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:00:12.482122",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4790882938703253,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4833650190114068,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:00:17.114173",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4920071047957371,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5006896551724138,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:00:27.508002",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44331594839418065,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5163934426229508,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:01:04.586216",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4288064715157332,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4605475040257649,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:01:21.104933",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45294595326175224,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.56,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:01:38.614512",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44710024087455996,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5652173913043478,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:01:58.602572",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4789697980359459,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4936708860759494,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:02:11.969865",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48373378694450353,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.501834862385321,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:02:52.562107",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42171479244028154,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46304675716440424,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:03:02.648811",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4743343398298106,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4900523560209424,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:03:11.718830",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.473075533068305,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4764070494599204,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:03:40.520725",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43554558648898273,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6214689265536724,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:03:57.570566",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42670537010159654,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4645669291338583,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:01.196350",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4422735346358792,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4274099883855981,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:08.304345",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47343693530899894,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.525691699604743,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:18.780686",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4622704138083647,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.50390625,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:21.072763",
+    "model_version": "BTCUSDT_1d",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4727272727272727,
+        "samples": 220
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48905109489051096,
+        "samples": 220
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:34.573746",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4691303385704802,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4800483675937122,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:37.065795",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4563953488372093,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4527027027027027,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:41.456611",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.31353135313531355,
+        "samples": 606
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.2992565055762082,
+        "samples": 606
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:04:58.091625",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4293442406649954,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5068285280728376,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:05:01.950764",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44149377593360994,
+        "samples": 1205
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4328767123287671,
+        "samples": 1205
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:05:14.449825",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4701216287678477,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48721071863581,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:05:16.785054",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4433139534883721,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4442105263157895,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:05:24.867297",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4712685218648356,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4671689989235737,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:05:36.607788",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45691467002942415,
+        "samples": 4758
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46183339142558383,
+        "samples": 4758
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:05:55.331876",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.38545699377209225,
+        "samples": 5941
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5531914893617021,
+        "samples": 5941
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:06:03.341406",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46616374528511206,
+        "samples": 4507
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.471169686985173,
+        "samples": 4507
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:06:16.929971",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43290671592558383,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4839572192513369,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:06:23.506947",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4822380106571936,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47648514851485146,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:07:29.208913",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45414118954974986,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4972677595628415,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:07:49.347933",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42576145082538946,
+        "samples": 21505
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5084745762711864,
+        "samples": 21505
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:07:51.373429",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4735964424680378,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5072961373390558,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:07:57.736872",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4892621730810121,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4676524953789279,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:07:58.810505",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46511627906976744,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4463157894736842,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:08:02.313850",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48546511627906974,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48314606741573035,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:08:20.301364",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.40599023617891544,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.41575274177467597,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:08:23.622655",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46625222024866786,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45566502463054187,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:08:51.581579",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43218976888544036,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45566899516389037,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:08:55.191498",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4752906976744186,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48519736842105265,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:08:58.096749",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48187633262260127,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.484593837535014,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:09:11.261396",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4811267605633803,
+        "samples": 5325
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5009505703422054,
+        "samples": 5325
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:09:31.382768",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.3967541892070194,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42153589315525875,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:09:38.069711",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42998897464167585,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4016393442622951,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:09:46.390330",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4730178497301785,
+        "samples": 4818
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47800977343402934,
+        "samples": 4818
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:09:48.738405",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49273255813953487,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.484304932735426,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:10:00.617286",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4435622123973653,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4537037037037037,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:10:16.790680",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44293061445457005,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43452380952380953,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:10:28.102897",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4701216287678477,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46206896551724136,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:11:17.452677",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42366490710906973,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5153846153846153,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:11:20.767853",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43023255813953487,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42021276595744683,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:11:56.120795",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4189207019395699,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4889867841409692,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:11:59.031172",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.464818763326226,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45382585751978893,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:12:11.414821",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4438580287636891,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43860894251242016,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:12:36.804495",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4521338987638726,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4521338987638726,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:13:14.564215",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.448344311107101,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4878048780487805,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:13:15.467816",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4445062071521215,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.490272373540856,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:13:29.860257",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47026125625347415,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49710982658959535,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:13:43.576167",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4920263661492664,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4891304347826087,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:13:59.340924",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4192088846232947,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43217586809892583,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:14:33.024911",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4331319625339467,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4722222222222222,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:14:39.731925",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.38866396761133604,
+        "samples": 1482
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.38388625592417064,
+        "samples": 1482
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:05.711320",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41175224986765485,
+        "samples": 9445
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5412844036697247,
+        "samples": 9445
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:09.514392",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4622093023255814,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4793103448275862,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:11.862185",
+    "model_version": "ETHUSDT_1d",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5272727272727272,
+        "samples": 220
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5135135135135135,
+        "samples": 220
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:18.675327",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4562899786780384,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45918367346938777,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:22.303767",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4680232558139535,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5151515151515151,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:29.319428",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4558434690639873,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4592476489028213,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:32.418548",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44652701212789414,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44022503516174405,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:36.394172",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42857142857142855,
+        "samples": 805
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4489795918367347,
+        "samples": 805
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:40.295318",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4925373134328358,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4734982332155477,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:46.395354",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.502906976744186,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.52,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:15:59.913974",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4017680432774772,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.40585443037974683,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:16:16.068782",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44346094268643504,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46185185185185185,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:16:33.114731",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4647268734559429,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49122807017543857,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:16:50.663094",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.469296613323409,
+        "samples": 5374
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5580246913580247,
+        "samples": 5374
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:17:08.587707",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45615763546798027,
+        "samples": 4060
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4314214463840399,
+        "samples": 4060
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:17:27.370241",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4321150547565642,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46612466124661245,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:17:31.065221",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4968017057569296,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48717948717948717,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:18:18.318001",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4229108109960924,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.509090909090909,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:18:21.450476",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48187633262260127,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48205128205128206,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:18:31.507124",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4557282255149982,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46604215456674475,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:18:58.082588",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45006485084306097,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5050251256281407,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:19:10.216053",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45105115943336643,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6538461538461539,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:19:19.867259",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4697053918843802,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5046170559478544,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:19:34.197049",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43563097672876017,
+        "samples": 18091
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4659606656580938,
+        "samples": 18091
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:19:34.644057",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4903253242611099,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5025380710659898,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:19:53.812250",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45249481187404134,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45249481187404134,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:20:36.763209",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4421427628974799,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.7121212121212122,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:01.824458",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41396733736352975,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.38953488372093026,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:06.426467",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4862183020948181,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5212264150943396,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:20.110071",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4875316226960607,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5277777777777778,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:26.291165",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47343693530899894,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5214180206794683,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:28.409736",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46511627906976744,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47381546134663344,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:41.612689",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47637009096960287,
+        "samples": 4507
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4769433465085639,
+        "samples": 4507
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:47.924184",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4145534729878721,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.41602465331278893,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:21:56.523353",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4940982706560527,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4940982706560527,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:22:17.363722",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47798185439256474,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48201438848920863,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:22:20.070938",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4796511627906977,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49261083743842365,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:22:26.238221",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4796030871003308,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.483402489626556,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:22:30.790606",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45214172395557906,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49748743718592964,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:22:42.616255",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4443460942686435,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49206349206349204,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:22:45.634174",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.436046511627907,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45118733509234826,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:24:43.894306",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44561793589030946,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49119718309859156,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:24:52.003491",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47341115434500647,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49700598802395207,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:24:56.055640",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4867106102487774,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.494949494949495,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:27:58.259986",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4508060033351862,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4774066797642436,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:28:19.911137",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.474893459329257,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.524822695035461,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:28:27.720199",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49415266850946205,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4806201550387597,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:28:31.156904",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48401162790697677,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.489247311827957,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:28:49.481503",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43475392531996304,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6585365853658537,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:29:20.954749",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4527654967066679,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49056603773584906,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:29:24.253441",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49822380106571934,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5303643724696356,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:29:26.960852",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4635879218472469,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43524416135881105,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:29:54.287561",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4180434633577843,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46586102719033234,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:30:15.475056",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44839725773577915,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6666666666666666,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:30:26.984468",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4665554937928479,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4960505529225908,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:30:36.032013",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4875611311928556,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4074074074074074,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:30:40.555823",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4162230443020843,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5483870967741935,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:30:43.930234",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4248447204968944,
+        "samples": 805
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4142640364188164,
+        "samples": 805
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:30:47.411416",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47819767441860467,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5175202156334232,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:31:23.262321",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4324231377673843,
+        "samples": 14539
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47107800175284836,
+        "samples": 14539
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:31:27.039735",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42111801242236024,
+        "samples": 805
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4140625,
+        "samples": 805
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:32:44.599806",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4259957496400905,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4909983633387889,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:33:22.662645",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4278148428365087,
+        "samples": 14539
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4547357404500262,
+        "samples": 14539
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:33:50.154773",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46492586855499,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47058823529411764,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:34:21.867670",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4513608007129636,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4751131221719457,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:34:26.398760",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5010660980810234,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4625,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:34:59.814630",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41345033248783164,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4363929146537842,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:35:02.522355",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4605543710021322,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4536082474226804,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:35:05.450020",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4738372093023256,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46875,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:35:15.389852",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46213164417515834,
+        "samples": 3631
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47845804988662133,
+        "samples": 3631
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:35:31.397463",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42657342657342656,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45643153526970953,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:35:47.459623",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4202401372212693,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43956043956043955,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:36:03.134801",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4439503427830276,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46604215456674475,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:36:06.952556",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47198007471980075,
+        "samples": 4818
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4718034617532105,
+        "samples": 4818
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:36:19.247414",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4726700018528812,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5010326311441553,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:36:26.354643",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46113167636171337,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.437225636523266,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:36:34.263810",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4909632149691686,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47058823529411764,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:36:54.076311",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4567664013175954,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5074626865671642,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:37:06.153302",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4454525337464041,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44857539958304377,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:37:20.845133",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4214276289747988,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4458070931388797,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:37:38.508958",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4016360997493073,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4263816054860831,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:38:42.350598",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4212655103859601,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5909090909090909,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:39:06.356558",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4090047820987097,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43410852713178294,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:39:14.787351",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4839492347891004,
+        "samples": 5358
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4823955248436986,
+        "samples": 5358
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:40:44.841102",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4255289467565682,
+        "samples": 21505
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48459086078639746,
+        "samples": 21505
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:40:50.909512",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.30528052805280526,
+        "samples": 606
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.3161764705882353,
+        "samples": 606
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:40:53.767251",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44232365145228214,
+        "samples": 1205
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4325290437890974,
+        "samples": 1205
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:40:58.179768",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49733570159857904,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49868073878627966,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:41:06.208576",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43680592279217345,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4164882226980728,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:41:13.457342",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4658474882544272,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4672754946727549,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:41:16.870884",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45203488372093026,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4431554524361949,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:41:19.839762",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44989339019189767,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43765903307888043,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:41:25.118774",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5007462686567165,
+        "samples": 1340
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5105882352941177,
+        "samples": 1340
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:41:48.111420",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4472855289975913,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5342465753424658,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:42:03.989078",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47934037428200854,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5089285714285714,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:42:07.372850",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4186592077957232,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4392905866302865,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:42:15.261079",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4890495428449926,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48314606741573035,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:42:23.372416",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4622563821026626,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45454545454545453,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:42:36.534934",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4457276910583777,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.3967611336032389,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:42:44.004583",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49475966750993855,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5432098765432098,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:43:31.836590",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4464495172787151,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5833333333333334,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:43:37.865522",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4972436604189636,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5133689839572193,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:43:45.943356",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44488615829418143,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4686536485097636,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:43:56.181406",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.473075533068305,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:44:07.641072",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47548258264921234,
+        "samples": 4507
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4870188003581021,
+        "samples": 4507
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:44:17.789067",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46494312306101343,
+        "samples": 4835
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4524207011686144,
+        "samples": 4835
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:44:22.903642",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48732083792723263,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5030674846625767,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:44:25.877688",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44404973357015987,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43035107587768967,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:44:29.163509",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5223880597014925,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5097493036211699,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:44:32.168123",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4626998223801066,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47878787878787876,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:45:35.073697",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42020894367364986,
+        "samples": 18091
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5444444444444444,
+        "samples": 18091
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:45:41.778311",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.422271223814774,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.3868194842406877,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:46:11.957508",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4212956854466288,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.552665799739922,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:46:29.212100",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47422296668527825,
+        "samples": 5373
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4710382513661202,
+        "samples": 5373
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:46:38.008885",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47235272858691724,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4921875,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:46:48.970534",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48180815876515987,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5686274509803921,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:46:52.991154",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4332425068119891,
+        "samples": 367
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44242424242424244,
+        "samples": 367
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:46:55.385071",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5330490405117271,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5146443514644351,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:47:38.549940",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4519177320733741,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5357142857142857,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:48:03.124743",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4678525106540671,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4862788144895719,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:48:15.991146",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48011907293217093,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48059508408796897,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:48:48.555645",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41161631698763307,
+        "samples": 16253
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.59375,
+        "samples": 16253
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:49:38.761368",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4260377985922518,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4501408450704225,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:49:41.992673",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4968017057569296,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4725274725274725,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:50:28.775530",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4291492424761774,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.455290611028316,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:50:43.057730",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4314553371157145,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43612334801762115,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:50:59.779111",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44049445096093115,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4480312167435261,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:51:08.874337",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4637757800105764,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5136116152450091,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:51:11.719207",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45930232558139533,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4476744186046512,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:51:19.572034",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4872013651877133,
+        "samples": 1172
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5272727272727272,
+        "samples": 1172
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:51:42.635551",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4336410369797137,
+        "samples": 18091
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4564144736842105,
+        "samples": 18091
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:51:48.010859",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4652701212789416,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4427860696517413,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:52:25.033984",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.40361525267185644,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.532258064516129,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:52:40.493236",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4737853417513039,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4866023579849946,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:52:50.883218",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43204653622422,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4662698412698413,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:53:02.474909",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.482407612303607,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5625,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:53:13.259306",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.458259325044405,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.435361216730038,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:53:32.644444",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44561793589030946,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4936998854524628,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:53:51.248418",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4711876968686307,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5188811188811189,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:54:03.925239",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4826706357644057,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4786885245901639,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:54:20.520318",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41296769695561236,
+        "samples": 21515
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47194844579226686,
+        "samples": 21515
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:54:49.215018",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4170350987999639,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44330708661417323,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:54:54.529366",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4484399788471708,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45152603231597843,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:55:03.466914",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4514501891551072,
+        "samples": 4758
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46352723915050786,
+        "samples": 4758
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:55:21.081109",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4099485420240137,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4408997955010225,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:55:27.487838",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.473075533068305,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4886621315192744,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:55:44.817122",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47798185439256474,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48764044943820223,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:55:57.359004",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4647632815323455,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4930875576036866,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:56:19.510827",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4506000180456555,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4576271186440678,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:56:46.947879",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44875574141358743,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4651698330454807,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:56:56.313744",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.461660497091486,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42857142857142855,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:56:59.142579",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4349680170575693,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42824074074074076,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:57:02.076000",
+    "model_version": "MATICUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44880546075085326,
+        "samples": 586
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4416475972540046,
+        "samples": 586
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:57:28.114665",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4232535819565366,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4498977505112474,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:57:35.138120",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48037331869338457,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5070754716981132,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:57:45.268896",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4991119005328597,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5093795093795094,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:57:49.046154",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4738372093023256,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44883720930232557,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:57:59.293675",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4493783303730018,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44343065693430656,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:58:01.903042",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4941860465116279,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4770992366412214,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:58:31.986710",
+    "model_version": "DOTUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4463563446904778,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4533389509163682,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:58:49.311447",
+    "model_version": "XRPUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.41219158200290273,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5434782608695652,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:58:51.803929",
+    "model_version": "DOGEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42217484008528783,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4170984455958549,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:06.111504",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46113167636171337,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49850746268656715,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:10.294221",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45930232558139533,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46473029045643155,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:16.056011",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4463590883824347,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5050505050505051,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:23.532163",
+    "model_version": "SOLUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46594186820501443,
+        "samples": 4507
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4831804281345566,
+        "samples": 4507
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:27.970645",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47093023255813954,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4691358024691358,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:30.344966",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4665554937928479,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4839809134287662,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:35.969328",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4803317031681905,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4424552429667519,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:41.679251",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46160655012170837,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5210526315789473,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:45.123786",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5043604651162791,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5288461538461539,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:51.881019",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4244762954796031,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42935528120713307,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:00:07.944643",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.40427497031270615,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4129886506935687,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:00:27.599422",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.38882343039892275,
+        "samples": 5941
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4965986394557823,
+        "samples": 5941
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:00:33.586748",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4727657324167107,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4788961038961039,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:00:46.398993",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.472670944899314,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47942754919499103,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:00:49.974385",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5130813953488372,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49242424242424243,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:00:54.010371",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4383923849814913,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4464579901153213,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:01:04.886454",
+    "model_version": "ADAUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48732394366197185,
+        "samples": 5325
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48344370860927155,
+        "samples": 5325
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:01:07.118210",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44136460554371004,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4444444444444444,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:01:08.995975",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4796511627906977,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4625668449197861,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:01:34.919171",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43274400044338523,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44701527070800556,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:02:06.937385",
+    "model_version": "BNBUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4136966525309032,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4525316455696203,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:02:23.170985",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4642620048683337,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5362318840579711,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:02:25.475572",
+    "model_version": "ETHUSDT_1d",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5363636363636364,
+        "samples": 220
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.553763440860215,
+        "samples": 220
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:03:22.716487",
+    "model_version": "DOGEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4229108109960924,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5046153846153846,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:03:40.893854",
+    "model_version": "AVAXUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4268420761704715,
+        "samples": 18091
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4670103092783505,
+        "samples": 18091
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:04:20.887054",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4328548467549742,
+        "samples": 18043
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46770025839793283,
+        "samples": 18043
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:04:32.204560",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42551787834806704,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46167883211678834,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:04:52.737493",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44950898647396703,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:04:56.957064",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4556317769418013,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:05:06.377558",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4785992217898833,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5029546946815495,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:05:16.939808",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4779927705719753,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46258503401360546,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:05:19.946914",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45150230082107734,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.42105263157894735,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:05:44.676112",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.40273380183797974,
+        "samples": 12949
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5100864553314121,
+        "samples": 12949
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:06:06.925527",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4338175584228097,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4768280123583934,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:06:13.684854",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.30283135002051703,
+        "samples": 2437
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.22714681440443213,
+        "samples": 2437
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:06:35.531784",
+    "model_version": "SOLUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4319831112283942,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4778761061946903,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:06:39.700091",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5287846481876333,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5552147239263804,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:06:42.207046",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4491279069767442,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45996275605214154,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:06:46.742418",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.3873144399460189,
+        "samples": 1482
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.3769100169779287,
+        "samples": 1482
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:07:00.518692",
+    "model_version": "AAVEUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.43013590183401507,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4834710743801653,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:07:24.357173",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44310451453308597,
+        "samples": 3234
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.409009009009009,
+        "samples": 3234
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:07:27.374477",
+    "model_version": "SOLUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5159914712153518,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5013192612137203,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:07:31.801235",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44040697674418605,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4336,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:07:59.919887",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4288164665523156,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6023391812865497,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:08:35.452857",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42894841008048556,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6051660516605166,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:08:53.176430",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4421185599566904,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.44766026507979445,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:04.981466",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42281594571670905,
+        "samples": 2358
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48429319371727747,
+        "samples": 2358
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:07.515410",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42857142857142855,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.43037974683544306,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:17.787838",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45841339555311555,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4729330708661417,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:25.835354",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47540983606557374,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4912718204488778,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:27.310427",
+    "model_version": "BTCUSDT_1d",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4954545454545455,
+        "samples": 220
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48066298342541436,
+        "samples": 220
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:33.366064",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4491279069767442,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4265536723163842,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:38.883170",
+    "model_version": "AVAXUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4244762954796031,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4231770833333333,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:43.405462",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48134991119005327,
+        "samples": 1126
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5142857142857142,
+        "samples": 1126
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:50.702455",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4647632815323455,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5181518151815182,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:09:52.732375",
+    "model_version": "BNBUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46511627906976744,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.45121951219512196,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:10:25.621917",
+    "model_version": "ETHUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4169465962843628,
+        "samples": 14587
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47038724373576307,
+        "samples": 14587
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:10:33.964539",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4522883083194367,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5050505050505051,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:10:47.181903",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4334344900382636,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47231833910034604,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:10:54.746198",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4663702056698166,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5057067603160668,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:11:07.803419",
+    "model_version": "ADAUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4425697013444013,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5357142857142857,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:11:09.505518",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4867106102487774,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5065274151436031,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:11:12.863960",
+    "model_version": "DOTUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4310915104740904,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4403292181069959,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:11:36.517650",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4652758715344496,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48281786941580757,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:11:53.341359",
+    "model_version": "MATICUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4463054187192118,
+        "samples": 4060
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46601941747572817,
+        "samples": 4060
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:12:00.435576",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.459928394381713,
+        "samples": 3631
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.543026706231454,
+        "samples": 3631
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:12:07.258470",
+    "model_version": "XRPUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4582580411998554,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47648902821316613,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:12:10.284301",
+    "model_version": "ADAUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47334754797441364,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4298507462686567,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:12:34.976891",
+    "model_version": "LINKUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4515925290986195,
+        "samples": 11083
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46938775510204084,
+        "samples": 11083
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:12:57.342348",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46979420225713653,
+        "samples": 4519
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48670605612998524,
+        "samples": 4519
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:13:00.468925",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.49127906976744184,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47752808988764045,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:13:07.757003",
+    "model_version": "AVAXUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46692286576996983,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4807692307692308,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:13:14.093931",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4473823373876256,
+        "samples": 1891
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.56,
+        "samples": 1891
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:13:18.917091",
+    "model_version": "ETHUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44136460554371004,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46417445482866043,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:13:31.485992",
+    "model_version": "LINKUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46692286576996983,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5425790754257908,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:13:37.026413",
+    "model_version": "DOTUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.46657029273581496,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4530386740331492,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:14:15.613132",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.42406649953819764,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5696551724137932,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:14:19.284637",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47674418604651164,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4945054945054945,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:14:38.128460",
+    "model_version": "DOGEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4624116114625977,
+        "samples": 5374
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5108695652173914,
+        "samples": 5374
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:14:42.113766",
+    "model_version": "XRPUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47674418604651164,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49894736842105264,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:15:18.734145",
+    "model_version": "BTCUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4351497559044729,
+        "samples": 7579
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.6435185185185185,
+        "samples": 7579
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:15:39.459538",
+    "model_version": "MATICUSDT_15m",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.400635256749603,
+        "samples": 9445
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.2975893599334996,
+        "samples": 9445
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:15:48.279955",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.487510293713972,
+        "samples": 3643
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.487510293713972,
+        "samples": 3643
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:16:03.058858",
+    "model_version": "BNBUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45488372093023255,
+        "samples": 5375
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5822784810126582,
+        "samples": 5375
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:16:13.926593",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4456089627755692,
+        "samples": 2767
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.48598130841121495,
+        "samples": 2767
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:16:20.362204",
+    "model_version": "AAVEUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.5223880597014925,
+        "samples": 469
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47560975609756095,
+        "samples": 469
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:16:28.286339",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.44821196961274784,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4724104549854792,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:16:30.515643",
+    "model_version": "BTCUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4211686879823594,
+        "samples": 907
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4126126126126126,
+        "samples": 907
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:16:40.602788",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4708171206225681,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4937428896473265,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:16:46.713846",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4813948543482883,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4966996699669967,
+        "samples": 4703
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:47:13.596419",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45136186770428016,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.4857142857142857,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:47:22.111679",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4765610524365388,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49049429657794674,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T19:47:27.840415",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.48543482883266,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49217809867629364,
+        "samples": 4703
       }
     }
   }
