@@ -47,9 +47,9 @@ signal:
   neutral_threshold: 0.40           # Below this = strong signal
   
 # ── Testnet Trading Mode ──
-testnet_aggressive: false           # Changed from true (wait for quality signals)
+testnet_aggressive: false           # Conservative pacing still enabled
 max_trades_per_hour: 5              # Reduced from 20 (quality over quantity)
-force_trade: false                  # Changed from true (NO weak signal forcing)
+force_trade: true                   # Testnet override enabled: force trades and bypass weak-signal stalls
 
 # ── Models ──
 models:

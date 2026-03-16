@@ -16,6 +16,7 @@ Summary of activity:
 - Average recorded confidence: 52.5%
 - Approximate total notional value of orders: USD 7,251.73
 - Recorded time window: 2026-03-11T04:36:29.618156 to 2026-03-11T21:43:13.407573
+- Profit achieved for this day based on journaled trade P&L: USD 0.00
 - Realized P&L from closed trades recorded for this day: USD 0.00
 
 Breakdown by asset:
@@ -26,6 +27,7 @@ Breakdown by asset:
 Plain-language summary:
 - The journal shows trading activity in testnet/shadow mode for this date.
 - The recorded entries for this date do not show completed closures; all recorded trades remain open.
+- The journal does not yet show realized profit for this date.
 
 What changed from the previous day:
 - Trade count increased by 145 compared with the previous day.
@@ -33,4 +35,4 @@ What changed from the previous day:
 - Approximate total order value increased by USD 7251.73 compared with the previous day.
 
 Source note:
-- Generated from logs/trading_journal.json on 2026-03-13 02:49:55.
+- Generated from logs/trading_journal.json on 2026-03-14 05:38:21.
