@@ -77,7 +77,7 @@ class BaseLLMProvider(ABC):
         self._call_times.append(time.time())
 
     def _parse_json(self, text: str) -> Dict:
-        """Extract JSON from LLM response text."""
+        """Extract JSON from LLM response text, handling truncation."""
         text = text.strip()
         # Strip markdown code blocks
         if text.startswith('```'):
@@ -99,6 +99,20 @@ class BaseLLMProvider(ABC):
         if start >= 0 and end > start:
             try:
                 return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+        # Handle truncated JSON: try to repair by closing open strings/braces
+        if start >= 0:
+            fragment = text[start:]
+            # Close any open string
+            if fragment.count('"') % 2 == 1:
+                fragment += '"'
+            # Balance braces
+            open_braces = fragment.count('{') - fragment.count('}')
+            if open_braces > 0:
+                fragment += '}' * open_braces
+            try:
+                return json.loads(fragment)
             except json.JSONDecodeError:
                 pass
         logger.warning(f"Failed to parse JSON from LLM response: {text[:200]}")
