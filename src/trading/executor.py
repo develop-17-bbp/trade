@@ -1003,10 +1003,14 @@ class TradingExecutor:
                                 f"consensus={enhanced_decision.consensus_level} "
                                 f"quality={enhanced_decision.data_quality:.2f}")
 
-                    # Apply agent VETO
+                    # Apply agent VETO (skip on testnet force-trade mode)
+                    _is_force = self.config.get('force_trade', False) and self.mode == 'testnet'
                     if enhanced_decision.veto or enhanced_decision.consensus_level == 'VETOED':
-                        _safe_print(f"  [AGENTS] VETO active — blocking trade")
-                        last_signal = 0
+                        if _is_force:
+                            _safe_print(f"  [AGENTS] VETO active — OVERRIDDEN by testnet force-trade")
+                        else:
+                            _safe_print(f"  [AGENTS] VETO active — blocking trade")
+                            last_signal = 0
                     elif enhanced_decision.direction != last_signal and enhanced_decision.confidence > 0.6:
                         # Agents override direction if confident enough
                         _safe_print(f"  [AGENTS] Direction override: {last_signal:+d} → {enhanced_decision.direction:+d}")
@@ -1531,7 +1535,9 @@ class TradingExecutor:
             )
             
             allocation = allocations.get(asset)
-            if not allocation: return
+            if not allocation:
+                _safe_print(f"  [SKIP] No portfolio allocation for {asset} — skipping trade")
+                return
 
             side = "buy" if final_direction > 0 else "sell"
             pos_size_pct = allocation.position_size_pct
