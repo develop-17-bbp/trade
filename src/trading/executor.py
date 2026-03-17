@@ -1358,13 +1358,17 @@ class TradingExecutor:
 
             # ═══ AGENT INTELLIGENCE OVERLAY: Blend into ensemble ═══
             agentic_enhanced_dict = None
+            _force_trade = self.config.get('force_trade', False) and self.mode == 'testnet'
             if enhanced_decision and hasattr(enhanced_decision, 'direction'):
-                blend_w = self.config.get('agents', {}).get('blend_weight', 0.60)
-                existing_score = signal * ensemble_confidence
-                agent_score = enhanced_decision.direction * enhanced_decision.confidence
-                blended = (1 - blend_w) * existing_score + blend_w * agent_score
-
-                ensemble_confidence = float(min(1.0, abs(blended) * 1.5))
+                # Skip blending if agent vetoed AND we're in force-trade mode
+                if _force_trade and (enhanced_decision.veto or enhanced_decision.direction == 0):
+                    _safe_print(f"  [FORCE-TRADE] Skipping agent blend (veto/flat) — keeping raw ensemble")
+                else:
+                    blend_w = self.config.get('agents', {}).get('blend_weight', 0.60)
+                    existing_score = signal * ensemble_confidence
+                    agent_score = enhanced_decision.direction * enhanced_decision.confidence
+                    blended = (1 - blend_w) * existing_score + blend_w * agent_score
+                    ensemble_confidence = float(min(1.0, abs(blended) * 1.5))
 
                 agentic_enhanced_dict = {
                     'direction': enhanced_decision.direction,
