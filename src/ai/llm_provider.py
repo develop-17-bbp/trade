@@ -11,7 +11,7 @@ numbers, only interpret pre-computed quant data.
 Usage:
     from src.ai.llm_provider import LLMRouter, LLMConfig
     router = LLMRouter()
-    router.add_provider('gemini', LLMConfig(provider='google', api_key='...', model='gemini-2.0-flash'))
+    router.add_provider('gemini', LLMConfig(provider='google', api_key='...', model='gemini-2.5-flash'))
     router.add_provider('local', LLMConfig(provider='ollama', model='mistral'))
     result = router.query(prompt, fallback_chain=['gemini', 'local'])
 """
@@ -110,22 +110,25 @@ class BaseLLMProvider(ABC):
 # ─────────────────────────────────────────────────────────────
 
 class GoogleGeminiProvider(BaseLLMProvider):
-    """Google Gemini (Generative AI SDK)."""
+    """Google Gemini (new unified google-genai SDK)."""
     def generate(self, prompt: str, system_prompt: str = '') -> Dict:
         self._throttle()
-        import google.generativeai as genai
-        genai.configure(api_key=self.config.api_key)
-        model = genai.GenerativeModel(
-            self.config.model or 'gemini-1.5-flash',
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=self.config.api_key)
+        config = types.GenerateContentConfig(
             system_instruction=system_prompt or None,
-        )
-        gen_config = genai.types.GenerationConfig(
             temperature=self.config.temperature,
             max_output_tokens=self.config.max_tokens,
         )
         if self.config.json_mode:
-            gen_config.response_mime_type = 'application/json'
-        response = model.generate_content(prompt, generation_config=gen_config)
+            config.response_mime_type = 'application/json'
+        response = client.models.generate_content(
+            model=self.config.model or 'gemini-2.5-flash',
+            contents=prompt,
+            config=config,
+        )
         return self._parse_json(response.text)
 
 
@@ -397,7 +400,7 @@ class LLMRouter:
         Scans for known API keys and creates providers automatically.
         """
         env_map = [
-            ('REASONING_LLM_KEY', 'google', 'gemini-1.5-flash', 'gemini'),
+            ('REASONING_LLM_KEY', 'google', 'gemini-2.5-flash', 'gemini'),
             ('OPENAI_API_KEY', 'openai', 'gpt-4-turbo', 'openai'),
             ('ANTHROPIC_API_KEY', 'anthropic', 'claude-sonnet-4-20250514', 'claude'),
             ('TOGETHER_API_KEY', 'together', 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', 'together'),

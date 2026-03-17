@@ -41,7 +41,7 @@ msgpack==1.1.2
 clickhouse-connect==0.13.0
 
 # LLM Providers
-google-generativeai==0.8.6
+google-genai>=1.0.0
 
 # Security
 cryptography==46.0.5

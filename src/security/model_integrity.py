@@ -46,6 +46,27 @@ def _compute_manifest_hash(checksums: dict) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def _update_env_manifest_hash(manifest_hash: str):
+    """Auto-update MODEL_MANIFEST_HASH in .env file if it exists."""
+    import re
+    env_path = Path(".env")
+    if not env_path.is_file():
+        return
+    text = env_path.read_text(encoding="utf-8")
+    if "MODEL_MANIFEST_HASH=" in text:
+        updated = re.sub(
+            r"MODEL_MANIFEST_HASH=.*",
+            f"MODEL_MANIFEST_HASH={manifest_hash}",
+            text,
+        )
+        env_path.write_text(updated, encoding="utf-8")
+        logger.info("Updated MODEL_MANIFEST_HASH in .env")
+    else:
+        with open(env_path, "a", encoding="utf-8") as f:
+            f.write(f"\nMODEL_MANIFEST_HASH={manifest_hash}\n")
+        logger.info("Added MODEL_MANIFEST_HASH to .env")
+
+
 def generate_checksums(models_dir: str = "models") -> dict[str, str]:
     """Scan model files in *models_dir*, compute SHA-256, and save to checksums.json.
 
@@ -68,16 +89,18 @@ def generate_checksums(models_dir: str = "models") -> dict[str, str]:
             checksums[key] = digest
             logger.info("Checksum generated: %s -> %s", key, digest)
 
-    # Save checksums
+    # Save checksums (unlock if previously write-protected)
     checksums_path = models_path / CHECKSUMS_FILE
+    if checksums_path.exists():
+        checksums_path.chmod(checksums_path.stat().st_mode | stat.S_IWUSR)
     with open(checksums_path, "w", encoding="utf-8") as f:
         json.dump(checksums, f, indent=2)
     logger.info("Checksums saved to %s (%d files)", checksums_path, len(checksums))
 
-    # Compute and display manifest hash for external storage
+    # Compute manifest hash and auto-update .env if present
     manifest_hash = _compute_manifest_hash(checksums)
     logger.info("Manifest root hash: %s", manifest_hash)
-    logger.info("Store this hash externally (env var MODEL_MANIFEST_HASH) for tamper detection.")
+    _update_env_manifest_hash(manifest_hash)
 
     return checksums
 
