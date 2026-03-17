@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Trading System (Main)",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "src.main"],
+      "port": null
+    },
+    {
+      "name": "Streamlit Dashboard",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "src/api/dashboard_app.py", "--server.port", "8501"],
+      "port": 8501
+    },
+    {
+      "name": "Flask Dashboard",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "src.dashboard_server"],
+      "port": 5000
+    },
+    {
+      "name": "FastAPI Server",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "src.api.server:app", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

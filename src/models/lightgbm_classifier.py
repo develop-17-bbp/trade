@@ -136,37 +136,50 @@ class LightGBMClassifier:
     # -------------------------------------------------------------------
     # Model Loading
     # -------------------------------------------------------------------
+    @staticmethod
+    def _fix_crlf(path: str) -> None:
+        """Fix CRLF line endings that crash LightGBM's C++ parser on Windows."""
+        with open(path, 'rb') as f:
+            raw = f.read(4096)
+        if b'\r\n' in raw:
+            with open(path, 'rb') as f:
+                content = f.read()
+            with open(path, 'wb') as f:
+                f.write(content.replace(b'\r\n', b'\n'))
+
     def load_model(self, model_path: str) -> bool:
         """
         Load a trained LightGBM model from file.
         Tries optimized version first if available.
-        
+
         Args:
             model_path: path to saved LightGBM model file (e.g., 'models/lgbm_aave.txt')
-        
+
         Returns:
             True if model loaded successfully, False otherwise.
         """
         try:
             import lightgbm as lgb
             import os
-            
+
             # Try optimized version first
             optimized_path = model_path.replace('.txt', '_optimized.txt')
             if os.path.exists(optimized_path):
+                self._fix_crlf(optimized_path)
                 self._lgb_model = lgb.Booster(model_file=optimized_path)
                 self._fitted = True
                 self._lgb_available = True
                 print(f"Loaded optimized model from {optimized_path}")
                 return True
-            
+
             # Fall back to original
             if os.path.exists(model_path):
+                self._fix_crlf(model_path)
                 self._lgb_model = lgb.Booster(model_file=model_path)
                 self._fitted = True
                 self._lgb_available = True
                 return True
-            
+
             return False
         except Exception:
             return False
