@@ -53,8 +53,10 @@ class ExecutionRouter:
     Routes orders between testnet and live execution with reliability guarantees.
     """
 
-    def __init__(self, mode: ExecutionMode = ExecutionMode.TESTNET):
+    def __init__(self, mode: ExecutionMode = ExecutionMode.TESTNET, price_source=None):
         self.mode = mode
+        # Real exchange for testnet/live order placement (PriceFetcher instance)
+        self.price_source = price_source
 
         # Exchange configurations
         self.exchanges = {
@@ -161,11 +163,20 @@ class ExecutionRouter:
             ExecutionResult with success/failure details
         """
         if self.circuit_open:
-            return ExecutionResult(
-                success=False,
-                error_message="Circuit breaker open - execution temporarily disabled",
-                exchange_used=None
-            )
+            # Auto-reset circuit breaker after reset_time
+            if not hasattr(self, '_circuit_open_time'):
+                self._circuit_open_time = time.time()
+            elif time.time() - self._circuit_open_time >= self.circuit_reset_time:
+                logger.info("Circuit breaker auto-reset after cooldown")
+                self.circuit_open = False
+                self.consecutive_failures = 0
+                del self._circuit_open_time
+            else:
+                return ExecutionResult(
+                    success=False,
+                    error_message="Circuit breaker open - execution temporarily disabled",
+                    exchange_used=None
+                )
 
         # Select exchange
         exchange = self._select_exchange(exchange_preference)
@@ -245,16 +256,39 @@ class ExecutionRouter:
     def _execute_testnet_order(self, exchange: str, symbol: str, side: str,
                               quantity: float, price: Optional[float],
                               order_type: str) -> ExecutionResult:
-        """Execute order on testnet/sandbox environment."""
+        """Execute order on testnet/sandbox environment via real Binance testnet API."""
 
-        # Simulate testnet execution with realistic delays and occasional failures
-        time.sleep(random.uniform(0.1, 0.5))  # Network latency
+        # ── Attempt real Binance testnet API execution ──
+        if self.price_source is not None and getattr(self.price_source, 'is_authenticated', False):
+            try:
+                result = self.price_source.place_order(
+                    symbol=symbol,
+                    side=side,
+                    amount=quantity,
+                    order_type=order_type,
+                    price=price,
+                )
+                if result.get('status') == 'success':
+                    fill_price = result.get('price') or price or self._get_simulated_price(symbol, side)
+                    fee_info = result.get('fee') or {}
+                    fee_cost = float(fee_info.get('cost', 0.0)) if isinstance(fee_info, dict) else 0.0
+                    logger.info(f"  [TESTNET-REAL] Order {result['order_id']} filled at {fill_price}")
+                    return ExecutionResult(
+                        success=True,
+                        order_id=str(result['order_id']),
+                        executed_price=round(float(fill_price), 4),
+                        executed_quantity=float(result.get('filled') or quantity),
+                        fee=round(fee_cost, 6),
+                        exchange_used=exchange
+                    )
+                else:
+                    # API returned error — log and fall through to simulation
+                    logger.warning(f"  [TESTNET-API] Order failed: {result.get('message')} — using simulation fallback")
+            except Exception as e:
+                logger.warning(f"  [TESTNET-API] Exception: {e} — using simulation fallback")
 
-        # Simulate occasional failures (5% failure rate)
-        if random.random() < 0.05:
-            raise Exception(f"Testnet {exchange} API temporarily unavailable")
-
-        # Simulate execution
+        # ── Simulation fallback (when API unavailable or not authenticated) ──
+        time.sleep(random.uniform(0.05, 0.2))
         executed_price = price if price else self._get_simulated_price(symbol, side)
         fee_rate = self.exchanges[exchange]["fee_taker"]
         fee = executed_price * quantity * fee_rate
@@ -262,9 +296,9 @@ class ExecutionRouter:
         return ExecutionResult(
             success=True,
             order_id=f"testnet_{exchange}_{int(time.time())}_{random.randint(1000, 9999)}",
-            executed_price=round(executed_price, 2),
+            executed_price=round(executed_price, 4),
             executed_quantity=quantity,
-            fee=round(fee, 4),
+            fee=round(fee, 6),
             exchange_used=exchange
         )
 
@@ -348,6 +382,7 @@ class ExecutionRouter:
             # Open circuit breaker after max consecutive failures
             if self.consecutive_failures >= self.max_consecutive_failures:
                 self.circuit_open = True
+                self._circuit_open_time = time.time()
                 logger.error(f"Circuit breaker opened after {self.consecutive_failures} consecutive failures")
 
         # Update success rate (rolling average)

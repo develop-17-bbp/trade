@@ -163,8 +163,8 @@ class TradingExecutor:
         self.stream = SignalStreamAgent()
         self.audit_log = TradingJournal() # Enhanced version for reasoning traces
         
-        # Execution Layer
-        self.router = ExecutionRouter(mode=ExecutionMode.TESTNET)
+        # Execution Layer — pass price_source so testnet/live orders use real exchange API
+        self.router = ExecutionRouter(mode=ExecutionMode.TESTNET, price_source=self.price_source)
         self.chaos = ChaosEngine(self.router, self.health_checker)
         
         # Model Benchmarking & Leaderboard
@@ -327,6 +327,12 @@ class TradingExecutor:
                 # Update initial capital from USDT balance
                 if usdt_free > 0:
                     self.initial_capital = usdt_free
+                    # Sync profit protector and risk manager with actual balance
+                    self.profit_protector.initial_capital = usdt_free
+                    self.profit_protector.current_balance = usdt_free
+                    self.risk_manager.initial_capital = usdt_free
+                    self.risk_manager.current_capital = usdt_free
+                    self.risk_manager.peak_capital = usdt_free
                 _safe_print(f"\n  💰 Reference Capital: ${self.initial_capital:,.2f} USDT")
             else:
                 is_invalid_creds = balance.get('invalid_credentials', False)
@@ -1363,23 +1369,31 @@ class TradingExecutor:
                 # Skip blending if agent vetoed AND we're in force-trade mode
                 if _force_trade and (enhanced_decision.veto or enhanced_decision.direction == 0):
                     _safe_print(f"  [FORCE-TRADE] Skipping agent blend (veto/flat) — keeping raw ensemble")
+                    agentic_enhanced_dict = {
+                        'direction': enhanced_decision.direction,
+                        'confidence': enhanced_decision.confidence,
+                        'position_scale': enhanced_decision.position_scale,
+                        'blend_weight': 0.0,
+                        'consensus_level': enhanced_decision.consensus_level,
+                        'data_quality': enhanced_decision.data_quality,
+                        'veto': enhanced_decision.veto,
+                    }
                 else:
                     blend_w = self.config.get('agents', {}).get('blend_weight', 0.60)
                     existing_score = signal * ensemble_confidence
                     agent_score = enhanced_decision.direction * enhanced_decision.confidence
                     blended = (1 - blend_w) * existing_score + blend_w * agent_score
                     ensemble_confidence = float(min(1.0, abs(blended) * 1.5))
-
-                agentic_enhanced_dict = {
-                    'direction': enhanced_decision.direction,
-                    'confidence': enhanced_decision.confidence,
-                    'position_scale': enhanced_decision.position_scale,
-                    'blend_weight': blend_w,
-                    'consensus_level': enhanced_decision.consensus_level,
-                    'data_quality': enhanced_decision.data_quality,
-                    'veto': enhanced_decision.veto,
-                }
-                _safe_print(f"  [AGENTS] Blended score: {blended:+.3f} (existing={existing_score:.3f}, agent={agent_score:.3f})")
+                    agentic_enhanced_dict = {
+                        'direction': enhanced_decision.direction,
+                        'confidence': enhanced_decision.confidence,
+                        'position_scale': enhanced_decision.position_scale,
+                        'blend_weight': blend_w,
+                        'consensus_level': enhanced_decision.consensus_level,
+                        'data_quality': enhanced_decision.data_quality,
+                        'veto': enhanced_decision.veto,
+                    }
+                    _safe_print(f"  [AGENTS] Blended score: {blended:+.3f} (existing={existing_score:.3f}, agent={agent_score:.3f})")
 
             # Force-trade mode for testnet: much tighter neutral band
             _force_trade = self.config.get('force_trade', False) and self.mode == 'testnet'
@@ -1548,7 +1562,10 @@ class TradingExecutor:
             
             # 4. MICROSTRUCTURE & LIQUIDITY SMART ROUTING
             qty = (pos_size_pct * self.initial_capital) / current_price
-            order_book = self.price_source.exchange.fetch_order_book(symbol) if hasattr(self.price_source, 'exchange') else None
+            try:
+                order_book = self.price_source.exchange.fetch_order_book(symbol) if hasattr(self.price_source, 'exchange') else None
+            except Exception:
+                order_book = None  # Testnet API unavailable — skip order book, use direct execution
             
             slippage_est = self.router.slippage.estimate_price_impact(qty, 5000000.0) # 5M ADV default
             

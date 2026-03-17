@@ -17,6 +17,17 @@ import sys
 import signal
 import yaml
 import logging
+
+# Force UTF-8 stdout/stderr on Windows (prevents UnicodeEncodeError from emojis in logs)
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    # Also fix the root logging handler so logging output is UTF-8
+    for handler in logging.root.handlers:
+        if hasattr(handler, 'stream'):
+            handler.stream = sys.stderr
+
 from src.trading.executor import TradingExecutor
 
 logger = logging.getLogger(__name__)
@@ -268,12 +279,12 @@ def main():
     # ── Daily Reset Scheduler ──
     try:
         import threading
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         def _schedule_daily_reset():
             """Reset daily P&L counters at 00:00 UTC."""
             while True:
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                 sleep_secs = (tomorrow - now).total_seconds()
                 import time
@@ -282,11 +293,11 @@ def main():
                     executor.risk_manager.reset_daily_pnl()
                     logger.info("[SCHEDULER] Daily P&L reset at 00:00 UTC")
                     # Weekly reset on Mondays
-                    if datetime.utcnow().weekday() == 0:
+                    if datetime.now(timezone.utc).weekday() == 0:
                         executor.risk_manager.reset_weekly_pnl()
                         logger.info("[SCHEDULER] Weekly P&L reset (Monday)")
                     # Monthly reset on 1st
-                    if datetime.utcnow().day == 1:
+                    if datetime.now(timezone.utc).day == 1:
                         executor.risk_manager.reset_monthly_pnl()
                         logger.info("[SCHEDULER] Monthly P&L reset (1st)")
                 except Exception as e:

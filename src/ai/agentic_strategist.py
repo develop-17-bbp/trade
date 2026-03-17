@@ -9,11 +9,11 @@ from pydantic import BaseModel, Field, field_validator
 
 class StrategistDecision(BaseModel):
     """Structured decision output to prevent hallucinations."""
-    market_regime: str = Field(..., description="CURRENT_REGIME: TRENDING, RANGING, VOLATILE, or CHOPPY")
-    reasoning_trace: str = Field(..., description="Step-by-step logic for the recommendation")
-    confidence_score: int = Field(..., ge=0, le=100, description="0-100 confidence in the current market thesis")
+    market_regime: str = Field(default="VOLATILE", description="CURRENT_REGIME: TRENDING, RANGING, VOLATILE, or CHOPPY")
+    reasoning_trace: str = Field(default="", description="Step-by-step logic for the recommendation")
+    confidence_score: int = Field(default=50, ge=0, le=100, description="0-100 confidence in the current market thesis")
     suggested_config_update: Dict[str, Any] = Field(default_factory=dict, description="Specific overrides for config.yaml")
-    macro_bias: float = Field(0.0, ge=-0.5, le=0.5, description="Directional tilt based on news/derivatives")
+    macro_bias: float = Field(default=0.0, ge=-0.5, le=0.5, description="Directional tilt based on news/derivatives")
 
     # Whitelist of config keys the LLM is allowed to suggest, with safe value ranges
     ALLOWED_CONFIG_KEYS: ClassVar[Dict[str, Dict[str, Tuple[float, float]]]] = {
@@ -360,20 +360,20 @@ You are analyzing a SINGLE trade decision. Explain WHY this trade should be open
 {recent_context}
 
 ### INSTRUCTIONS:
-1. **Analyze each layer** - Explain what L1/L2/L3 signals are saying
-2. **Identify alignment** - Are signals aligned or contradicting?
-3. **Risk assessment** - What could go wrong?
-4. **Explain entry** - Why NOW is the right time for this entry?
-5. **Expected move** - What price target or scenario are we betting on?
-
-Keep response to 2-3 sentences maximum. Be specific about the reasoning.
+Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering signal alignment, entry rationale, and key risk."}}
 """
         
         try:
             llm_result = self._call_llm(prompt)
-            reasoning = llm_result.get("reasoning_trace", 
-                                      llm_result.get("message", "LLM reasoning unavailable"))
-            return reasoning[:500]  # Return first 500 chars
+            reasoning = (
+                llm_result.get("reasoning_trace") or
+                llm_result.get("message") or
+                llm_result.get("raw_text") or
+                llm_result.get("analysis") or
+                llm_result.get("reasoning") or
+                "LLM reasoning unavailable"
+            )
+            return reasoning[:500]
         except Exception as e:
             self.logger.warning(f"Error generating per-trade reasoning: {e}")
             # Fallback: combine signal confidence scores
