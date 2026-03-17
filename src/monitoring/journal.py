@@ -124,14 +124,17 @@ class TradingJournal:
             "order_id": order_id,
             "model_decision": model_signal,
             "audit_trail": {
-                "feature_snapshot": feature_vector or {}, # Full vector for post-mortem
+                "feature_snapshot": feature_vector or {},
                 "execution_mode": "LIVE" if "live" in reasoning.lower() else "SHADOW"
             },
             "status": "OPEN",
             "pnl": 0.0,
             "exit_price": None,
-            "exit_time": None
+            "exit_time": None,
         }
+        # Tamper-proof hash chain: each entry includes hash of previous
+        entry["prev_hash"] = self._get_chain_hash()
+        entry["entry_hash"] = self._compute_entry_hash(entry)
         self.trades.append(entry)
         self._save_journal()
         logger.info(f"Journaled {side} trade for {asset} (Order: {order_id}) - Audit Trail Saved.")
@@ -183,3 +186,52 @@ class TradingJournal:
     def get_recent_trades(self, limit: int = 5) -> List[Dict]:
         """Get the most recent trades for context in LLM analysis."""
         return self.trades[-limit:] if self.trades else []
+
+    # ── Tamper-Proof Hash Chain ──
+
+    def _compute_entry_hash(self, entry: Dict) -> str:
+        """SHA-256 hash of an entry (excluding its own hash field)."""
+        hashable = {k: v for k, v in entry.items() if k != "entry_hash"}
+        content = json.dumps(hashable, sort_keys=True, default=str)
+        return hashlib.sha256(content.encode()).hexdigest()
+
+    def _get_chain_hash(self) -> str:
+        """Get hash of the last entry in the chain (or genesis hash)."""
+        if not self.trades:
+            return hashlib.sha256(b"GENESIS").hexdigest()
+        last = self.trades[-1]
+        return last.get("entry_hash", hashlib.sha256(b"LEGACY").hexdigest())
+
+    def verify_chain_integrity(self) -> Dict[str, Any]:
+        """
+        Verify the hash chain integrity of the entire journal.
+        Returns dict with is_valid, tampered_indices, and total_entries.
+        """
+        if not self.trades:
+            return {"is_valid": True, "tampered_indices": [], "total_entries": 0}
+
+        tampered = []
+        expected_prev = hashlib.sha256(b"GENESIS").hexdigest()
+
+        for i, entry in enumerate(self.trades):
+            # Skip legacy entries without hash chain
+            if "entry_hash" not in entry:
+                continue
+
+            # Verify prev_hash linkage
+            if entry.get("prev_hash") != expected_prev:
+                tampered.append(i)
+
+            # Verify self-hash integrity
+            computed = self._compute_entry_hash(entry)
+            if computed != entry["entry_hash"]:
+                tampered.append(i)
+
+            expected_prev = entry["entry_hash"]
+
+        return {
+            "is_valid": len(tampered) == 0,
+            "tampered_indices": tampered,
+            "total_entries": len(self.trades),
+            "chain_entries": sum(1 for t in self.trades if "entry_hash" in t),
+        }

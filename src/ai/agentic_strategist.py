@@ -82,7 +82,7 @@ class AgenticStrategist:
         self.model_name = model
         self.api_key = os.environ.get("REASONING_LLM_KEY")
         self.logger = logging.getLogger(__name__)
-        
+
         # Calibration state: Track how often the agent was 'correct'
         self.calibration_log: List[Dict] = []
         self.historical_accuracy = 0.5 # Default 50%
@@ -90,10 +90,10 @@ class AgenticStrategist:
         # Layer 6.5: Tactical Memory
         from src.ai.memory_vault import MemoryVault
         self.memory = MemoryVault(db_path=memory_path)
-        
+
         # Temporary cache to bridge analyze_performance and record_trade_outcome
         self._last_context: Dict[str, Any] = {}
-        
+
         # ── RATE LIMITING (Prevent Gemini Quota Exhaustion) ──
         self.rate_limiter_max_calls = 15  # 15 calls per minute max
         self.rate_limiter_window_seconds = 60
@@ -101,29 +101,44 @@ class AgenticStrategist:
         self.gemini_quota_exhausted_until = 0.0  # Timestamp
         self.fallback_mode = False  # Switch to rule-based if quota hit
 
-        # ── NEW: Constrained LLM System (Math Injection + Prompt Constraints) ──
-        # Pluggable LLM router with automatic fallback chain
+        # ── Smart LLM Router: Cloud API → Local LLM → Rule-Based ──
+        # Auto-detects available providers from env vars, always adds local Ollama
+        self._llm_router = None
         self._constrained_analyst = None
         self._lora_trainer = None
         try:
             from src.ai.llm_provider import LLMRouter, LLMConfig
             from src.ai.prompt_constraints import ConstrainedLLMAnalyst
+
             router = LLMRouter()
-            # Register current provider
-            router.add_provider('primary', LLMConfig(
-                provider=self.provider,
-                api_key=self.api_key or '',
-                model=self.model_name,
-            ))
-            # Always add local fallback
-            if self.provider != 'local':
-                router.add_provider('local', LLMConfig(
-                    provider='ollama', model='mistral',
+
+            # Step 1: Auto-detect ALL available cloud API keys + local Ollama
+            router.add_from_env()
+
+            # Step 2: Override local Ollama model with config value if set
+            if self.model_name and 'local' in router.providers:
+                router.providers['local'].config.model = self.model_name
+
+            # Step 3: If user explicitly configured a provider, ensure it's primary
+            if self.provider not in ('local', 'auto') and self.api_key:
+                router.add_provider('configured', LLMConfig(
+                    provider=self.provider,
+                    api_key=self.api_key,
+                    model=self.model_name,
                 ))
+
+            self._llm_router = router
             self._constrained_analyst = ConstrainedLLMAnalyst(llm_router=router)
-            self.logger.info("Constrained LLM analyst initialized with math injection + prompt constraints")
+
+            # Log discovered providers
+            available = list(router.providers.keys())
+            cloud_providers = [p for p in available if p != 'local']
+            if cloud_providers:
+                self.logger.info(f"[LLM] Cloud APIs available: {cloud_providers} + local Ollama fallback")
+            else:
+                self.logger.info("[LLM] No cloud API keys found — using local Ollama → rule-based fallback")
         except Exception as e:
-            self.logger.debug(f"Constrained LLM init skipped: {e}")
+            self.logger.debug(f"LLM Router init skipped: {e}")
 
     def analyze_performance(self, trade_history: List[Dict], current_config: Dict, market_data: Dict) -> StrategistDecision:
         """
@@ -437,110 +452,88 @@ Keep response to 2-3 sentences maximum. Be specific about the reasoning.
     
     def _call_llm(self, prompt: str) -> Dict:
         """
-        Abstraction for LLM interaction with rate limiting and quota recovery.
-        Supports: Google (Gemini), OpenAI, HuggingFace (local GPU), and Local Llama.
-        
-        Features:
-        - Rate limiting (15 calls/min to avoid Gemini quota)
-        - Automatic fallback on quota exhausted
-        - Gemini 1.5-flash cheaper alternative
+        Smart LLM call with automatic fallback chain:
+          1. Cloud API (any available: Gemini, OpenAI, Anthropic, Groq, etc.)
+          2. Local LLM (Ollama / LM Studio)
+          3. Rule-based fallback (only if both above fail)
+
+        The LLMRouter auto-detects available providers from environment variables
+        and tries them in order. This ensures the agent system gets real LLM
+        reasoning whenever possible.
         """
-        if not self.api_key and self.provider not in ("local", "huggingface"):
-            return self._rule_based_fallback()
-
-        # ── RATE LIMITING: Skip API call if quota exhausted ──
+        # ── RATE LIMITING: Skip if quota exhausted ──
         if self.fallback_mode or not self._check_rate_limit():
-            self.logger.info("[Strategist] Using rule-based fallback (rate limit)")
-            return self._rule_based_fallback()
-        
-        if self.provider == "google":
-            try:
-                import google.generativeai as genai
-                import time
-                
-                genai.configure(api_key=self.api_key)
-                
-                # Use gemini-1.5-flash for lower quota usage
-                model_to_use = "gemini-1.5-flash" if self.model_name == "gemini-2.0-flash" else (self.model_name or "gemini-1.5-flash")
-                
-                self.logger.debug(f"[Gemini] Calling {model_to_use}...")
-                
-                model = genai.GenerativeModel(model_to_use)
-                
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.1,
-                        response_mime_type="application/json"
-                    )
-                )
-                
-                # ✅ Success: Reset fallback mode
-                self.fallback_mode = False
-                
-                # Clean and parse
-                text = response.text.strip()
-                # Remove markdown code blocks if present
-                if text.startswith("```"):
-                    text = text.split("```")[1]
-                    if text.startswith("json"):
-                        text = text[4:]
-                
-                return json.loads(text)
-                
-            except Exception as e:
-                error_str = str(e).lower()
-                
-                if "429" in error_str or "quota" in error_str or "exceeded" in error_str:
-                    self.logger.error(f"🚫 GEMINI QUOTA EXCEEDED: {e}")
-                    self.fallback_mode = True
-                    
-                    # Extract wait time from error if available
-                    if "retry_delay" in error_str or "retry in" in error_str:
-                        wait_seconds = 30  # Conservative wait
-                        import time
-                        self.gemini_quota_exhausted_until = time.time() + wait_seconds
-                        self.logger.warning(f"⏳ Will retry in {wait_seconds}s after quota reset")
-                    
-                    return self._fallback_inference(prompt, "Gemini Quota Exceeded")
-                
-                # ── OTHER ERRORS: Log and fallback ──
-                self.logger.error(f"Google Gemini Error: {e}")
-                return self._fallback_inference(prompt, f"Gemini Error: {e}")
-
-        elif self.provider == "openai":
-            try:
-                from openai import OpenAI
-                client = OpenAI(api_key=self.api_key)
-                response = client.chat.completions.create(
-                    model=self.model_name or "gpt-4-turbo",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                )
-                return json.loads(response.choices[0].message.content)
-            except Exception as e:
-                self.logger.error(f"OpenAI Error: {e}")
-                return self._rule_based_fallback()
-
-        elif self.provider == "local":
+            self.logger.info("[Strategist] Rate limit hit — trying local LLM before rule-based")
             try:
                 return self._local_inference(prompt)
-            except Exception as e:
-                self.logger.error(f"Local LLM Inference Error: {e}")
+            except Exception:
                 return self._rule_based_fallback()
 
-        # Default Mock if unknown provider
+        # ── Use LLMRouter with full fallback chain ──
+        if self._llm_router:
+            system_prompt = "You are a crypto trading strategist. Return only valid JSON."
+            result = self._llm_router.query(prompt, system_prompt=system_prompt)
+
+            # Check if all providers failed
+            if result.get('error') == 'all_providers_failed':
+                self.logger.warning("[LLM] All providers (cloud + local) failed — using rule-based fallback")
+                return self._rule_based_fallback()
+
+            # Reset fallback mode on success
+            self.fallback_mode = False
+            return result
+
+        # ── Legacy path: No router available, try direct ──
+        if self.api_key and self.provider not in ("local",):
+            try:
+                return self._legacy_api_call(prompt)
+            except Exception as e:
+                self.logger.warning(f"[LLM] Legacy API call failed: {e}")
+
+        # Try local LLM
+        try:
+            return self._local_inference(prompt)
+        except Exception as e:
+            self.logger.error(f"Local LLM Inference Error: {e}")
+
         return self._rule_based_fallback()
 
+    def _legacy_api_call(self, prompt: str) -> Dict:
+        """Legacy direct API call for when router is unavailable."""
+        if self.provider == "google":
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(self.model_name or "gemini-1.5-flash")
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1, response_mime_type="application/json"
+                )
+            )
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            return json.loads(text)
+        elif self.provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=self.api_key)
+            response = client.chat.completions.create(
+                model=self.model_name or "gpt-4-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        raise ValueError(f"Unknown legacy provider: {self.provider}")
+
     def _fallback_inference(self, prompt: str, reason: str) -> Dict:
-        """Handles failover logic when the primary API provider fails."""
-        if self.use_local_on_failure:
-            self.logger.info(f"[FAILOVER] {reason}. Auto-switching to Local LLM (Ollama/LM Studio)...")
-            try:
-                return self._local_inference(prompt)
-            except Exception as e:
-                self.logger.error(f"Local Fallback also failed: {e}")
-                
+        """Handles failover: try local LLM, then rule-based."""
+        self.logger.info(f"[FAILOVER] {reason}. Trying local LLM...")
+        try:
+            return self._local_inference(prompt)
+        except Exception as e:
+            self.logger.error(f"Local Fallback also failed: {e}")
         return self._rule_based_fallback()
 
     def _local_inference(self, prompt: str) -> Dict:

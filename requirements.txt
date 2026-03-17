@@ -1,52 +1,58 @@
 # Core
-numpy
-pandas
+numpy==2.4.2
+pandas==2.3.3
 
 # Technical Analysis
-ta
+ta==0.11.0
 
 # Data
-requests
-ccxt
+requests==2.32.5
+ccxt==4.5.40
 
-# AI / NLP (optional — system works without these)
-transformers
-sentence-transformers
-torch
-optuna
-scipy
+# AI / NLP
+transformers==5.2.0
+sentence-transformers==5.2.3
+torch==2.10.0
+optuna==4.7.0
+scipy==1.17.1
 
 # Config
-python-dotenv
-pyyaml
+python-dotenv==1.2.2
+pyyaml==6.0.3
 
-# Forecasting and ML models (optional)
-lightgbm
-pytorch-forecasting
-fingpt
+# ML Models
+lightgbm==4.6.0
 
 # Layer 6+: Agentic & Fine-Tuning
-peft
-bitsandbytes
-accelerate
-trl
-llama-cpp-python
-pydantic>=2.0
-chromadb
+pydantic==2.12.5
 
 # Dashboard
-flask
+flask==3.1.3
+streamlit==1.55.0
+fastapi==0.135.1
+uvicorn==0.41.0
+plotly==6.6.0
 
 # Testing
-pytest
-
-# Wavelet support for indicators
-PyWavelets>=1.3.0
+pytest==9.0.2
 
 # Institutional Infrastructure v6.5
-msgpack
-kafka-python
-clickhouse-connect
+msgpack==1.1.2
+clickhouse-connect==0.13.0
 
 # LLM Providers
-google-generativeai
+google-generativeai==0.8.6
+
+# Security
+cryptography==46.0.5
+
+# Optional (install manually if needed):
+# pytorch-forecasting  # Requires specific torch version
+# peft                 # LoRA fine-tuning
+# bitsandbytes         # Quantization
+# accelerate           # HuggingFace accelerate
+# trl                  # RLHF training
+# llama-cpp-python     # Local LLM inference
+# PyWavelets>=1.3.0    # Wavelet support for indicators
+# chromadb             # Vector DB (currently using custom SQLite MemoryVault)
+# kafka-python-ng      # Kafka streaming (if needed, replaces unmaintained kafka-python)
