@@ -329,11 +329,11 @@ class MathInjector:
         if n >= 60:
             try:
                 from src.models.lstm_ensemble import LSTMEnsemble
-                lstm = LSTMEnsemble()
-                # Build simple feature matrix from price data
+                # Build simple feature matrix from price data (4 features)
                 _feat_matrix = np.column_stack([
                     prices[-60:], highs[-60:], lows[-60:], volumes[-60:]
                 ]) if n >= 60 else prices[-30:].reshape(-1, 1)
+                lstm = LSTMEnsemble(input_dim=_feat_matrix.shape[1])
                 lstm_result = lstm.predict(_feat_matrix)
                 state['lstm_ensemble'] = {
                     'signal': int(lstm_result.get('signal', 0)),

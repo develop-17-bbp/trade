@@ -414,7 +414,10 @@ class LLMRouter:
         Scans for known API keys and creates providers automatically.
         """
         env_map = [
+            # gemini-2.5-flash: 20 req/day free tier (primary — best quality)
             ('REASONING_LLM_KEY', 'google', 'gemini-2.5-flash', 'gemini'),
+            # gemini-2.0-flash: 1500 req/day free tier (fallback when 2.5-flash quota hits)
+            ('REASONING_LLM_KEY', 'google', 'gemini-2.0-flash', 'gemini_fast'),
             ('OPENAI_API_KEY', 'openai', 'gpt-4-turbo', 'openai'),
             ('ANTHROPIC_API_KEY', 'anthropic', 'claude-sonnet-4-20250514', 'claude'),
             ('TOGETHER_API_KEY', 'together', 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', 'together'),
@@ -480,7 +483,13 @@ class LLMRouter:
                     (stats['avg_latency'] * (stats['calls'] - 1) + latency) / stats['calls']
                 )
 
-                if 'error' not in result:
+                # json_parse_failed with raw_text means the LLM DID respond — just not valid JSON.
+                # Treat as a usable partial result (caller can use raw_text for free-form responses).
+                _is_real_error = (
+                    'error' in result and
+                    not (result.get('error') == 'json_parse_failed' and result.get('raw_text'))
+                )
+                if not _is_real_error:
                     # Cache successful result
                     if cache:
                         self._cache[cache_key] = {'data': result, 'time': time.time()}

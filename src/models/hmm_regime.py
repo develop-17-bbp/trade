@@ -53,7 +53,7 @@ class HMMRegimeDetector:
     """
 
     def __init__(self, n_states: int = 4, n_iter: int = 100,
-                 covariance_type: str = 'full', random_state: int = 42):
+                 covariance_type: str = 'diag', random_state: int = 42):
         """
         Args:
             n_states: Number of hidden states (default 4: bull/bear/sideways/crisis)
@@ -82,7 +82,10 @@ class HMMRegimeDetector:
         ])
         # Remove NaN/Inf rows
         valid = np.all(np.isfinite(obs), axis=1)
-        return obs[valid]
+        obs = obs[valid]
+        # Add tiny jitter to prevent degenerate (zero-variance) covariance matrices
+        obs += np.random.default_rng(42).normal(0, 1e-7, obs.shape)
+        return obs
 
     def _label_states(self):
         """
