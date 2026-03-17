@@ -1,89 +1,5 @@
 [
   {
-    "timestamp": "2026-03-16T17:10:03.036911",
-    "model_version": "BNBUSDT_4h",
-    "results": {
-      "lgbm_direction_accuracy": {
-        "value": 0.42217484008528783,
-        "samples": 469
-      },
-      "lgbm_high_conf_accuracy": {
-        "value": 0.42080378250591016,
-        "samples": 469
-      }
-    }
-  },
-  {
-    "timestamp": "2026-03-16T17:10:16.511849",
-    "model_version": "BTCUSDT_1h",
-    "results": {
-      "lgbm_direction_accuracy": {
-        "value": 0.4515471558273115,
-        "samples": 5397
-      },
-      "lgbm_high_conf_accuracy": {
-        "value": 0.4782051282051282,
-        "samples": 5397
-      }
-    }
-  },
-  {
-    "timestamp": "2026-03-16T17:10:17.740483",
-    "model_version": "ETHUSDT_1h",
-    "results": {
-      "lgbm_direction_accuracy": {
-        "value": 0.4680063458487573,
-        "samples": 1891
-      },
-      "lgbm_high_conf_accuracy": {
-        "value": 0.49504950495049505,
-        "samples": 1891
-      }
-    }
-  },
-  {
-    "timestamp": "2026-03-16T17:10:32.635396",
-    "model_version": "BNBUSDT_1h",
-    "results": {
-      "lgbm_direction_accuracy": {
-        "value": 0.47268734559429043,
-        "samples": 3643
-      },
-      "lgbm_high_conf_accuracy": {
-        "value": 0.5205047318611987,
-        "samples": 3643
-      }
-    }
-  },
-  {
-    "timestamp": "2026-03-16T17:10:34.052160",
-    "model_version": "ETHUSDT_1h",
-    "results": {
-      "lgbm_direction_accuracy": {
-        "value": 0.4800815267741338,
-        "samples": 5397
-      },
-      "lgbm_high_conf_accuracy": {
-        "value": 0.5214723926380368,
-        "samples": 5397
-      }
-    }
-  },
-  {
-    "timestamp": "2026-03-16T17:10:42.258998",
-    "model_version": "AAVEUSDT_1h",
-    "results": {
-      "lgbm_direction_accuracy": {
-        "value": 0.4881990219009143,
-        "samples": 4703
-      },
-      "lgbm_high_conf_accuracy": {
-        "value": 0.489247311827957,
-        "samples": 4703
-      }
-    }
-  },
-  {
     "timestamp": "2026-03-16T17:10:59.659562",
     "model_version": "DOGEUSDT_15m",
     "results": {
@@ -7104,6 +7020,48 @@
         "beats_models": [],
         "loses_to_models": [],
         "percentile": 0.0
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T20:19:23.180723",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45525291828793774,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.47715736040609136,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T20:19:30.400720",
+    "model_version": "ETHUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.47322586622197516,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5125628140703518,
+        "samples": 5397
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T20:19:34.443019",
+    "model_version": "AAVEUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4826706357644057,
+        "samples": 4703
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.49295774647887325,
+        "samples": 4703
       }
     }
   }

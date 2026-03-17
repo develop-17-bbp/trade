@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-03-16T19:47:27.849657",
+  "last_updated": "2026-03-16T20:19:34.451873",
   "current_symbol": "AAVEUSDT",
   "current_timeframe": "1h",
   "current_start_year": 2020,
@@ -7,9 +7,9 @@
   "queue_position": "3/3",
   "completed_models": {
     "AAVEUSDT_1h_2020": {
-      "accuracy": 0.48543482883266,
-      "high_conf_accuracy": 0.49217809867629364,
-      "trained_at": "2026-03-16T19:47:27.849789",
+      "accuracy": 0.4826706357644057,
+      "high_conf_accuracy": 0.49295774647887325,
+      "trained_at": "2026-03-16T20:19:34.451993",
       "samples": 4703
     },
     "DOGEUSDT_15m_2020": {
@@ -127,15 +127,15 @@
       "samples": 7579
     },
     "BTCUSDT_1h_2020": {
-      "accuracy": 0.45136186770428016,
-      "high_conf_accuracy": 0.4857142857142857,
-      "trained_at": "2026-03-16T19:47:13.605076",
+      "accuracy": 0.45525291828793774,
+      "high_conf_accuracy": 0.47715736040609136,
+      "trained_at": "2026-03-16T20:19:23.188984",
       "samples": 5397
     },
     "ETHUSDT_1h_2020": {
-      "accuracy": 0.4765610524365388,
-      "high_conf_accuracy": 0.49049429657794674,
-      "trained_at": "2026-03-16T19:47:22.120635",
+      "accuracy": 0.47322586622197516,
+      "high_conf_accuracy": 0.5125628140703518,
+      "trained_at": "2026-03-16T20:19:30.409018",
       "samples": 5397
     },
     "MATICUSDT_1h_2020": {
@@ -1094,6 +1094,6 @@
     }
   },
   "total_models_trained": 181,
-  "last_accuracy": 0.48543482883266,
-  "last_high_conf": 0.49217809867629364
+  "last_accuracy": 0.4826706357644057,
+  "last_high_conf": 0.49295774647887325
 }
