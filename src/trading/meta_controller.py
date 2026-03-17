@@ -40,7 +40,8 @@ class MetaController:
                   hawkes_trade_allowed: bool = True,
                   alpha_freshness: float = 1.0,
                   evt_risk_score: float = 0.3,
-                  evt_position_scale: float = 1.0) -> Tuple[int, float, float]:
+                  evt_position_scale: float = 1.0,
+                  agentic_enhanced: Optional[Dict] = None) -> Tuple[int, float, float]:
         """
         Returns:
            final_direction (-1, 0, 1)
@@ -187,5 +188,34 @@ class MetaController:
         elif evt_risk_score > 0.5:
             position_scale *= 0.7
         position_scale = min(position_scale, evt_position_scale)
+
+        # ── Agent Intelligence Overlay ──
+        # Blend existing pipeline (40%) with agent overlay (60%)
+        if agentic_enhanced:
+            ae = agentic_enhanced
+            blend_w = ae.get('blend_weight', 0.60)
+            existing_score = final_class * final_conf
+            agent_score = ae.get('direction', 0) * ae.get('confidence', 0.0)
+            blended = (1 - blend_w) * existing_score + blend_w * agent_score
+
+            if blended > 0.2:
+                final_class = 1
+            elif blended < -0.2:
+                final_class = -1
+            else:
+                final_class = 0
+
+            final_conf = float(min(1.0, abs(blended) * 1.5))
+            position_scale *= ae.get('position_scale', 1.0)
+
+            # Loss Prevention Guardian VETO overrides everything
+            if ae.get('veto'):
+                final_class = 0
+                position_scale = 0.0
+
+            # Data quality scaling
+            dq = ae.get('data_quality', 1.0)
+            if dq < 0.7:
+                final_conf *= dq
 
         return final_class, float(final_conf), float(position_scale)

@@ -231,6 +231,9 @@ def metric_card(title, value, color="white"):
     """
 
 def get_tv_widget(symbol="BINANCE:BTCUSDT"):
+    import re
+    # Sanitize symbol to prevent script injection
+    symbol = re.sub(r'[^A-Za-z0-9:/._-]', '', symbol)
     return f"""
     <div class="tradingview-widget-container" style="height:500px;width:100%;">
       <div id="tradingview_chart"></div>
@@ -255,6 +258,8 @@ def get_tv_widget(symbol="BINANCE:BTCUSDT"):
     """
 
 def get_tv_tech_analysis(symbol="BINANCE:BTCUSDT"):
+    import re
+    symbol = re.sub(r'[^A-Za-z0-9:/._-]', '', symbol)
     return f"""
     <div class="tradingview-widget-container">
       <div class="tradingview-widget-container__widget"></div>

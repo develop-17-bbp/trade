@@ -294,6 +294,95 @@ class MathInjector:
             'open_positions': len(open_positions) if open_positions else 0,
         }
 
+        # ── 14. FRACTIONAL DIFFERENTIATION ──
+        if n >= 50:
+            try:
+                from src.models.fracdiff import FractionalDiff
+                fd = FractionalDiff()
+                fd_result = fd.compute_features(prices)
+                state['fracdiff'] = {
+                    'optimal_d': float(fd_result.get('fracdiff_d', 0.5)),
+                    'momentum': float(fd_result.get('fracdiff_momentum', 0.0)),
+                    'last_value': float(fd_result.get('fracdiff_last', 0.0)),
+                    'mean': float(fd_result.get('fracdiff_mean', 0.0)),
+                    'std': float(fd_result.get('fracdiff_std', 0.0)),
+                }
+            except Exception:
+                pass
+
+        # ── 15. FFT CYCLE DETECTION ──
+        if n >= 100:
+            try:
+                from src.models.cycle_detector import detect_dominant_cycles, detect_cycle_phase
+                dominant = detect_dominant_cycles(prices.tolist(), num_cycles=3)
+                phase = detect_cycle_phase(prices.tolist())
+                state['fft_cycles'] = {
+                    'dominant_period': float(dominant[0][0]) if dominant else 0.0,
+                    'dominant_power': float(dominant[0][1]) if dominant else 0.0,
+                    'cycle_phase': str(phase),
+                    'n_significant_cycles': len(dominant),
+                }
+            except Exception:
+                pass
+
+        # ── 16. LSTM ENSEMBLE ──
+        if n >= 60:
+            try:
+                from src.models.lstm_ensemble import LSTMEnsemble
+                lstm = LSTMEnsemble()
+                # Build simple feature matrix from price data
+                _feat_matrix = np.column_stack([
+                    prices[-60:], highs[-60:], lows[-60:], volumes[-60:]
+                ]) if n >= 60 else prices[-30:].reshape(-1, 1)
+                lstm_result = lstm.predict(_feat_matrix)
+                state['lstm_ensemble'] = {
+                    'signal': int(lstm_result.get('signal', 0)),
+                    'confidence': float(lstm_result.get('confidence', 0.0)),
+                    'method': str(lstm_result.get('method', 'unknown')),
+                }
+            except Exception:
+                pass
+
+        # ── 17. LIGHTGBM PREDICTION ──
+        if n >= 50:
+            try:
+                from src.models.lightgbm_classifier import LightGBMClassifier
+                lgbm = LightGBMClassifier({})
+                feats = lgbm.extract_features(
+                    closes=prices.tolist(), highs=highs.tolist(),
+                    lows=lows.tolist(), volumes=volumes.tolist()
+                )
+                if feats:
+                    preds = lgbm.predict(feats)
+                    if preds:
+                        last_pred = preds[-1]  # (class, confidence)
+                        state['lightgbm'] = {
+                            'prediction': int(last_pred[0]),
+                            'confidence': float(last_pred[1]),
+                        }
+            except Exception:
+                pass
+
+        # ── 18. COINTEGRATION ──
+        if n >= 100:
+            try:
+                from src.models.cointegration import CointegrationEngine
+                coint = CointegrationEngine()
+                # Cointegration needs two price series; use price vs its MA as proxy
+                ma_prices = np.convolve(prices, np.ones(20)/20, mode='valid')
+                # Align lengths
+                p_aligned = prices[-len(ma_prices):]
+                coint_result = coint.spread_signal(p_aligned, ma_prices)
+                state['cointegration'] = {
+                    'spread_z_score': float(coint_result.get('spread_z_score', 0.0)),
+                    'hedge_ratio': float(coint_result.get('hedge_ratio', 1.0)),
+                    'is_cointegrated': coint_result.get('cointegrated', False),
+                    'half_life': float(coint_result.get('spread_half_life', 999)),
+                    'signal': int(coint_result.get('signal', 0)),
+                }
+            except Exception:
+                pass
+
         # Log computation
         self._computation_log.append({
             'time': state['timestamp'],

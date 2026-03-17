@@ -3,14 +3,17 @@ PHASE 4: On-Chain Integration Portfolio Manager
 ===============================================
 Enhanced blockchain analytics for Layer 2.5 integration.
 Monitors whale movements, exchange flows, and network health across multiple assets.
+Uses real data from OnChainFetcher (free APIs) instead of simulated random values.
 """
 
-import random
+import logging
 import requests
 from typing import Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
 import json
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class OnChainMetrics:
@@ -38,13 +41,14 @@ class OnChainPortfolioManager:
     def __init__(self, glassnode_api_key: str = None, dune_api_key: str = None):
         """
         Initialize with optional API keys for real data sources.
-        Falls back to simulated data if keys not provided.
+        Uses OnChainFetcher (free APIs) for real data when paid keys aren't available.
         """
         self.glassnode_key = glassnode_api_key
         self.dune_key = dune_api_key
         self.cache = {}
         self.cache_ttl = 300  # 5 minutes
-        
+        self._real_fetcher = None
+
         # Whale thresholds by asset
         self.whale_thresholds = {
             "BTC": 100,     # 100 BTC
@@ -53,10 +57,20 @@ class OnChainPortfolioManager:
             "SOL": 10000,   # 10000 SOL
             "AVAX": 50000,  # 50000 AVAX
         }
-        
+
         # Historical pattern memory
         self.pattern_memory = {}
         self.whale_tracking = {}
+
+    def _get_real_fetcher(self):
+        """Lazy-init OnChainFetcher for real free-tier data."""
+        if self._real_fetcher is None:
+            try:
+                from src.data.on_chain_fetcher import OnChainFetcher
+                self._real_fetcher = OnChainFetcher()
+            except Exception:
+                self._real_fetcher = False  # Mark as unavailable
+        return self._real_fetcher if self._real_fetcher else None
         
     def fetch_whale_flows(self, asset: str, lookback_hours: int = 24) -> Dict[str, Any]:
         """
@@ -91,31 +105,32 @@ class OnChainPortfolioManager:
             return self._simulate_whale_flows(asset)
     
     def _simulate_whale_flows(self, asset: str) -> Dict[str, Any]:
-        """Simulated whale flow data with realistic patterns."""
-        # Simulate different market phases
-        phase = random.choice(['accumulation', 'distribution', 'holding'])
-        
-        if phase == 'accumulation':
-            flow = random.uniform(-1000, -100)  # Whales buying
-            sentiment = "BULLISH"
-        elif phase == 'distribution':
-            flow = random.uniform(100, 1000)   # Whales selling
-            sentiment = "BEARISH"
+        """Get whale flow data from real free-tier APIs where available."""
+        fetcher = self._get_real_fetcher()
+        if fetcher:
+            try:
+                real = fetcher.fetch_whale_flows(asset)
+                flow = real.get('net_exchange_flow', 0)
+                sentiment = real.get('whale_sentiment', 'NEUTRAL')
+                large_txn_count = real.get('whale_transfers_count', 10)
+                funded_positions = max(100, large_txn_count * 50)
+            except Exception as e:
+                logger.debug(f"[OnChainPortfolio] Whale flows fallback for {asset}: {e}")
+                flow, sentiment, large_txn_count, funded_positions = 0, "NEUTRAL", 10, 1000
         else:
-            flow = random.uniform(-50, 50)     # Consolidation
-            sentiment = "NEUTRAL"
+            flow, sentiment, large_txn_count, funded_positions = 0, "NEUTRAL", 10, 1000
         
-        large_txn_count = random.randint(5, 30)
-        funded_positions = random.randint(100, 5000)
-        
+        # Derive phase from sentiment
+        phase = 'accumulation' if sentiment == 'BULLISH' else ('distribution' if sentiment == 'BEARISH' else 'holding')
+
         return {
             "net_exchange_flow": round(flow, 2),
             "whale_sentiment": sentiment,
             "phase": phase,
             "large_transactions": large_txn_count,
             "funded_positions": funded_positions,
-            "top_whale_move_usd": round(random.uniform(5e6, 100e6), 2),
-            "exchange_netflow_rank": random.randint(1, 10)
+            "top_whale_move_usd": abs(flow) * 50000,  # Estimate based on actual flow
+            "exchange_netflow_rank": 5  # Neutral default
         }
     
     def fetch_network_health(self, asset: str) -> Dict[str, Any]:
@@ -146,24 +161,35 @@ class OnChainPortfolioManager:
             return self._simulate_network_health(asset)
     
     def _simulate_network_health(self, asset: str) -> Dict[str, Any]:
-        """Simulated network health data."""
-        base_addresses = {
-            "BTC": 950000,
-            "ETH": 750000,
-            "AAVE": 200000,
-        }.get(asset, 500000)
-        
-        active_addresses = base_addresses + random.randint(-50000, 50000)
-        daily_growth = random.uniform(-0.05, 0.08)
-        daily_vol = random.uniform(50e3, 500e3)
-        
+        """Get network health from real free-tier APIs where available."""
+        fetcher = self._get_real_fetcher()
+        if fetcher:
+            try:
+                real = fetcher.fetch_network_stats(asset)
+                bc_stats = fetcher._fetch_blockchain_com_stats()
+                n_tx = bc_stats.get('n_tx', 300000)
+                price = bc_stats.get('market_price_usd', 65000)
+                total_sent = bc_stats.get('estimated_btc_sent', 200000)
+                return {
+                    "active_addresses": n_tx,
+                    "address_growth_pct": round(real.get('hashrate_shock', 0) * 10, 2),
+                    "daily_transaction_volume": round(total_sent * price / 1e6, 2),
+                    "network_utilization": round(min(100, real.get('mempool_congestion', 50) * 100), 2),
+                    "avg_transaction_size_usd": round(total_sent * price / max(1, n_tx), 2),
+                    "whale_wallet_count": max(100, n_tx // 100)
+                }
+            except Exception as e:
+                logger.debug(f"[OnChainPortfolio] Network health fallback for {asset}: {e}")
+                pass
+        # Safe neutral defaults when real data unavailable
+        base = {"BTC": 950000, "ETH": 750000, "AAVE": 200000}.get(asset, 500000)
         return {
-            "active_addresses": active_addresses,
-            "address_growth_pct": round(daily_growth * 100, 2),
-            "daily_transaction_volume": round(daily_vol, 2),
-            "network_utilization": round(random.uniform(40, 95), 2),
-            "avg_transaction_size_usd": round(random.uniform(1000, 100000), 2),
-            "whale_wallet_count": random.randint(100, 5000)
+            "active_addresses": base,
+            "address_growth_pct": 0.0,
+            "daily_transaction_volume": 200000,
+            "network_utilization": 60.0,
+            "avg_transaction_size_usd": 10000,
+            "whale_wallet_count": 1000
         }
     
     def fetch_liquidation_risk(self, asset: str) -> Dict[str, Any]:
@@ -181,20 +207,28 @@ class OnChainPortfolioManager:
         return risk_data
     
     def _calculate_liquidation_risk(self, asset: str) -> Dict[str, Any]:
-        """Calculate leverage liquidation risk."""
-        # Simulate based on market conditions
-        open_leverage = random.uniform(100e6, 1000e6)
-        liquidation_price_distance = random.uniform(2, 15)  # % away
-        
-        # High leverage = high cascade risk
-        cascade_risk = min(100, random.uniform(20, 80) if open_leverage > 500e6 else random.uniform(5, 40))
-        
+        """Calculate leverage liquidation risk from real data where available."""
+        fetcher = self._get_real_fetcher()
+        if fetcher:
+            try:
+                real = fetcher.fetch_liquidation_heatmap(asset, current_price=0)
+                return {
+                    "open_leverage_usd": real.get('total_leverage_est', 500e6),
+                    "liquidation_cascade_risk": real.get('liquidation_cascade_risk', 30),
+                    "nearest_liquidation_level_pct": real.get('nearest_liq_pct', 8),
+                    "leverage_ratio": real.get('estimated_leverage', 10),
+                    "last_cascade_event_days_ago": 30
+                }
+            except Exception as e:
+                logger.debug(f"[OnChainPortfolio] Liquidation risk fallback for {asset}: {e}")
+                pass
+        # Safe neutral defaults
         return {
-            "open_leverage_usd": round(open_leverage, 2),
-            "liquidation_cascade_risk": round(cascade_risk, 2),
-            "nearest_liquidation_level_pct": round(liquidation_price_distance, 2),
-            "leverage_ratio": round(random.uniform(5, 25), 2),
-            "last_cascade_event_days_ago": random.randint(1, 90)
+            "open_leverage_usd": 500e6,
+            "liquidation_cascade_risk": 30.0,
+            "nearest_liquidation_level_pct": 8.0,
+            "leverage_ratio": 10.0,
+            "last_cascade_event_days_ago": 30
         }
     
     def compute_on_chain_signal(self, asset: str) -> OnChainMetrics:
