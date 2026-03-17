@@ -82,7 +82,7 @@ class AgenticStrategist:
         self.model_name = model
         self.api_key = os.environ.get("REASONING_LLM_KEY")
         self.logger = logging.getLogger(__name__)
-        
+
         # Calibration state: Track how often the agent was 'correct'
         self.calibration_log: List[Dict] = []
         self.historical_accuracy = 0.5 # Default 50%
@@ -90,16 +90,55 @@ class AgenticStrategist:
         # Layer 6.5: Tactical Memory
         from src.ai.memory_vault import MemoryVault
         self.memory = MemoryVault(db_path=memory_path)
-        
+
         # Temporary cache to bridge analyze_performance and record_trade_outcome
         self._last_context: Dict[str, Any] = {}
-        
+
         # ── RATE LIMITING (Prevent Gemini Quota Exhaustion) ──
         self.rate_limiter_max_calls = 15  # 15 calls per minute max
         self.rate_limiter_window_seconds = 60
         self.rate_limiter_queue: List[float] = []
         self.gemini_quota_exhausted_until = 0.0  # Timestamp
         self.fallback_mode = False  # Switch to rule-based if quota hit
+
+        # ── Smart LLM Router: Cloud API → Local LLM → Rule-Based ──
+        # Auto-detects available providers from env vars, always adds local Ollama
+        self._llm_router = None
+        self._constrained_analyst = None
+        self._lora_trainer = None
+        try:
+            from src.ai.llm_provider import LLMRouter, LLMConfig
+            from src.ai.prompt_constraints import ConstrainedLLMAnalyst
+
+            router = LLMRouter()
+
+            # Step 1: Auto-detect ALL available cloud API keys + local Ollama
+            router.add_from_env()
+
+            # Step 2: Override local Ollama model with config value if set
+            if self.model_name and 'local' in router.providers:
+                router.providers['local'].config.model = self.model_name
+
+            # Step 3: If user explicitly configured a provider, ensure it's primary
+            if self.provider not in ('local', 'auto') and self.api_key:
+                router.add_provider('configured', LLMConfig(
+                    provider=self.provider,
+                    api_key=self.api_key,
+                    model=self.model_name,
+                ))
+
+            self._llm_router = router
+            self._constrained_analyst = ConstrainedLLMAnalyst(llm_router=router)
+
+            # Log discovered providers
+            available = list(router.providers.keys())
+            cloud_providers = [p for p in available if p != 'local']
+            if cloud_providers:
+                self.logger.info(f"[LLM] Cloud APIs available: {cloud_providers} + local Ollama fallback")
+            else:
+                self.logger.info("[LLM] No cloud API keys found — using local Ollama → rule-based fallback")
+        except Exception as e:
+            self.logger.debug(f"LLM Router init skipped: {e}")
 
     def analyze_performance(self, trade_history: List[Dict], current_config: Dict, market_data: Dict) -> StrategistDecision:
         """
@@ -413,110 +452,90 @@ Keep response to 2-3 sentences maximum. Be specific about the reasoning.
     
     def _call_llm(self, prompt: str) -> Dict:
         """
-        Abstraction for LLM interaction with rate limiting and quota recovery.
-        Supports: Google (Gemini), OpenAI, HuggingFace (local GPU), and Local Llama.
-        
-        Features:
-        - Rate limiting (15 calls/min to avoid Gemini quota)
-        - Automatic fallback on quota exhausted
-        - Gemini 1.5-flash cheaper alternative
+        Smart LLM call with automatic fallback chain:
+          1. Cloud API (any available: Gemini, OpenAI, Anthropic, Groq, etc.)
+          2. Local LLM (Ollama / LM Studio)
+          3. Rule-based fallback (only if both above fail)
+
+        The LLMRouter auto-detects available providers from environment variables
+        and tries them in order. This ensures the agent system gets real LLM
+        reasoning whenever possible.
         """
-        if not self.api_key and self.provider not in ("local", "huggingface"):
-            return self._rule_based_fallback()
-
-        # ── RATE LIMITING: Skip API call if quota exhausted ──
+        # ── RATE LIMITING: Skip if quota exhausted ──
         if self.fallback_mode or not self._check_rate_limit():
-            self.logger.info("[Strategist] Using rule-based fallback (rate limit)")
-            return self._rule_based_fallback()
-        
-        if self.provider == "google":
-            try:
-                import google.generativeai as genai
-                import time
-                
-                genai.configure(api_key=self.api_key)
-                
-                # Use gemini-1.5-flash for lower quota usage
-                model_to_use = "gemini-1.5-flash" if self.model_name == "gemini-2.0-flash" else (self.model_name or "gemini-1.5-flash")
-                
-                self.logger.debug(f"[Gemini] Calling {model_to_use}...")
-                
-                model = genai.GenerativeModel(model_to_use)
-                
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.1,
-                        response_mime_type="application/json"
-                    )
-                )
-                
-                # ✅ Success: Reset fallback mode
-                self.fallback_mode = False
-                
-                # Clean and parse
-                text = response.text.strip()
-                # Remove markdown code blocks if present
-                if text.startswith("```"):
-                    text = text.split("```")[1]
-                    if text.startswith("json"):
-                        text = text[4:]
-                
-                return json.loads(text)
-                
-            except Exception as e:
-                error_str = str(e).lower()
-                
-                if "429" in error_str or "quota" in error_str or "exceeded" in error_str:
-                    self.logger.error(f"🚫 GEMINI QUOTA EXCEEDED: {e}")
-                    self.fallback_mode = True
-                    
-                    # Extract wait time from error if available
-                    if "retry_delay" in error_str or "retry in" in error_str:
-                        wait_seconds = 30  # Conservative wait
-                        import time
-                        self.gemini_quota_exhausted_until = time.time() + wait_seconds
-                        self.logger.warning(f"⏳ Will retry in {wait_seconds}s after quota reset")
-                    
-                    return self._fallback_inference(prompt, "Gemini Quota Exceeded")
-                
-                # ── OTHER ERRORS: Log and fallback ──
-                self.logger.error(f"Google Gemini Error: {e}")
-                return self._fallback_inference(prompt, f"Gemini Error: {e}")
-
-        elif self.provider == "openai":
-            try:
-                from openai import OpenAI
-                client = OpenAI(api_key=self.api_key)
-                response = client.chat.completions.create(
-                    model=self.model_name or "gpt-4-turbo",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                )
-                return json.loads(response.choices[0].message.content)
-            except Exception as e:
-                self.logger.error(f"OpenAI Error: {e}")
-                return self._rule_based_fallback()
-
-        elif self.provider == "local":
+            self.logger.info("[Strategist] Rate limit hit — trying local LLM before rule-based")
             try:
                 return self._local_inference(prompt)
-            except Exception as e:
-                self.logger.error(f"Local LLM Inference Error: {e}")
+            except Exception:
                 return self._rule_based_fallback()
 
-        # Default Mock if unknown provider
+        # ── Use LLMRouter with full fallback chain ──
+        if self._llm_router:
+            system_prompt = "You are a crypto trading strategist. Return only valid JSON."
+            result = self._llm_router.query(prompt, system_prompt=system_prompt)
+
+            # Check if all providers failed
+            if result.get('error') == 'all_providers_failed':
+                self.logger.warning("[LLM] All providers (cloud + local) failed — using rule-based fallback")
+                return self._rule_based_fallback()
+
+            # Reset fallback mode on success
+            self.fallback_mode = False
+            return result
+
+        # ── Legacy path: No router available, try direct ──
+        if self.api_key and self.provider not in ("local",):
+            try:
+                return self._legacy_api_call(prompt)
+            except Exception as e:
+                self.logger.warning(f"[LLM] Legacy API call failed: {e}")
+
+        # Try local LLM
+        try:
+            return self._local_inference(prompt)
+        except Exception as e:
+            self.logger.error(f"Local LLM Inference Error: {e}")
+
         return self._rule_based_fallback()
 
+    def _legacy_api_call(self, prompt: str) -> Dict:
+        """Legacy direct API call for when router is unavailable."""
+        if self.provider == "google":
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=self.api_key)
+            response = client.models.generate_content(
+                model=self.model_name or "gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
+            )
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            return json.loads(text)
+        elif self.provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=self.api_key)
+            response = client.chat.completions.create(
+                model=self.model_name or "gpt-4-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        raise ValueError(f"Unknown legacy provider: {self.provider}")
+
     def _fallback_inference(self, prompt: str, reason: str) -> Dict:
-        """Handles failover logic when the primary API provider fails."""
-        if self.use_local_on_failure:
-            self.logger.info(f"[FAILOVER] {reason}. Auto-switching to Local LLM (Ollama/LM Studio)...")
-            try:
-                return self._local_inference(prompt)
-            except Exception as e:
-                self.logger.error(f"Local Fallback also failed: {e}")
-                
+        """Handles failover: try local LLM, then rule-based."""
+        self.logger.info(f"[FAILOVER] {reason}. Trying local LLM...")
+        try:
+            return self._local_inference(prompt)
+        except Exception as e:
+            self.logger.error(f"Local Fallback also failed: {e}")
         return self._rule_based_fallback()
 
     def _local_inference(self, prompt: str) -> Dict:
@@ -611,6 +630,85 @@ Keep response to 2-3 sentences maximum. Be specific about the reasoning.
             suggested_config_update={},
             macro_bias=0.0
         )
+
+    # ── NEW: Constrained Analysis (Math Injection + Prompt Constraints) ──
+
+    def constrained_analyze(self, prices, highs, lows, volumes,
+                            sentiment_score: float = 0.0,
+                            asset: str = 'BTCUSDT',
+                            account_balance: float = 10000.0,
+                            trade_history_text: str = '',
+                            fallback_chain: List[str] = None) -> StrategistDecision:
+        """
+        Run LLM analysis with full math injection and prompt constraints.
+
+        This is the RECOMMENDED way to call the LLM. It:
+          1. Pre-computes ALL quant features from raw data (MathInjector)
+          2. Injects them into the prompt as GROUND TRUTH
+          3. Applies safety constraints (PromptConstraintEngine)
+          4. Routes to best available LLM (LLMRouter with fallback)
+          5. Validates response against allowed ranges
+          6. Logs decision for future LoRA fine-tuning
+
+        The LLM CANNOT hallucinate numbers because every value is pre-computed.
+        """
+        if self._constrained_analyst is None:
+            self.logger.warning("Constrained analyst not available, using rule-based")
+            return self._get_fallback_decision("Constrained analyst not initialized")
+
+        try:
+            result = self._constrained_analyst.analyze_market(
+                prices=prices, highs=highs, lows=lows, volumes=volumes,
+                sentiment_score=sentiment_score, asset=asset,
+                account_balance=account_balance,
+                trade_history=trade_history_text,
+                fallback_chain=fallback_chain,
+            )
+
+            # Log for LoRA training data collection
+            try:
+                if self._lora_trainer is None:
+                    from src.ai.lora_trainer import LoRATrainer
+                    self._lora_trainer = LoRATrainer()
+                quant_state = result.pop('_quant_state', {})
+                self._lora_trainer.log_decision(quant_state, result)
+            except Exception:
+                pass
+
+            # Convert to StrategistDecision
+            return StrategistDecision(
+                market_regime=result.get('market_regime', 'VOLATILE'),
+                reasoning_trace=result.get('reasoning_trace', 'No reasoning provided'),
+                confidence_score=int(result.get('confidence_score', 50)),
+                suggested_config_update=result.get('suggested_config_update', {}),
+                macro_bias=float(result.get('macro_bias', 0.0)),
+            )
+
+        except Exception as e:
+            self.logger.error(f"Constrained analysis failed: {e}")
+            return self._get_fallback_decision(f"Constrained analysis error: {str(e)[:100]}")
+
+    def constrained_explain_trade(self, prices, highs, lows, volumes,
+                                  asset: str, direction: int, entry_price: float,
+                                  l1_info: Dict = None, l2_info: Dict = None,
+                                  l3_info: Dict = None, market_info: Dict = None) -> str:
+        """
+        Generate constrained per-trade reasoning with math injection.
+        Returns a short explanation string.
+        """
+        if self._constrained_analyst is None:
+            return f"{'LONG' if direction > 0 else 'SHORT'} {asset} @ {entry_price} (LLM unavailable)"
+
+        try:
+            result = self._constrained_analyst.explain_trade(
+                prices=prices, highs=highs, lows=lows, volumes=volumes,
+                asset=asset, direction=direction, entry_price=entry_price,
+                l1_info=l1_info, l2_info=l2_info,
+                l3_info=l3_info, market_info=market_info,
+            )
+            return result.get('entry_reason', 'No explanation available')
+        except Exception as e:
+            return f"{'LONG' if direction > 0 else 'SHORT'} {asset} @ {entry_price} (Error: {str(e)[:50]})"
 
     def record_feedback(self, actual_success: bool, agent_predicted_confidence: int):
         """Bayesian update for historical accuracy."""

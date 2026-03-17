@@ -119,3 +119,28 @@ class ScalpingStrategy(SubStrategy):
         elif last_price < last_ema and last_k > 70 and last_k < last_d:
             return -1
         return 0
+
+
+class PairsStrategy(SubStrategy):
+    """
+    Cointegration-based pairs trading.
+    Trades the spread between two assets when z-score is extreme.
+    Best for: Sideways markets with cointegrated pairs.
+    """
+    def __init__(self, reference_prices: List[float] = None):
+        self.reference_prices = reference_prices or []
+
+    def generate_signal(self, prices: List[float], highs: List[float], lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 100 or len(self.reference_prices) < 100:
+            return 0
+
+        try:
+            from src.models.cointegration import CointegrationEngine
+            engine = CointegrationEngine(entry_z=2.0, exit_z=0.5)
+            result = engine.spread_signal(
+                np.asarray(prices, dtype=float),
+                np.asarray(self.reference_prices, dtype=float)
+            )
+            return result.get('signal', 0)
+        except Exception:
+            return 0
