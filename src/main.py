@@ -203,13 +203,12 @@ def main():
     # ── Model Integrity Check on Startup ──
     try:
         from src.security.model_integrity import verify_all_models
-        results = verify_all_models()
-        failed = [p for p, ok in results.items() if not ok]
+        passed, failed = verify_all_models()
         if failed:
             logger.error(f"[SECURITY] Model integrity check FAILED for: {failed}")
             logger.error("[SECURITY] Run 'python -m src.security.model_integrity --generate' to update checksums")
         else:
-            logger.info(f"[SECURITY] All {len(results)} model files passed integrity check")
+            logger.info(f"[SECURITY] All {len(passed)} model files passed integrity check")
     except Exception as e:
         logger.warning(f"[SECURITY] Model integrity check skipped: {e}")
 
