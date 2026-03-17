@@ -501,14 +501,16 @@ Keep response to 2-3 sentences maximum. Be specific about the reasoning.
     def _legacy_api_call(self, prompt: str) -> Dict:
         """Legacy direct API call for when router is unavailable."""
         if self.provider == "google":
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(self.model_name or "gemini-1.5-flash")
-            response = model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1, response_mime_type="application/json"
-                )
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=self.api_key)
+            response = client.models.generate_content(
+                model=self.model_name or "gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
             )
             text = response.text.strip()
             if text.startswith("```"):
