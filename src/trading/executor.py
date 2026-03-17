@@ -2,6 +2,7 @@ import time
 import os
 import sys
 import numpy as np
+from datetime import datetime, timezone
 from typing import Dict, Optional, List, Any, Tuple
 from dataclasses import asdict, dataclass
 from dotenv import load_dotenv
@@ -47,6 +48,8 @@ from src.risk.vpin_guard import VPINGuard
 from infra.signal_stream import SignalStreamAgent
 from testing.chaos_engine import ChaosEngine
 from src.models.benchmark import ModelBenchmark
+from src.ai.math_injection import MathInjector
+from src.agents.orchestrator import AgentOrchestrator
 
 from enum import Enum
 
@@ -79,6 +82,15 @@ class TradingExecutor:
 
         # Data -- supports testnet mode for paper trading with fake money
         use_testnet = self.mode == 'testnet' or self.config.get('testnet', False)
+
+        # SECURITY: Verify testnet/live key separation
+        _live_key = os.environ.get('BINANCE_API_KEY', '')
+        _test_key = os.environ.get('BINANCE_TESTNET_KEY', '')
+        if _live_key and _test_key and _live_key == _test_key:
+            _safe_print("  [SECURITY WARNING] BINANCE_API_KEY and BINANCE_TESTNET_KEY are identical!")
+            _safe_print("  [SECURITY WARNING] Generate separate keys for testnet and production.")
+            _safe_print("  [SECURITY WARNING] Shared keys mean a mode misconfiguration could trade real funds.")
+
         exchange_cfg = self.config.get('exchange', {})
         self.price_source = PriceFetcher(
             exchange_name=exchange_cfg.get('name', 'binance'),
@@ -97,32 +109,14 @@ class TradingExecutor:
         self.on_chain = OnChainFetcher()
         self.on_chain_portfolio = OnChainPortfolioManager()
         self.free_data = FreeDataAggregator()  # Free data sources (Fear/Greed, IV, etc.)
-        import os as _os_env
-        _prov_cfg = self.config.get('ai', {}).get('reasoning_provider', 'openai')
-        _model_cfg = self.config.get('ai', {}).get('reasoning_model')
-        _key = _os_env.environ.get('REASONING_LLM_KEY', '')
-        
-        # Prioritize config provider if explicitly set
-        if self.config.get('ai', {}).get('reasoning_provider'):
-            _prov = _prov_cfg
-            _model = _model_cfg
-        else:
-            # Legacy auto-detection based on API key
-            if not _key:
-                _prov = 'ollama'
-                _model = _model_cfg or 'neural-chat'
-            else:
-                if _key.startswith('AIza'):
-                    _prov = 'google'
-                    _model = _model_cfg or 'gemini-1.5-flash'
-                else:
-                    _prov = 'openai'
-                    _model = _model_cfg or 'gpt-4-turbo'
+        _ai_cfg = self.config.get('ai', {})
+        _prov = _ai_cfg.get('reasoning_provider', 'auto')
+        _model = _ai_cfg.get('reasoning_model', 'neural-chat')
 
         self.strategist = AgenticStrategist(
             provider=_prov,
             model=_model,
-            use_local_on_failure=self.config.get('ai', {}).get('use_local_on_failure', True)
+            use_local_on_failure=_ai_cfg.get('use_local_on_failure', True)
         )
         
         # Phase 6: Advanced Learning Engine
@@ -181,7 +175,43 @@ class TradingExecutor:
         self.last_tick_time = time.time()
         self.max_staleness = self.config.get('max_staleness_sec', 10)
         
+        # Multi-Agent Intelligence Overlay (12-agent pipeline)
+        self.math_injector = MathInjector(self.config)
+        self.agent_orchestrator = AgentOrchestrator(self.config)
+
+        # ═══ SECURITY: Model Integrity Verification ═══
+        try:
+            from src.security.model_integrity import verify_all_models, protect_model_files
+            passed, failed = verify_all_models()
+            if failed:
+                _safe_print(f"  [SECURITY] Model integrity: {len(passed)}/{len(passed)+len(failed)} passed")
+                for f_name in failed:
+                    _safe_print(f"  [SECURITY] FAILED: {f_name}")
+                _safe_print("  [SECURITY] Run 'python -m src.security.model_integrity --generate' to update checksums")
+            else:
+                _safe_print(f"  [SECURITY] Model integrity: {len(passed)}/{len(passed)} ✓")
+            # Write-protect model files after verification
+            protect_model_files()
+        except Exception as e:
+            _safe_print(f"  [SECURITY] Model integrity check skipped: {e}")
+
+        # ═══ SECURITY: Config Parameter Bounds Validation ═══
+        risk_cfg = self.config.get('risk', {})
+        _max_pos = risk_cfg.get('max_position_size_pct', 5.0)
+        _daily_loss = risk_cfg.get('daily_loss_limit_pct', 3.0)
+        _risk_per_trade = risk_cfg.get('risk_per_trade_pct', 1.0)
+        if _max_pos > 15.0:
+            _safe_print(f"  [SECURITY] max_position_size_pct={_max_pos}% exceeds hard limit 15%, clamping.")
+            self.config.setdefault('risk', {})['max_position_size_pct'] = 15.0
+        if _daily_loss > 5.0:
+            _safe_print(f"  [SECURITY] daily_loss_limit_pct={_daily_loss}% exceeds hard limit 5%, clamping.")
+            self.config.setdefault('risk', {})['daily_loss_limit_pct'] = 5.0
+        if _risk_per_trade > 3.0:
+            _safe_print(f"  [SECURITY] risk_per_trade_pct={_risk_per_trade}% exceeds hard limit 3%, clamping.")
+            self.config.setdefault('risk', {})['risk_per_trade_pct'] = 3.0
+
         _safe_print("  [SYSTEM] Institutional Infrastructure v6.5 ACTIVE.")
+        _safe_print("  [AGENTS] 12-Agent Intelligence Overlay INITIALIZED.")
         _safe_print("  [AUDIT] Audit Trail established. Stream and Compliance ready.")
 
         # Strategy
@@ -357,7 +387,7 @@ class TradingExecutor:
             ("L6", "Strategist Hub",           "ONLINE" if os.environ.get('REASONING_LLM_KEY') else "OFFLINE"),
             ("L7", "Advanced Learning",        "ONLINE"),
             ("L8", "Tactical Memory",          "ONLINE"),
-            ("L9", "Evolution Portal",         "STANDBY"),
+            ("L9", "Evolution Portal",         "ONLINE"),
         ]
         for lid, name, status in layers:
             icon = "✅" if status == "ONLINE" else "⚡" if status == "PAPER" else "⚠️" if status == "DEGRADED" else "🔴" if status == "OFFLINE" else "⏳"
@@ -436,15 +466,25 @@ class TradingExecutor:
         _safe_print(f"  [STRATEGIST] Decision: {decision.market_regime} | Bias: {decision.macro_bias:+.2f}")
         _safe_print(f"  [REASONING] {decision.reasoning_trace[:150]}...")
         
-        # Suggested Config Overrides
+        # Suggested Config Overrides (defense-in-depth: re-clamp even after Pydantic validation)
         if decision.suggested_config_update:
             _safe_print(f"  [CONFIG] Applying strategist overrides: {decision.suggested_config_update}")
-            # Update dynamic risk parameters
+            # SECURITY: Hard bounds that override anything the LLM suggests
+            _HARD_BOUNDS = {
+                'max_position_size_pct': (0.1, 5.0),
+                'daily_loss_limit_pct': (0.5, 5.0),
+                'risk_per_trade_pct': (0.1, 3.0),
+                'atr_stop_mult': (1.0, 5.0),
+                'atr_tp_mult': (1.0, 5.0),
+            }
             if 'risk' in decision.suggested_config_update:
                 r_upd = decision.suggested_config_update['risk']
-                if 'atr_tp_mult' in r_upd: 
+                for k, v in list(r_upd.items()):
+                    if k in _HARD_BOUNDS:
+                        lo, hi = _HARD_BOUNDS[k]
+                        r_upd[k] = max(lo, min(hi, float(v)))
+                if 'atr_tp_mult' in r_upd:
                     self.bt_config.atr_tp_mult = r_upd['atr_tp_mult']
-                    # Also update live risk manager
                     self.risk_manager.risk_limits.take_profit_atr_mult = r_upd['atr_tp_mult']
                 if 'atr_stop_mult' in r_upd:
                     self.risk_manager.risk_limits.stop_loss_atr_mult = r_upd['atr_stop_mult']
@@ -775,12 +815,20 @@ class TradingExecutor:
             # Fetch Balance and Return %
             balance_info = self.price_source.get_balance()
             current_usdt = balance_info.get('USDT', 0.0) if 'error' not in balance_info else self.initial_capital
-            total_return_pct = ((current_usdt - self.initial_capital) / self.initial_capital * 100) if self.initial_capital > 0 else 0
-            
+
+            # Compute total portfolio value (USDT + crypto holdings at current prices)
+            total_portfolio_value = current_usdt
+            for a_name, a_price in current_prices.items():
+                holding = balance_info.get(a_name, 0.0)
+                if isinstance(holding, (int, float)) and holding > 0:
+                    total_portfolio_value += holding * a_price
+
+            total_return_pct = ((total_portfolio_value - self.initial_capital) / self.initial_capital * 100) if self.initial_capital > 0 else 0
+
             # Update Dashboard State
             try:
                 from src.api.state import DashboardState
-                pnl_abs = current_usdt - self.initial_capital
+                pnl_abs = total_portfolio_value - self.initial_capital
                 DashboardState().update_portfolio(pnl=pnl_abs, asset_return=total_return_pct)
             except: pass
 
@@ -792,6 +840,16 @@ class TradingExecutor:
                 t_fetch = time.time()  # Measure ONLY the data fetch latency
                 ohlcv_data = self._fetch_data(symbol)
                 if ohlcv_data is None: continue
+
+                # SECURITY: Validate OHLCV data before processing
+                try:
+                    from src.security.data_validation import OHLCVValidator
+                    ohlcv_valid, ohlcv_warns = OHLCVValidator.validate(ohlcv_data, asset)
+                    if not ohlcv_valid:
+                        _safe_print(f"  [DATA-VALIDATION] {asset} OHLCV REJECTED: {ohlcv_warns}")
+                        continue
+                except ImportError:
+                    pass
 
                 # Latency Check (HFT Guard) — measures data fetch, not model load
                 api_latency = (time.time() - t_fetch) * 1000.0
@@ -872,6 +930,157 @@ class TradingExecutor:
                     _safe_print(f"  [TOXIC-FLOW] High VPIN ({vpin_val:.2f}). Market is too one-sided for safe entry.")
                     last_signal = 0
 
+                # ═══ MULTI-AGENT INTELLIGENCE OVERLAY ═══
+                # 4-step pipeline: DataValidator → 10 Agents → Combiner → Auditor
+                enhanced_decision = None
+                try:
+                    closes_np = np.array(ohlcv_data['closes'])
+                    highs_np = np.array(ohlcv_data['highs'])
+                    lows_np = np.array(ohlcv_data['lows'])
+                    vols_np = np.array(ohlcv_data['volumes'])
+
+                    l2_data = strategy_result.get('l2_data', {}) or {}
+                    sent_score = float(l2_data.get('aggregate_score', 0.0))
+                    balance_info = self.price_source.get_balance()
+                    current_balance = balance_info.get('USDT', self.initial_capital) if 'error' not in balance_info else self.initial_capital
+
+                    quant_state = self.math_injector.compute_full_state(
+                        prices=closes_np, highs=highs_np, lows=lows_np,
+                        volumes=vols_np, sentiment_score=sent_score,
+                        asset=asset, account_balance=current_balance,
+                    )
+
+                    # Gather context for agents
+                    on_chain_data = {}
+                    try:
+                        on_chain_signal = self.on_chain_portfolio.compute_on_chain_signal(asset)
+                        on_chain_data = asdict(on_chain_signal) if on_chain_signal else {}
+                    except Exception:
+                        pass
+
+                    sentiment_ctx = {
+                        'aggregate_score': sent_score,
+                        'aggregate_label': l2_data.get('aggregate_label', 'NEUTRAL'),
+                        'confidence': float(l2_data.get('confidence', 0.0)),
+                    }
+
+                    # Free data enrichment (Fear/Greed, etc.)
+                    try:
+                        free_data = self.free_data.get_all_data()
+                        sentiment_ctx['fear_greed'] = free_data.get('fear_greed', {}).get('value', 50)
+                    except Exception:
+                        pass
+
+                    daily_pnl = 0.0
+                    try:
+                        ps = self.profit_protector.get_profit_status()
+                        daily_pnl = ps.get('total_pnl_pct', 0.0)
+                    except Exception:
+                        pass
+
+                    open_pos = self.risk_manager.get_open_positions() if hasattr(self.risk_manager, 'get_open_positions') else []
+                    trade_hist = self.journal.trades[-50:] if hasattr(self.journal, 'trades') else []
+                    raw_conf = float(strategy_result.get('l1_data', {}).get('confidence', 0.5)) if strategy_result else 0.5
+
+                    enhanced_decision = self.agent_orchestrator.run_cycle(
+                        quant_state=quant_state,
+                        raw_signal=last_signal,
+                        raw_confidence=raw_conf,
+                        ext_feats=ext_feats,
+                        on_chain=on_chain_data,
+                        sentiment_data=sentiment_ctx,
+                        ohlcv_data=ohlcv_data,
+                        asset=asset,
+                        daily_pnl=daily_pnl,
+                        account_balance=current_balance,
+                        open_positions=open_pos,
+                        trade_history=trade_hist,
+                    )
+
+                    _safe_print(f"  [AGENTS] Decision: dir={enhanced_decision.direction:+d} "
+                                f"conf={enhanced_decision.confidence:.3f} "
+                                f"scale={enhanced_decision.position_scale:.3f} "
+                                f"consensus={enhanced_decision.consensus_level} "
+                                f"quality={enhanced_decision.data_quality:.2f}")
+
+                    # Apply agent VETO (skip on testnet force-trade mode)
+                    _is_force = self.config.get('force_trade', False) and self.mode == 'testnet'
+                    if enhanced_decision.veto or enhanced_decision.consensus_level == 'VETOED':
+                        if _is_force:
+                            _safe_print(f"  [AGENTS] VETO active — OVERRIDDEN by testnet force-trade")
+                        else:
+                            _safe_print(f"  [AGENTS] VETO active — blocking trade")
+                            last_signal = 0
+                    elif enhanced_decision.direction != last_signal and enhanced_decision.confidence > 0.6:
+                        # Agents override direction if confident enough
+                        _safe_print(f"  [AGENTS] Direction override: {last_signal:+d} → {enhanced_decision.direction:+d}")
+                        last_signal = enhanced_decision.direction
+                except Exception as e:
+                    _safe_print(f"  [AGENTS] Agent overlay error (falling back to base): {str(e)[:100]}")
+                    enhanced_decision = None
+
+                # ═══ PUSH AGENT OVERLAY STATE TO DASHBOARD ═══
+                try:
+                    from src.api.state import DashboardState
+                    if enhanced_decision is not None:
+                        agent_stats = {}
+                        try:
+                            agent_stats = self.agent_orchestrator.get_agent_stats()
+                        except Exception:
+                            pass
+                        # Serialize agent votes (AgentVote dataclass → dict)
+                        serialized_votes = {}
+                        for name, v in (enhanced_decision.agent_votes or {}).items():
+                            try:
+                                if hasattr(v, 'direction'):
+                                    serialized_votes[name] = {
+                                        'direction': v.direction,
+                                        'confidence': round(v.confidence, 3),
+                                        'reasoning': str(v.reasoning)[:120],
+                                    }
+                                elif isinstance(v, dict):
+                                    serialized_votes[name] = {
+                                        'direction': v.get('direction', 0),
+                                        'confidence': round(v.get('confidence', 0), 3),
+                                        'reasoning': str(v.get('reasoning', ''))[:120],
+                                    }
+                            except Exception:
+                                pass
+
+                        DashboardState().update_agent_overlay({
+                            'enabled': True,
+                            'last_decision': {
+                                'direction': enhanced_decision.direction,
+                                'confidence': round(enhanced_decision.confidence, 4),
+                                'position_scale': round(enhanced_decision.position_scale, 4),
+                                'consensus_level': enhanced_decision.consensus_level,
+                                'data_quality': round(enhanced_decision.data_quality, 4),
+                                'daily_pnl_mode': enhanced_decision.daily_pnl_mode,
+                                'veto': enhanced_decision.veto,
+                                'strategy': enhanced_decision.strategy_recommendation,
+                                'asset': asset,
+                            },
+                            'agent_votes': serialized_votes,
+                            'agent_weights': agent_stats.get('weights', {}),
+                            'consensus_level': enhanced_decision.consensus_level,
+                            'data_quality': round(enhanced_decision.data_quality, 4),
+                            'daily_pnl_mode': enhanced_decision.daily_pnl_mode,
+                        })
+                except Exception:
+                    pass
+
+                # ═══ PUSH POLYMARKET DATA TO DASHBOARD ═══
+                try:
+                    from src.data.polymarket_fetcher import PolymarketFetcher
+                    from src.api.state import DashboardState
+                    pm_cfg = self.config.get('polymarket', {})
+                    if pm_cfg.get('enabled', True):
+                        _pm = PolymarketFetcher(config=pm_cfg)
+                        pm_summary = _pm.get_summary_for_dashboard()
+                        DashboardState().update_polymarket(pm_summary)
+                except Exception:
+                    pass
+
                 try:
                     from src.api.state import DashboardState
                     l2 = strategy_result.get('l2_data', {}) or {}
@@ -926,16 +1135,17 @@ class TradingExecutor:
                             "L6 Strategist": {"status": "OK" if self.strategist.api_key else "WARN", "progress": float(conf/100.0 if conf <= 1 else conf), "metric": f"Conf {conf:.2f}"},
                             "L7 Autonomy": {"status": "OK", "progress": 0.9, "metric": "Cycle ACTIVE"},
                             "L8 Monitoring": {"status": "OK", "progress": 0.9, "metric": "Health GREEN"},
-                            "L9 Learning": {"status": "OK", "progress": 0.5, "metric": "Meta-learning queued"}
+                            "L9 Learning": {"status": "OK", "progress": 1.0, "metric": f"Agents: {enhanced_decision.consensus_level if enhanced_decision else 'INIT'}"}
                         }
                         ds.set_layers(layers)
                         
                         # Source Status bar
+                        llm_online = bool(self.strategist.api_key) or getattr(self.strategist, 'provider', '') in ('local', 'ollama')
                         ds.set_sources({
                             "exchange": "ONLINE" if bool(ohlcv_data) else "OFFLINE",
-                            "news": "ONLINE" if (headlines and len(headlines)>0) else "OFFLINE",
-                            "onchain": "ONLINE" if bool(ext_feats.get('onchain')) else "OFFLINE",
-                            "llm": "ONLINE" if self.strategist.api_key else "OFFLINE"
+                            "news": "ONLINE" if (headlines and len(headlines) > 0) else "OFFLINE",
+                            "onchain": "ONLINE" if bool(on_chain_data) else "OFFLINE",
+                            "llm": "ONLINE" if llm_online else "OFFLINE"
                         })
                         
                         # Compute Optimization Edge (Uplift)
@@ -1028,7 +1238,10 @@ class TradingExecutor:
                     ds.add_layer_log("L6", f"Strategist confidence: {conf:.2f}", "INFO")
                     ds.add_layer_log("L7", "Pattern detection: Active", "INFO")
                     ds.add_layer_log("L8", "Memory retrieval: 87% similarity", "INFO")
-                    ds.add_layer_log("L9", "Model training: Scheduled", "INFO")
+                    if enhanced_decision is not None:
+                        ds.add_layer_log("L9", f"Agent overlay: {enhanced_decision.consensus_level} conf={enhanced_decision.confidence:.2f}", "INFO")
+                    else:
+                        ds.add_layer_log("L9", "Evolution: Learning cycle active", "INFO")
                     # append sentiment history
                     state_now = ds.get_full_state()
                     prev_hist = []
@@ -1078,22 +1291,30 @@ class TradingExecutor:
                 except Exception:
                     pass
                 
-                _force_trade_mode = self.config.get('force_trade', False) and self.mode == 'testnet'
+                # SECURITY: force_trade ONLY allowed on verified testnet
+                _is_verified_testnet = (
+                    self.mode == 'testnet'
+                    and getattr(self.price_source, 'testnet', False)
+                    and 'testnet' in str(getattr(getattr(self.price_source, 'exchange', None), 'urls', {}).get('api', '')).lower()
+                )
+                _force_trade_mode = self.config.get('force_trade', False) and _is_verified_testnet
                 if last_signal != 0 or _force_trade_mode:
                     if last_signal == 0 and _force_trade_mode:
                         # Force a direction based on most recent price action
                         last_signal = 1  # Default to LONG on forced mode
                         _safe_print(f"  [FORCE-TRADE] Signal was FLAT, forcing LONG for testnet execution")
-                    # Pass extra context for Audit Logging
-                    self._execute_autonomous_trade(asset, symbol, last_signal, ohlcv_data['closes'][-1], 
-                                                 strategy_result=strategy_result, ext_feats=ext_feats)
+                    # Pass extra context for Audit Logging + Agent overlay
+                    self._execute_autonomous_trade(asset, symbol, last_signal, ohlcv_data['closes'][-1],
+                                                 strategy_result=strategy_result, ext_feats=ext_feats,
+                                                 enhanced_decision=enhanced_decision)
 
             _safe_print(f"\n  [SLEEP] Waiting {self.poll_interval}s for next bar...")
             time.sleep(self.poll_interval)
 
 
-    def _execute_autonomous_trade(self, asset: str, symbol: str, signal: int, current_price: float, 
-                                  strategy_result: Optional[Dict] = None, ext_feats: Optional[Dict] = None):
+    def _execute_autonomous_trade(self, asset: str, symbol: str, signal: int, current_price: float,
+                                  strategy_result: Optional[Dict] = None, ext_feats: Optional[Dict] = None,
+                                  enhanced_decision=None):
         """
         Institutional-grade autonomous execution with full Audit/Compliance Logging.
         Implements Ensemble Voting, Reasoning Trace, and Split-Order Execution.
@@ -1134,7 +1355,28 @@ class TradingExecutor:
             
             # Ensemble Consensus (3-Way Voting)
             ensemble_confidence = (l1_score + ptst_res['prob_up'] + rl_score) / 3
-            
+
+            # ═══ AGENT INTELLIGENCE OVERLAY: Blend into ensemble ═══
+            agentic_enhanced_dict = None
+            if enhanced_decision and hasattr(enhanced_decision, 'direction'):
+                blend_w = self.config.get('agents', {}).get('blend_weight', 0.60)
+                existing_score = signal * ensemble_confidence
+                agent_score = enhanced_decision.direction * enhanced_decision.confidence
+                blended = (1 - blend_w) * existing_score + blend_w * agent_score
+
+                ensemble_confidence = float(min(1.0, abs(blended) * 1.5))
+
+                agentic_enhanced_dict = {
+                    'direction': enhanced_decision.direction,
+                    'confidence': enhanced_decision.confidence,
+                    'position_scale': enhanced_decision.position_scale,
+                    'blend_weight': blend_w,
+                    'consensus_level': enhanced_decision.consensus_level,
+                    'data_quality': enhanced_decision.data_quality,
+                    'veto': enhanced_decision.veto,
+                }
+                _safe_print(f"  [AGENTS] Blended score: {blended:+.3f} (existing={existing_score:.3f}, agent={agent_score:.3f})")
+
             # Force-trade mode for testnet: much tighter neutral band
             _force_trade = self.config.get('force_trade', False) and self.mode == 'testnet'
             if _force_trade:
@@ -1293,7 +1535,9 @@ class TradingExecutor:
             )
             
             allocation = allocations.get(asset)
-            if not allocation: return
+            if not allocation:
+                _safe_print(f"  [SKIP] No portfolio allocation for {asset} — skipping trade")
+                return
 
             side = "buy" if final_direction > 0 else "sell"
             pos_size_pct = allocation.position_size_pct
@@ -1491,7 +1735,22 @@ class TradingExecutor:
                 exit_price=res.executed_price,
                 pnl=pnl
             )
-            
+
+            # ═══ AGENT FEEDBACK LOOP: Update agent weights after trade ═══
+            try:
+                self.agent_orchestrator.post_trade_feedback({
+                    'asset': asset,
+                    'pnl': pnl,
+                    'return_pct': return_pct,
+                    'direction': record.direction,
+                    'entry_price': record.entry_price,
+                    'exit_price': res.executed_price,
+                    'reason': reason,
+                    'agent_votes': {},  # Will be populated when we track per-trade
+                })
+            except Exception:
+                pass
+
             # ═══ REAL-TIME BENCHMARK: Record completed trade with P&L ═══
             try:
                 from src.api.state import DashboardState

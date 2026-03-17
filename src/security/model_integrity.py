@@ -12,6 +12,8 @@ import argparse
 import hashlib
 import json
 import logging
+import os
+import stat
 import sys
 from pathlib import Path
 
@@ -34,6 +36,37 @@ def _sha256(file_path: Path) -> str:
     return h.hexdigest()
 
 
+def _compute_manifest_hash(checksums: dict) -> str:
+    """
+    Compute a deterministic hash of all model checksums.
+    This acts as a 'root hash' that can be stored externally
+    to detect tampering of checksums.json itself.
+    """
+    content = json.dumps(checksums, sort_keys=True)
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+def _update_env_manifest_hash(manifest_hash: str):
+    """Auto-update MODEL_MANIFEST_HASH in .env file if it exists."""
+    import re
+    env_path = Path(".env")
+    if not env_path.is_file():
+        return
+    text = env_path.read_text(encoding="utf-8")
+    if "MODEL_MANIFEST_HASH=" in text:
+        updated = re.sub(
+            r"MODEL_MANIFEST_HASH=.*",
+            f"MODEL_MANIFEST_HASH={manifest_hash}",
+            text,
+        )
+        env_path.write_text(updated, encoding="utf-8")
+        logger.info("Updated MODEL_MANIFEST_HASH in .env")
+    else:
+        with open(env_path, "a", encoding="utf-8") as f:
+            f.write(f"\nMODEL_MANIFEST_HASH={manifest_hash}\n")
+        logger.info("Added MODEL_MANIFEST_HASH to .env")
+
+
 def generate_checksums(models_dir: str = "models") -> dict[str, str]:
     """Scan model files in *models_dir*, compute SHA-256, and save to checksums.json.
 
@@ -47,17 +80,27 @@ def generate_checksums(models_dir: str = "models") -> dict[str, str]:
 
     checksums: dict[str, str] = {}
     for file in sorted(models_path.iterdir()):
+        # Skip checksums.json itself to avoid self-referencing
+        if file.name == CHECKSUMS_FILE:
+            continue
         if file.is_file() and file.suffix in MODEL_EXTENSIONS:
             digest = _sha256(file)
-            # Store paths with forward slashes for cross-platform consistency.
             key = file.as_posix()
             checksums[key] = digest
             logger.info("Checksum generated: %s -> %s", key, digest)
 
+    # Save checksums (unlock if previously write-protected)
     checksums_path = models_path / CHECKSUMS_FILE
+    if checksums_path.exists():
+        checksums_path.chmod(checksums_path.stat().st_mode | stat.S_IWUSR)
     with open(checksums_path, "w", encoding="utf-8") as f:
         json.dump(checksums, f, indent=2)
     logger.info("Checksums saved to %s (%d files)", checksums_path, len(checksums))
+
+    # Compute manifest hash and auto-update .env if present
+    manifest_hash = _compute_manifest_hash(checksums)
+    logger.info("Manifest root hash: %s", manifest_hash)
+    _update_env_manifest_hash(manifest_hash)
 
     return checksums
 
@@ -73,15 +116,7 @@ def _load_checksums(models_dir: str = "models") -> dict[str, str]:
 
 
 def verify_model(model_path: str, models_dir: str = "models") -> bool:
-    """Verify a single model file against its stored checksum.
-
-    Args:
-        model_path: Path to the model file (e.g. ``models/lgbm_btc.txt``).
-        models_dir: Directory containing ``checksums.json``.
-
-    Returns:
-        True if the file matches its stored checksum, False otherwise.
-    """
+    """Verify a single model file against its stored checksum."""
     checksums = _load_checksums(models_dir)
     if not checksums:
         return False
@@ -106,36 +141,68 @@ def verify_model(model_path: str, models_dir: str = "models") -> bool:
         return False
 
 
-def verify_all_models(models_dir: str = "models") -> dict[str, bool]:
+def verify_all_models(models_dir: str = "models"):
     """Verify every model listed in checksums.json.
 
     Returns:
-        Dict mapping file paths to verification results.
+        Tuple of (passed_list, failed_list) for file paths.
     """
     checksums = _load_checksums(models_dir)
     if not checksums:
-        return {}
+        return [], []
 
-    results: dict[str, bool] = {}
+    # Verify manifest hash if environment variable is set
+    manifest_env = os.environ.get("MODEL_MANIFEST_HASH", "")
+    if manifest_env:
+        actual_manifest = _compute_manifest_hash(checksums)
+        if actual_manifest != manifest_env:
+            logger.error(
+                "CRITICAL: checksums.json manifest hash mismatch! "
+                "Expected %s, got %s. Possible tampering detected.",
+                manifest_env, actual_manifest
+            )
+            return [], list(checksums.keys())
+
+    passed = []
+    failed = []
     for key, expected in checksums.items():
         file_path = Path(key)
         if not file_path.is_file():
             logger.warning("MISSING: %s", key)
-            results[key] = False
+            failed.append(key)
             continue
 
         actual = _sha256(file_path)
-        passed = actual == expected
-        results[key] = passed
-        if passed:
+        if actual == expected:
             logger.info("PASS: %s", key)
+            passed.append(key)
         else:
             logger.warning("FAIL: %s (expected %s, got %s)", key, expected, actual)
+            failed.append(key)
 
-    passed_count = sum(results.values())
-    total = len(results)
-    logger.info("Verification complete: %d/%d passed", passed_count, total)
-    return results
+    logger.info("Verification complete: %d/%d passed", len(passed), len(passed) + len(failed))
+    return passed, failed
+
+
+def protect_model_files(models_dir: str = "models"):
+    """Set model files to read-only to prevent accidental modification."""
+    models_path = Path(models_dir)
+    if not models_path.is_dir():
+        return
+
+    protected = 0
+    for file in models_path.iterdir():
+        if file.is_file() and file.suffix in MODEL_EXTENSIONS:
+            try:
+                # Set read-only (remove write permission)
+                current = file.stat().st_mode
+                file.chmod(current & ~stat.S_IWUSR & ~stat.S_IWGRP & ~stat.S_IWOTH)
+                protected += 1
+            except (OSError, PermissionError):
+                logger.warning("Could not protect: %s", file)
+
+    if protected:
+        logger.info("Write-protected %d model files in %s", protected, models_dir)
 
 
 def main() -> None:
@@ -151,6 +218,10 @@ def main() -> None:
     group.add_argument(
         "--verify", action="store_true",
         help="Verify all model files against stored checksums",
+    )
+    group.add_argument(
+        "--protect", action="store_true",
+        help="Set model files to read-only",
     )
     parser.add_argument(
         "--models-dir", default="models",
@@ -168,9 +239,11 @@ def main() -> None:
         if not checksums:
             sys.exit(1)
     elif args.verify:
-        results = verify_all_models(args.models_dir)
-        if not results or not all(results.values()):
+        passed, failed = verify_all_models(args.models_dir)
+        if failed:
             sys.exit(1)
+    elif args.protect:
+        protect_model_files(args.models_dir)
 
 
 if __name__ == "__main__":

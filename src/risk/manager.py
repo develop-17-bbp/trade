@@ -112,6 +112,10 @@ class RiskManager:
         self._mc_risk_score = 0.5
         self._mc_position_scale = 1.0
 
+        # EVT tail risk dynamic adjustment
+        self._evt_risk_score = 0.3
+        self._evt_position_scale = 1.0
+
         # State tracking
         self.daily_loss = 0.0
         self.daily_trades = 0
@@ -141,6 +145,29 @@ class RiskManager:
             self.max_position_pct = self._base_max_position_pct * 0.75
         else:
             self.max_position_pct = self._base_max_position_pct
+
+    def update_evt_risk(self, evt_risk_score: float = 0.3, evt_position_scale: float = 1.0):
+        """
+        Update risk limits from Extreme Value Theory tail risk engine.
+
+        EVT captures fat-tail risk that normal distributions miss.
+        Heavy tails (high ξ) → tighter position limits.
+        """
+        self._evt_risk_score = evt_risk_score
+        self._evt_position_scale = evt_position_scale
+
+        # Further tighten if EVT says tails are heavy
+        if evt_risk_score > 0.7:
+            # Stack with MC adjustment (multiplicative)
+            self.max_position_pct = min(
+                self.max_position_pct,
+                self._base_max_position_pct * 0.4
+            )
+        elif evt_risk_score > 0.5:
+            self.max_position_pct = min(
+                self.max_position_pct,
+                self._base_max_position_pct * 0.6
+            )
 
     def is_trade_safe(self, current_price: float, direction: int,
                         atr_value: float, account_balance: float) -> Tuple[bool, str]:

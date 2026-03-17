@@ -236,15 +236,47 @@ class L1SignalEngine:
         except Exception:
             pass
 
+        # ----- 9. FRACTIONAL DIFFERENCING MOMENTUM (quant upgrade) -----
+        fracdiff_signal = [0.0] * n
+        fracdiff_data = {}
+        try:
+            from src.models.fracdiff import FractionalDiff
+            import numpy as _np
+            fd = FractionalDiff()
+            arr = _np.array(closes, dtype=float)
+            fracdiff_data = fd.compute_features(arr)
+            # Use fracdiff momentum as directional signal
+            fd_mom = fracdiff_data.get('fracdiff_momentum', 0)
+            fracdiff_signal[-1] = max(-1.0, min(1.0, fd_mom * 10))
+        except Exception:
+            pass
+
+        # ----- 10. HAWKES TIMING SIGNAL (quant upgrade) -----
+        hawkes_signal = [0.0] * n
+        hawkes_data = {}
+        try:
+            from src.models.hawkes_process import HawkesProcess
+            import numpy as _np
+            hp = HawkesProcess()
+            arr = _np.array(closes, dtype=float)
+            hawkes_data = hp.trade_timing_signal(arr)
+            # Trade-allowed acts as a filter, not a directional signal
+            # We use it to dampen signals during clustering
+            if not hawkes_data.get('trade_allowed', True):
+                hawkes_signal[-1] = -0.5  # Reduce all signals during clustering
+        except Exception:
+            pass
+
         # ----- COMPOSITE -----
         composite: List[float] = []
         # Rebalance weights to include new quant signals
         w = self.weights.copy()
-        # Allocate 5% each to Kalman and OU (taken from trend and mean_reversion)
+        # Allocate weights to new signals (taken from existing)
         w_kalman = 0.05
         w_ou = 0.05
-        w_trend_adj = max(0.0, w['trend'] - 0.025)
-        w_mr_adj = max(0.0, w['mean_reversion'] - 0.025)
+        w_fracdiff = 0.03
+        w_trend_adj = max(0.0, w['trend'] - 0.04)
+        w_mr_adj = max(0.0, w['mean_reversion'] - 0.04)
 
         for i in range(n):
             s = (w_trend_adj * trend_signal[i]
@@ -254,7 +286,8 @@ class L1SignalEngine:
                  + w.get('forecast', 0) * forecast_signal[i]
                  + w['cycle'] * cycle_signal[i]
                  + w_kalman * kalman_signal[i]
-                 + w_ou * ou_signal[i])
+                 + w_ou * ou_signal[i]
+                 + w_fracdiff * fracdiff_signal[i])
             # Clamp to [-1, +1]
             composite.append(max(-1.0, min(1.0, s)))
 
@@ -289,6 +322,9 @@ class L1SignalEngine:
             'kalman_data': kalman_data,
             'hurst_data': hurst_data,
             'ou_data': ou_data,
+            'fracdiff_signal': fracdiff_signal,
+            'fracdiff_data': fracdiff_data,
+            'hawkes_data': hawkes_data,
         }
 
     def _compute_trend_signal(self, closes, short_ma, long_ma, crossover,

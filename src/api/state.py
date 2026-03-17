@@ -82,7 +82,26 @@ _DEFAULT_STATE = {
             "strategist": {"predictions": [], "actuals": [], "correct": 0, "total": 0}
         }
     },
-    "performance": {}
+    "performance": {},
+    "agent_overlay": {
+        "enabled": False,
+        "last_decision": {},
+        "agent_votes": {},
+        "agent_weights": {},
+        "consensus_level": "N/A",
+        "data_quality": 0.0,
+        "daily_pnl_mode": "NORMAL",
+        "cycle_count": 0,
+        "last_cycle_time": ""
+    },
+    "polymarket": {
+        "active_markets": 0,
+        "liquid_markets": 0,
+        "top_markets": [],
+        "top_divergences": [],
+        "avg_divergence": 0.0,
+        "last_fetch": ""
+    }
 }
 
 
@@ -310,6 +329,33 @@ class DashboardState:
         """Push computed benchmark metrics (win_rate, sharpe, etc)."""
         def _mod(s):
             s["performance"] = metrics
+        self._read_modify_write(_mod)
+
+    def update_agent_overlay(self, agent_data: Dict[str, Any]):
+        """Push full agent overlay status (decision, votes, weights, consensus)."""
+        def _mod(s):
+            if "agent_overlay" not in s:
+                s["agent_overlay"] = {}
+            s["agent_overlay"].update(agent_data)
+            s["agent_overlay"]["last_cycle_time"] = datetime.now().isoformat()
+            s["agent_overlay"]["cycle_count"] = s["agent_overlay"].get("cycle_count", 0) + 1
+            s["last_update"] = datetime.now().isoformat()
+        self._read_modify_write(_mod)
+
+    def update_agent_decision(self, decision: Dict[str, Any]):
+        """Push the latest enhanced decision from the agent overlay."""
+        def _mod(s):
+            if "agent_overlay" not in s:
+                s["agent_overlay"] = {}
+            s["agent_overlay"]["last_decision"] = decision
+            s["agent_overlay"]["last_cycle_time"] = datetime.now().isoformat()
+        self._read_modify_write(_mod)
+
+    def update_polymarket(self, data: Dict[str, Any]):
+        """Push Polymarket prediction market data."""
+        def _mod(s):
+            s["polymarket"] = data
+            s["last_update"] = datetime.now().isoformat()
         self._read_modify_write(_mod)
 
     def record_model_prediction(self, model_name: str, predicted: int, actual: int):

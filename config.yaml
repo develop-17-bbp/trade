@@ -58,14 +58,34 @@ models:
 
 # ── AI Reasoning Layer ──
 ai:
-  reasoning_provider: "local"               # 'google' (Gemini), 'openai', or 'local'
-  reasoning_model: "neural-chat"            # Ollama local model
-  
+  reasoning_provider: "auto"                # 'auto' = smart detection: cloud API → local Ollama → rule-based
+  reasoning_model: "neural-chat"            # Default local model (used when no cloud API available)
+
   # Rate Limiting (to avoid quota exhaustion)
   rate_limit_calls_per_minute: 15     # Conservative rate limiter for free tier
   rate_limit_enabled: true            # Enable rate limiting
-  
+
   # Fallback Strategy (auto-switch on quota/error)
-  fallback_on_quota_error: false      # Fall back to rule-based on quota exceeded
-  use_local_on_failure: false         # Set to true to use Ollama on failure
+  fallback_on_quota_error: true       # Fall back to local/rule-based on quota exceeded
+  use_local_on_failure: true          # Always try local Ollama before rule-based
+
+# ── Multi-Agent Intelligence Overlay ──
+agents:
+  enabled: true                         # Master switch for 12-agent overlay
+  blend_weight: 0.60                    # 60% agent overlay, 40% existing pipeline
+  consensus_threshold: 0.55             # Minimum probability for directional trade
+  weight_update_alpha: 0.15             # Bayesian EMA learning rate for agent weights
+  loss_prevention:
+    daily_target_pct: 1.0               # Target: +1% daily profit
+    preservation_threshold_pct: 0.8     # Enter PRESERVATION mode at +0.8%
+    caution_threshold_pct: -0.5         # Enter CAUTION mode at -0.5%
+    halt_threshold_pct: -1.0            # HALT all trading at -1.0%
+    intraday_drawdown_pause_pct: 2.0    # Pause 30 min on 2% intraday drawdown
+
+# ── Polymarket Prediction Market Integration ──
+polymarket:
+  enabled: true                         # Fetch prediction market probabilities
+  divergence_threshold: 0.15            # 15% probability divergence to trigger signal
+  volume_threshold: 10000               # Minimum market volume in USD
+  max_signal_strength: 0.8              # Cap agent confidence from Polymarket signals
 
