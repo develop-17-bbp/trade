@@ -865,8 +865,7 @@ class TradingExecutor:
                 DashboardState().update_portfolio(pnl=pnl_abs, asset_return=total_return_pct, total_value=total_portfolio_value)
             except: pass
 
-            _trades_today = getattr(self.strategy, 'risk_manager', None)
-            _trades_count = _trades_today.daily_trades if _trades_today else 0
+            _trades_count = getattr(self.risk_manager, 'daily_trades', 0)
             _open_positions = self.risk_manager.open_positions if hasattr(self.risk_manager, 'open_positions') else {}
             _open_count = len(_open_positions)
             _journal_total = len(self.journal.trades) if hasattr(self.journal, 'trades') else 0
@@ -1867,11 +1866,14 @@ class TradingExecutor:
                     'status': 'CLOSED',
                 })
                 
-                # Push updated benchmark metrics to dashboard
+                # Push updated benchmark metrics to dashboard (only CLOSED trades count)
                 all_trades = ds.get_full_state().get('trade_history', [])
-                closed_trades = [t for t in all_trades if 'pnl' in t]
+                closed_trades = [
+                    t for t in all_trades
+                    if isinstance(t, dict) and t.get('status') == 'CLOSED' and 'pnl' in t
+                ]
                 if closed_trades:
-                    wins = sum(1 for t in closed_trades if t['pnl'] > 0)
+                    wins = sum(1 for t in closed_trades if t.get('pnl', 0) > 0)
                     wr = wins / len(closed_trades)
                     rets = [t['return_pct'] / 100 for t in closed_trades if 'return_pct' in t]
                     sharpe = 0.0
@@ -1879,21 +1881,26 @@ class TradingExecutor:
                         import numpy as _np
                         arr = _np.array(rets)
                         sharpe = (float(_np.mean(arr)) / float(_np.std(arr))) * float(_np.sqrt(252)) if float(_np.std(arr)) > 0 else 0.0
-                    
+                    win_pnl = sum(t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) > 0)
+                    loss_pnl = abs(sum(t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) < 0))
+                    pf = (win_pnl / loss_pnl) if loss_pnl > 0 else (float('inf') if win_pnl > 0 else 0.0)
+                    rr = f"1:{win_pnl / loss_pnl:.2f}" if loss_pnl > 0 else "1:∞"
                     ds.update_benchmark_metrics({
                         'win_rate': wr,
+                        'accuracy': wr,
                         'sharpe_ratio': sharpe,
                         'total_trades': len(closed_trades),
-                        'total_pnl': sum(t['pnl'] for t in closed_trades),
+                        'total_pnl': sum(t.get('pnl', 0) for t in closed_trades),
+                        'profit_factor': pf,
+                        'risk_reward': rr,
                     })
-                    
                     # Also save to persistent benchmark history
                     self.benchmark.evaluate_all_from_executor(
                         trade_history=closed_trades,
                         returns=rets if len(rets) >= 2 else None,
                     )
-            except Exception:
-                pass
+            except Exception as _e:
+                _safe_print(f"  [DASHBOARD] Failed to update benchmark metrics: {_e}")
 
     def _fetch_data(self, symbol: str) -> Optional[Dict[str, List[float]]]:
         """Fetch and format OHLCV data for strategy ingestion."""

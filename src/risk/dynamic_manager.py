@@ -74,6 +74,7 @@ class DynamicRiskManager:
         
         # Trade & Position monitoring (Phase 5: Pro Monitoring)
         self.open_positions: Dict[str, TradeRecord] = {}
+        self.daily_trades = 0  # number of trades opened (for [LIVE] log line)
         self.atr_stop_mult = 2.0
         self.atr_tp_mult = 3.0
 
@@ -375,6 +376,7 @@ class DynamicRiskManager:
             record.take_profit = entry_price - self.atr_tp_mult * atr_value
             
         self.open_positions[asset] = record
+        self.daily_trades += 1
         logger.info(f"Registered trade for {asset}: Stop={record.stop_loss:.2f}, TP={record.take_profit:.2f}")
 
     def check_stops(self, asset: str, current_price: float) -> Optional[str]:
