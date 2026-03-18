@@ -14,6 +14,15 @@ Usage:
 
 import os
 import sys
+
+# Cross-platform: avoid OpenMP/BLAS threading issues (multiple runtimes on Mac; stability on Windows/Linux).
+# Set before any native lib (numpy, scipy, lightgbm, torch) loads.
+if os.environ.get("OMP_NUM_THREADS") is None:
+    os.environ["OMP_NUM_THREADS"] = "1"
+if os.environ.get("OPENBLAS_NUM_THREADS") is None:
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+if os.environ.get("MKL_NUM_THREADS") is None:
+    os.environ["MKL_NUM_THREADS"] = "1"
 import signal
 import yaml
 import logging
@@ -158,9 +167,12 @@ def main():
 
     executor = TradingExecutor(config)
 
-    # ── Graceful Shutdown Handler ──
+    # ── Graceful Shutdown Handler (cross-platform: Windows has SIGINT but not SIGTERM) ──
     def _shutdown_handler(signum, frame):
-        sig_name = signal.Signals(signum).name
+        try:
+            sig_name = signal.Signals(signum).name
+        except (ValueError, AttributeError):
+            sig_name = str(signum)
         logger.warning(f"[SHUTDOWN] Received {sig_name}. Initiating graceful shutdown...")
         try:
             # Persist state before exit
@@ -209,7 +221,8 @@ def main():
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown_handler)
-    signal.signal(signal.SIGTERM, _shutdown_handler)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _shutdown_handler)
 
     # ── Model Integrity Check on Startup ──
     try:

@@ -61,6 +61,10 @@ ai:
   reasoning_provider: "auto"                # 'auto' = smart detection: cloud API → local Ollama → rule-based
   reasoning_model: "mistral"                 # Default local model (Ollama mistral, already installed)
 
+  # Default false to avoid segfault on Python 3.14 / ARM; set true to enable full ML stack
+  use_lightgbm: false
+  use_patch_tst: false
+
   # Rate Limiting (to avoid quota exhaustion)
   rate_limit_calls_per_minute: 15     # Conservative rate limiter for free tier
   rate_limit_enabled: true            # Enable rate limiting

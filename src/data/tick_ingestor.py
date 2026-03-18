@@ -31,10 +31,12 @@ class FastTickIngestor:
                 self.shm = mmap.mmap(-1, 1024, tagname=self.buffer_name)
                 logger.info(f"[HFT-INGEST] Connected to Windows SHM: {self.buffer_name}")
             else:
-                # We assume the Rust/Go service created this file in /tmp
+                # Mac/Linux: file-backed shm in project temp dir (cross-platform path)
                 import os
-                os.makedirs("tmp", exist_ok=True)
-                f = open(f"tmp/{self.buffer_name}", "r+b")
+                _tmp_dir = os.path.join(os.getcwd(), "tmp")
+                os.makedirs(_tmp_dir, exist_ok=True)
+                _path = os.path.join(_tmp_dir, self.buffer_name)
+                f = open(_path, "r+b")
                 self.shm = mmap.mmap(f.fileno(), 1024)
                 logger.info(f"[HFT-INGEST] Connected to file-backed SHM: {self.buffer_name}")
         except Exception as e:

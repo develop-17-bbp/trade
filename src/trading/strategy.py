@@ -8,16 +8,19 @@ v1.0: Combines Institutional Sentiment with Quantitative Boosted Trees.
 import time
 from typing import List, Dict, Optional, Tuple
 
-from src.models.lightgbm_classifier import LightGBMClassifier
 from src.models.rl_agent import RLAgent
 from src.ai.finbert_service import FinBERTService
 from src.ai.sentiment import SentimentPipeline
-from src.ai.patchtst_model import PatchTSTClassifier
 from src.risk.manager import RiskManager
 from src.trading.meta_controller import MetaController
 from src.trading.adaptive_engine import AdaptiveEngine
 from src.trading.signal_combiner import SignalCombiner
 from src.models.volatility import EWMAVolatility
+
+
+def _neutral_patch_result():
+    """Stub when PatchTST is disabled (avoids native lib segfault on some platforms)."""
+    return {"prob_up": 0.5, "prob_shock": 0.0, "regime": "NEUTRAL"}
 
 
 class HybridStrategy:
@@ -31,12 +34,19 @@ class HybridStrategy:
 
     def __init__(self, config: Optional[Dict] = None):
         cfg = config or {}
+        ai_cfg = cfg.get('ai', {})
 
-        # L1: LightGBM classifier (v5.5 core)
-        lgb_config = cfg.get('l1', {})
-        if 'models' in cfg and 'lightgbm' in cfg['models']:
-            lgb_config = {**lgb_config, **cfg['models']['lightgbm']}
-        self.classifier = LightGBMClassifier(lgb_config)
+        # L1: LightGBM classifier (default off to avoid segfault on Python 3.14/ARM; set ai.use_lightgbm: true to enable)
+        self.classifier = None
+        if ai_cfg.get('use_lightgbm', False):
+            try:
+                from src.models.lightgbm_classifier import LightGBMClassifier
+                lgb_config = cfg.get('l1', {})
+                if 'models' in cfg and 'lightgbm' in cfg['models']:
+                    lgb_config = {**lgb_config, **cfg['models']['lightgbm']}
+                self.classifier = LightGBMClassifier(lgb_config)
+            except Exception:
+                self.classifier = None
 
         # L1: RL Agent (v6.0 core)
         self.rl_agent = RLAgent(cfg.get('rl', {}))
@@ -59,9 +69,15 @@ class HybridStrategy:
 
         # Signal combiner
         self.combiner = SignalCombiner(cfg.get('combiner', {}))
-        
-        # L7: PatchTST Transformer
-        self.patch_tst = PatchTSTClassifier(cfg.get('models', {}).get('patchtst_path', 'models/patchtst_v1.pt'))
+
+        # L7: PatchTST Transformer (default off to avoid segfault on Python 3.14/ARM; set ai.use_patch_tst: true to enable)
+        self.patch_tst = None
+        if ai_cfg.get('use_patch_tst', False):
+            try:
+                from src.ai.patchtst_model import PatchTSTClassifier
+                self.patch_tst = PatchTSTClassifier(cfg.get('models', {}).get('patchtst_path', 'models/patchtst_v1.pt'))
+            except Exception:
+                self.patch_tst = None
 
         # track trades for feedback learning
         self._trade_history: List[Dict] = []
@@ -99,20 +115,29 @@ class HybridStrategy:
         else:
             l2_aggregate = {'aggregate_score': 0.0, 'aggregate_label': 'NEUTRAL', 'confidence': 0.0}
 
-        # STEP 2: LightGBM Feature Extraction + Classification (L1)
-        features = self.classifier.extract_features(
-            closes=prices, highs=highs, lows=lows, volumes=volumes,
-            sentiment_features=sentiment_features,
-            external_features=external_features,
-        )
-
-        lgb_predictions = self.classifier.predict(features)
-        rl_predictions = self.rl_agent.predict(features)
-        forecast_sig = self.classifier.forecast_signal(features)
-        
-        # PatchTST Inference (Deep Layer 7)
+        # STEP 2: LightGBM Feature Extraction + Classification (L1) or stub when disabled
         import numpy as np
-        patch_result = self.patch_tst.predict(np.array(prices))
+        n = len(prices)
+        if self.classifier:
+            features = self.classifier.extract_features(
+                closes=prices, highs=highs, lows=lows, volumes=volumes,
+                sentiment_features=sentiment_features,
+                external_features=external_features,
+            )
+            lgb_predictions = self.classifier.predict(features)
+            forecast_sig = self.classifier.forecast_signal(features)
+        else:
+            features = [{}] * n
+            lgb_predictions = [(0, 0.5)] * n  # flat/neutral
+            forecast_sig = 0.0
+
+        rl_predictions = self.rl_agent.predict(features)
+
+        # PatchTST Inference (Deep Layer 7) or stub when disabled
+        if self.patch_tst:
+            patch_result = self.patch_tst.predict(np.array(prices))
+        else:
+            patch_result = _neutral_patch_result()
         
         self._last_features = features[-1] if features else {}
         
@@ -168,12 +193,14 @@ class HybridStrategy:
 
     def record_backtest(self, result: 'BacktestResult', asset: str, l1_data: Dict):
         """Log backtest history for L1 retraining."""
+        if not self.classifier:
+            return
         trades = result.trades
         if not trades: return
 
         for t in trades:
             idx = getattr(t, 'exit_idx', -1)
-            if idx != -1 and idx < len(l1_data['features']):
+            if idx != -1 and idx < len(l1_data.get('features', [])):
                 feats = l1_data['features'][idx]
                 label = 1 if t.net_pnl > 0 else 2
                 self.classifier.log_trade(

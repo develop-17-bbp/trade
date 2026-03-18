@@ -241,7 +241,7 @@ with tab_live:
 
         vals = [wr * 100, consistency, pf_norm, recovery, dd_score, avg_wl]
         fig = radar_chart(categories, vals)
-        st.plotly_chart(fig, use_container_width=True, key="radar")
+        st.plotly_chart(fig, width="stretch", key="radar")
 
         ai_score = sum(vals) / len(vals)
         sc = GREEN if ai_score > 50 else (AMBER if ai_score > 30 else RED)
@@ -282,7 +282,7 @@ with tab_live:
                 barmode='relative', height=350,
                 legend=dict(orientation='h', yanchor='bottom', y=1.02),
             ))
-            st.plotly_chart(fig2, use_container_width=True, key="pnl_chart")
+            st.plotly_chart(fig2, width="stretch", key="pnl_chart")
         else:
             st.info("No trade data yet for P&L chart")
 

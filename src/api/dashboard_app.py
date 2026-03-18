@@ -628,7 +628,7 @@ def run_app():
                 with chart_cols[idx]:
                     fig = bench.generate_leaderboard_chart(metric_key, acc, our_label)
                     if fig:
-                        st.plotly_chart(fig, use_container_width=True, key=f"lb_{mkey}")
+                        st.plotly_chart(fig, width="stretch", key=f"lb_{mkey}")
         
         # ── Ensemble Summary Row ──
         has_trades = bool(trades) and len(trades) > 0
@@ -702,12 +702,12 @@ def run_app():
                 
                 fig_radar = bench.generate_radar_chart(our_scores)
                 if fig_radar:
-                    st.plotly_chart(fig_radar, use_container_width=True, key="bench_radar")
+                    st.plotly_chart(fig_radar, width="stretch", key="bench_radar")
                     
             # Timeline if enough history
             fig_timeline = bench.generate_performance_timeline("ensemble_win_rate")
             if fig_timeline:
-                st.plotly_chart(fig_timeline, use_container_width=True, key="bench_timeline")
+                st.plotly_chart(fig_timeline, width="stretch", key="bench_timeline")
         
         elif not models_with_data and not closed_trades:
             # No data at all
