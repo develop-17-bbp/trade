@@ -455,8 +455,22 @@ class LightGBMClassifier:
         """Predict using trained LightGBM model."""
         try:
             import numpy as np
+            import logging
+            _logger = logging.getLogger(__name__)
             X = np.array([[f.get(name, 0.0) for name in self.FEATURE_NAMES]
                           for f in features])
+
+            # Before prediction, align feature count with model expectations
+            if self._lgb_model is not None:
+                expected = self._lgb_model.num_feature()
+                if X.shape[1] > expected:
+                    _logger.warning(f"[LGB] Truncating features {X.shape[1]} -> {expected} to match trained model")
+                    X = X[:, :expected]
+                elif X.shape[1] < expected:
+                    pad = np.zeros((X.shape[0], expected - X.shape[1]))
+                    _logger.warning(f"[LGB] Padded features {X.shape[1]} -> {expected}")
+                    X = np.hstack([X, pad])
+
             proba = self._lgb_model.predict(X, predict_disable_shape_check=True)
             results = []
             for p in proba:
@@ -562,9 +576,20 @@ class LightGBMClassifier:
             X.append([entry.get(name, 0.0) for name in self.FEATURE_NAMES])
         if not X:
             return
-        X_arr = np.array(X)
+        import logging
+        _logger = logging.getLogger(__name__)
+        import pandas as pd
+        X_arr = pd.DataFrame(X, columns=self.FEATURE_NAMES)
+
+        # Drop columns that are all zeros (likely unpopulated institutional signals)
+        zero_cols = [c for c in X_arr.columns if (X_arr[c] == 0).all()]
+        if zero_cols:
+            _logger.info(f"[LGB-TRAIN] Dropping {len(zero_cols)} all-zero columns: {zero_cols[:5]}...")
+            X_arr = X_arr.drop(columns=zero_cols)
+
+        X_arr = X_arr.values
         y_arr = np.array(y)
-        
+
         tuner = ModelTuner(n_trials=20) # Low trials for quick fine-tuning
         best_params = tuner.tune_lightgbm(X_arr, y_arr)
         

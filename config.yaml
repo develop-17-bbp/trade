@@ -86,6 +86,14 @@ agents:
     halt_threshold_pct: -1.0            # HALT all trading at -1.0%
     intraday_drawdown_pause_pct: 2.0    # Pause 30 min on 2% intraday drawdown
 
+# ── Order Execution ──
+execution:
+  entry_type: "limit"           # "limit" (default) or "market"
+  limit_timeout_sec: 30         # Seconds to wait for limit fill before market fallback
+  limit_offset_bps: 5           # Basis points to improve limit price (5 = 0.05% more aggressive)
+  twap_threshold_usd: 5000      # Orders above this notional use TWAP instead of limit
+  exit_type: "market"           # Exits always use market orders for guaranteed fill
+
 # ── Polymarket Prediction Market Integration ──
 polymarket:
   enabled: true                         # Fetch prediction market probabilities

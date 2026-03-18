@@ -34,6 +34,9 @@ class AgentOrchestrator:
         self.enabled = agent_cfg.get('enabled', True)
         self.blend_weight = agent_cfg.get('blend_weight', 0.60)
 
+        # Fix #9: Store last votes per asset for outcome-based weight updates
+        self._last_votes: Dict[str, Dict[str, AgentVote]] = {}
+
         # Initialize combiner
         self.combiner = AgentCombiner(agent_cfg)
 
@@ -252,6 +255,9 @@ class AgentOrchestrator:
                     logger.warning(f"[AgentOrchestrator] Agent {name} failed: {e}")
                     votes[name] = AgentVote(direction=0, confidence=0.0, reasoning=f"Error: {e}")
 
+        # Fix #9: Save votes for outcome-based weight update
+        self._last_votes[asset] = dict(votes)
+
         # ── STEP 3: Combine votes via Bayesian weighted consensus ──
         regime = sanitized_state.get('hmm_regime', {}).get('regime', 'sideways') \
             if isinstance(sanitized_state.get('hmm_regime'), dict) \
@@ -342,6 +348,39 @@ class AgentOrchestrator:
             f"[AgentOrchestrator] Feedback: profitable={was_profitable}, "
             f"updated {len(agent_votes)} agent weights"
         )
+
+    def record_outcome(self, asset: str, direction: int, pnl: float):
+        """
+        Fix #9: Call after a trade closes. Updates agent weights based on whether
+        each agent's vote aligned with the profitable direction.
+        """
+        if asset not in self._last_votes:
+            return
+
+        was_profitable = pnl > 0
+        alpha = self.config.get('agents', {}).get('weight_update_alpha', 0.15)
+
+        for agent_name, vote in self._last_votes[asset].items():
+            agent = self.agents.get(agent_name)
+            if agent is None:
+                continue
+            # Did this agent agree with the actual direction?
+            agent_agreed = (vote.direction == direction)
+            # Was the trade profitable?
+            correct = agent_agreed == was_profitable
+
+            # Update weight: increase if correct, decrease if wrong
+            current_weight = getattr(agent, '_current_weight', 1.0)
+            if correct:
+                new_weight = current_weight + alpha * (1.0 - current_weight)
+            else:
+                new_weight = current_weight - alpha * current_weight
+            new_weight = max(0.1, min(2.0, new_weight))  # clamp [0.1, 2.0]
+            agent._current_weight = new_weight
+
+        # Persist updated weights
+        self._save_all_states()
+        logger.info(f"[AgentOrchestrator] Outcome recorded for {asset}: pnl={pnl:.2f}, updated weights")
 
     def _save_all_states(self):
         """Persist all agent weights to disk."""
