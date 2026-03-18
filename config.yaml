@@ -33,23 +33,23 @@ sentiment:
 
 # ── Risk Parameters ──
 risk:
-  max_position_size_pct: 1.0
+  max_position_size_pct: 0.25
   daily_loss_limit_pct: 3.0         # Reduced for safety
   max_drawdown_pct: 10.0            # Reduced for safety
   risk_per_trade_pct: 0.5           # Risk 0.5% of equity per trade
-  atr_stop_mult: 3.5                # Stop Loss = 3.5x ATR (give more room)
-  atr_tp_mult: 2.5                  # Take Profit = 2.5x ATR (tighter TP)
+  atr_stop_mult: 1.5                # Stop Loss = 1.5x ATR (tighter stop, better R:R)
+  atr_tp_mult: 4.5                  # Take Profit = 4.5x ATR (wider TP, R:R=3.0)
 
 # ── Signal Generation Settings ──
 signal:
-  min_confidence: 0.65              # Raised from 0.45 (only strong signals)
+  min_confidence: 0.75              # Raised to 0.75 (only high-conviction setups)
   use_ensemble: true                # Use L1+L2+L3 ensemble
-  neutral_threshold: 0.40           # Below this = strong signal
+  neutral_threshold: 0.50           # Below this = directional entry
   
 # ── Testnet Trading Mode ──
 testnet_aggressive: false           # Conservative pacing still enabled
 max_trades_per_hour: 5              # Reduced from 20 (quality over quantity)
-force_trade: true                   # Testnet override enabled: force trades and bypass weak-signal stalls
+force_trade: false                  # Disabled: was forcing weak-signal trades, hurting win rate
 
 # ── Models ──
 models:
@@ -62,7 +62,7 @@ ai:
   reasoning_model: "mistral"                 # Default local model (Ollama mistral, already installed)
 
   # Default false to avoid segfault on Python 3.14 / ARM; set true to enable full ML stack
-  use_lightgbm: false
+  use_lightgbm: true
   use_patch_tst: false
 
   # Rate Limiting (to avoid quota exhaustion)
@@ -76,8 +76,8 @@ ai:
 # ── Multi-Agent Intelligence Overlay ──
 agents:
   enabled: true                         # Master switch for 12-agent overlay
-  blend_weight: 0.60                    # 60% agent overlay, 40% existing pipeline
-  consensus_threshold: 0.55             # Minimum probability for directional trade
+  blend_weight: 0.30                    # 30% agent overlay, 70% existing pipeline (agents over-trusted)
+  consensus_threshold: 0.70             # Need 70% agent consensus for directional trade
   weight_update_alpha: 0.15             # Bayesian EMA learning rate for agent weights
   loss_prevention:
     daily_target_pct: 1.0               # Target: +1% daily profit
@@ -86,10 +86,26 @@ agents:
     halt_threshold_pct: -1.0            # HALT all trading at -1.0%
     intraday_drawdown_pause_pct: 2.0    # Pause 30 min on 2% intraday drawdown
 
+# ── Order Execution ──
+execution:
+  entry_type: "limit"           # "limit" (default) or "market"
+  limit_timeout_sec: 30         # Seconds to wait for limit fill before market fallback
+  limit_offset_bps: 5           # Basis points to improve limit price (5 = 0.05% more aggressive)
+  twap_threshold_usd: 5000      # Orders above this notional use TWAP instead of limit
+  exit_type: "market"           # Exits always use market orders for guaranteed fill
+
 # ── Polymarket Prediction Market Integration ──
 polymarket:
   enabled: true                         # Fetch prediction market probabilities
   divergence_threshold: 0.15            # 15% probability divergence to trigger signal
   volume_threshold: 10000               # Minimum market volume in USD
   max_signal_strength: 0.8              # Cap agent confidence from Polymarket signals
+
+# ── Runtime Data Paths ──
+# Defaults to ~/.trade/ — set TRADE_DATA_ROOT env var to override
+# Future: set log_backend: "postgres" for AWS RDS
+paths:
+  data_root: ""        # empty = use ~/.trade (or TRADE_DATA_ROOT env var)
+  log_backend: "file"  # "file" | "postgres" (future)
+  # postgres_dsn: "postgresql://user:pass@host:5432/trade_logs"
 

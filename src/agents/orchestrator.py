@@ -34,6 +34,9 @@ class AgentOrchestrator:
         self.enabled = agent_cfg.get('enabled', True)
         self.blend_weight = agent_cfg.get('blend_weight', 0.60)
 
+        # Fix #9: Store last votes per asset for outcome-based weight updates
+        self._last_votes: Dict[str, Dict[str, AgentVote]] = {}
+
         # Initialize combiner
         self.combiner = AgentCombiner(agent_cfg)
 
@@ -45,39 +48,110 @@ class AgentOrchestrator:
         self._load_all_states()
 
     def _init_agents(self, cfg: Dict):
-        """Instantiate all 12 specialized agents."""
-        from src.agents.data_integrity_validator import DataIntegrityValidator
-        from src.agents.market_structure_agent import MarketStructureAgent
-        from src.agents.regime_intelligence_agent import RegimeIntelligenceAgent
-        from src.agents.mean_reversion_agent import MeanReversionAgent
-        from src.agents.trend_momentum_agent import TrendMomentumAgent
-        from src.agents.risk_guardian_agent import RiskGuardianAgent
-        from src.agents.sentiment_decoder_agent import SentimentDecoderAgent
-        from src.agents.trade_timing_agent import TradeTimingAgent
-        from src.agents.portfolio_optimizer_agent import PortfolioOptimizerAgent
-        from src.agents.pattern_matcher_agent import PatternMatcherAgent
-        from src.agents.loss_prevention_guardian import LossPreventionGuardian
-        from src.agents.decision_auditor import DecisionAuditor
-        from src.agents.polymarket_agent import PolymarketArbitrageAgent
+        """Instantiate all 12 specialized agents with graceful degradation.
 
-        self.agents = {
-            # Pre-gate
-            'data_integrity': DataIntegrityValidator('data_integrity', cfg),
-            # 11 analysis agents
-            'market_structure': MarketStructureAgent('market_structure', cfg),
-            'regime_intelligence': RegimeIntelligenceAgent('regime_intelligence', cfg),
-            'mean_reversion': MeanReversionAgent('mean_reversion', cfg),
-            'trend_momentum': TrendMomentumAgent('trend_momentum', cfg),
-            'risk_guardian': RiskGuardianAgent('risk_guardian', cfg),
-            'sentiment_decoder': SentimentDecoderAgent('sentiment_decoder', cfg),
-            'trade_timing': TradeTimingAgent('trade_timing', cfg),
-            'portfolio_optimizer': PortfolioOptimizerAgent('portfolio_optimizer', cfg),
-            'pattern_matcher': PatternMatcherAgent('pattern_matcher', cfg),
-            'loss_prevention': LossPreventionGuardian('loss_prevention', cfg),
-            'polymarket_arb': PolymarketArbitrageAgent('polymarket_arb', cfg),
-            # Post-gate
-            'decision_auditor': DecisionAuditor('decision_auditor', cfg),
-        }
+        If any individual agent fails to initialize, a warning is logged and
+        the system continues with the remaining agents (degraded-but-alive).
+        """
+        agent_specs = []
+
+        try:
+            from src.agents.data_integrity_validator import DataIntegrityValidator
+            agent_specs.append(('data_integrity', DataIntegrityValidator))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] data_integrity agent import failed: {e}")
+
+        try:
+            from src.agents.market_structure_agent import MarketStructureAgent
+            agent_specs.append(('market_structure', MarketStructureAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] market_structure agent import failed: {e}")
+
+        try:
+            from src.agents.regime_intelligence_agent import RegimeIntelligenceAgent
+            agent_specs.append(('regime_intelligence', RegimeIntelligenceAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] regime_intelligence agent import failed: {e}")
+
+        try:
+            from src.agents.mean_reversion_agent import MeanReversionAgent
+            agent_specs.append(('mean_reversion', MeanReversionAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] mean_reversion agent import failed: {e}")
+
+        try:
+            from src.agents.trend_momentum_agent import TrendMomentumAgent
+            agent_specs.append(('trend_momentum', TrendMomentumAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] trend_momentum agent import failed: {e}")
+
+        try:
+            from src.agents.risk_guardian_agent import RiskGuardianAgent
+            agent_specs.append(('risk_guardian', RiskGuardianAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] risk_guardian agent import failed: {e}")
+
+        try:
+            from src.agents.sentiment_decoder_agent import SentimentDecoderAgent
+            agent_specs.append(('sentiment_decoder', SentimentDecoderAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] sentiment_decoder agent import failed: {e}")
+
+        try:
+            from src.agents.trade_timing_agent import TradeTimingAgent
+            agent_specs.append(('trade_timing', TradeTimingAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] trade_timing agent import failed: {e}")
+
+        try:
+            from src.agents.portfolio_optimizer_agent import PortfolioOptimizerAgent
+            agent_specs.append(('portfolio_optimizer', PortfolioOptimizerAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] portfolio_optimizer agent import failed: {e}")
+
+        try:
+            from src.agents.pattern_matcher_agent import PatternMatcherAgent
+            agent_specs.append(('pattern_matcher', PatternMatcherAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] pattern_matcher agent import failed: {e}")
+
+        try:
+            from src.agents.loss_prevention_guardian import LossPreventionGuardian
+            agent_specs.append(('loss_prevention', LossPreventionGuardian))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] loss_prevention agent import failed: {e}")
+
+        try:
+            from src.agents.polymarket_agent import PolymarketArbitrageAgent
+            agent_specs.append(('polymarket_arb', PolymarketArbitrageAgent))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] polymarket_arb agent import failed: {e}")
+
+        try:
+            from src.agents.decision_auditor import DecisionAuditor
+            agent_specs.append(('decision_auditor', DecisionAuditor))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] decision_auditor agent import failed: {e}")
+
+        self.agents = {}
+        for agent_name, agent_cls in agent_specs:
+            try:
+                self.agents[agent_name] = agent_cls(agent_name, cfg)
+                logger.debug(f"[ORCHESTRATOR] Agent '{agent_name}' initialized")
+            except Exception as e:
+                logger.warning(
+                    f"[ORCHESTRATOR] Agent '{agent_name}' failed to initialize (degraded): {e}"
+                )
+
+        initialized = len(self.agents)
+        total = len(agent_specs)
+        if initialized < total:
+            logger.warning(
+                f"[ORCHESTRATOR] {initialized}/{total} agents initialized — "
+                f"system running in degraded mode"
+            )
+        else:
+            logger.info(f"[ORCHESTRATOR] All {initialized} agents initialized")
 
     def run_cycle(self, quant_state: Dict, raw_signal: int = 0,
                   raw_confidence: float = 0.0,
@@ -181,6 +255,9 @@ class AgentOrchestrator:
                     logger.warning(f"[AgentOrchestrator] Agent {name} failed: {e}")
                     votes[name] = AgentVote(direction=0, confidence=0.0, reasoning=f"Error: {e}")
 
+        # Fix #9: Save votes for outcome-based weight update
+        self._last_votes[asset] = dict(votes)
+
         # ── STEP 3: Combine votes via Bayesian weighted consensus ──
         regime = sanitized_state.get('hmm_regime', {}).get('regime', 'sideways') \
             if isinstance(sanitized_state.get('hmm_regime'), dict) \
@@ -271,6 +348,39 @@ class AgentOrchestrator:
             f"[AgentOrchestrator] Feedback: profitable={was_profitable}, "
             f"updated {len(agent_votes)} agent weights"
         )
+
+    def record_outcome(self, asset: str, direction: int, pnl: float):
+        """
+        Fix #9: Call after a trade closes. Updates agent weights based on whether
+        each agent's vote aligned with the profitable direction.
+        """
+        if asset not in self._last_votes:
+            return
+
+        was_profitable = pnl > 0
+        alpha = self.config.get('agents', {}).get('weight_update_alpha', 0.15)
+
+        for agent_name, vote in self._last_votes[asset].items():
+            agent = self.agents.get(agent_name)
+            if agent is None:
+                continue
+            # Did this agent agree with the actual direction?
+            agent_agreed = (vote.direction == direction)
+            # Was the trade profitable?
+            correct = agent_agreed == was_profitable
+
+            # Update weight: increase if correct, decrease if wrong
+            current_weight = getattr(agent, '_current_weight', 1.0)
+            if correct:
+                new_weight = current_weight + alpha * (1.0 - current_weight)
+            else:
+                new_weight = current_weight - alpha * current_weight
+            new_weight = max(0.1, min(2.0, new_weight))  # clamp [0.1, 2.0]
+            agent._current_weight = new_weight
+
+        # Persist updated weights
+        self._save_all_states()
+        logger.info(f"[AgentOrchestrator] Outcome recorded for {asset}: pnl={pnl:.2f}, updated weights")
 
     def _save_all_states(self):
         """Persist all agent weights to disk."""
