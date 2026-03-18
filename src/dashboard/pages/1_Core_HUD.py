@@ -136,11 +136,24 @@ hour = now.hour
 greeting = "Good morning" if hour < 12 else ("Good afternoon" if hour < 17 else "Good evening")
 
 today_str = now.strftime('%Y-%m-%d')
-today_pnl = daily_pnl.get(today_str, 0)
 today_trades = [
     t for t in trades
     if isinstance(t, dict) and _parse_ts(t.get('timestamp', '')).startswith(today_str)
 ]
+# Today's P&L: prefer equity-curve intraday change → fall back to realized closed today
+_eq_today = [e for e in portfolio.get('equity_curve', []) if str(e.get('t', ''))[:10] == today_str]
+if len(_eq_today) >= 2:
+    today_pnl = float(_eq_today[-1]['v']) - float(_eq_today[0]['v'])
+else:
+    # Equity curve doesn't have enough today entries — use realized P&L from closed trades today
+    today_pnl = daily_pnl.get(today_str, 0)
+
+# All-time realized P&L and win count (from journal, authoritative)
+_all_closed = [t for t in trades if isinstance(t, dict) and (
+    t.get('status') == 'CLOSED' or ('exit_price' in t and t.get('status') != 'OPEN')
+)]
+_total_realized = sum(t.get('pnl', 0) for t in _all_closed)
+_total_wins = sum(1 for t in _all_closed if t.get('pnl', 0) > 0)
 # Today wins: closed trades today with positive pnl
 today_wins = len([t for t in today_trades if isinstance(t, dict)
                   and t.get('status') == 'CLOSED' and t.get('pnl', 0) > 0])
@@ -155,19 +168,24 @@ with g1:
     </div>
     """)
 with g2:
+    _today_pnl_label = "Today's P&L" if len(_eq_today) >= 2 else "Today's P&L (Realized)"
     _html(f"""
-    <div style="display:flex; gap:20px; padding:16px 0; justify-content:flex-end; align-items:center">
+    <div style="display:flex; gap:14px; padding:16px 0; justify-content:flex-end; align-items:center; flex-wrap:wrap">
         <div style="text-align:center">
-            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Today's P&L</div>
-            <div style="font-size:1.2rem; font-weight:700; color:{GREEN if today_pnl >= 0 else RED}">${today_pnl:+,.2f}</div>
+            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">{_today_pnl_label}</div>
+            <div style="font-size:1.1rem; font-weight:700; color:{GREEN if today_pnl >= 0 else RED}">${today_pnl:+,.2f}</div>
+        </div>
+        <div style="text-align:center">
+            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Realized P&L</div>
+            <div style="font-size:1.1rem; font-weight:700; color:{GREEN if _total_realized >= 0 else RED}">${_total_realized:+,.2f}</div>
         </div>
         <div style="text-align:center">
             <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Trades</div>
-            <div style="font-size:1.2rem; font-weight:700; color:#e2e8f0">{len(today_trades)}</div>
+            <div style="font-size:1.1rem; font-weight:700; color:#e2e8f0">{len(today_trades)}</div>
         </div>
         <div style="text-align:center">
             <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Wins</div>
-            <div style="font-size:1.2rem; font-weight:700; color:{GREEN}">{today_wins}</div>
+            <div style="font-size:1.1rem; font-weight:700; color:{GREEN}">{_total_wins}</div>
         </div>
     </div>
     """)

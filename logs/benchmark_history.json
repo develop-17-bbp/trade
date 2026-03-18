@@ -1,5 +1,33 @@
 [
   {
+    "timestamp": "2026-03-16T18:59:10.294221",
+    "model_version": "LINKUSDT_4h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.45930232558139533,
+        "samples": 688
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.46473029045643155,
+        "samples": 688
+      }
+    }
+  },
+  {
+    "timestamp": "2026-03-16T18:59:16.056011",
+    "model_version": "BTCUSDT_1h",
+    "results": {
+      "lgbm_direction_accuracy": {
+        "value": 0.4463590883824347,
+        "samples": 5397
+      },
+      "lgbm_high_conf_accuracy": {
+        "value": 0.5050505050505051,
+        "samples": 5397
+      }
+    }
+  },
+  {
     "timestamp": "2026-03-16T18:59:23.532163",
     "model_version": "SOLUSDT_1h",
     "results": {
@@ -1410,13 +1438,13 @@
     }
   },
   {
-    "timestamp": "2026-03-18T09:52:08.125625",
+    "timestamp": "2026-03-18T23:07:07.128798",
     "model_version": "v6.5",
     "overall_score": 0.0,
     "overall_rank": "\ud83d\udcc8 BASELINE",
     "results": {
       "win_rate": {
-        "timestamp": "2026-03-18T09:52:08.125652",
+        "timestamp": "2026-03-18T23:07:07.128819",
         "metric_name": "Trading Win Rate",
         "metric_key": "win_rate",
         "value": 0.0,
@@ -1430,7 +1458,7 @@
         "percentile": 0.0
       },
       "sharpe_ratio": {
-        "timestamp": "2026-03-18T09:52:08.125673",
+        "timestamp": "2026-03-18T23:07:07.128845",
         "metric_name": "sharpe_ratio",
         "metric_key": "sharpe_ratio",
         "value": 0.0,
@@ -1446,13 +1474,13 @@
     }
   },
   {
-    "timestamp": "2026-03-18T09:52:08.455439",
+    "timestamp": "2026-03-18T23:07:07.768397",
     "model_version": "v6.5",
     "overall_score": 0.0,
     "overall_rank": "\ud83d\udcc8 BASELINE",
     "results": {
       "win_rate": {
-        "timestamp": "2026-03-18T09:52:08.455456",
+        "timestamp": "2026-03-18T23:07:07.768417",
         "metric_name": "Trading Win Rate",
         "metric_key": "win_rate",
         "value": 0.0,
@@ -1466,83 +1494,11 @@
         "percentile": 0.0
       },
       "sharpe_ratio": {
-        "timestamp": "2026-03-18T09:52:08.455547",
+        "timestamp": "2026-03-18T23:07:07.768531",
         "metric_name": "Backtest Sharpe Ratio",
         "metric_key": "sharpe_ratio",
-        "value": -1319.0219,
+        "value": -265.3774,
         "num_samples": 2,
-        "model_version": "v6.5",
-        "config_snapshot": {},
-        "leaderboard_rank": 0,
-        "leaderboard_total": 0,
-        "beats_models": [],
-        "loses_to_models": [],
-        "percentile": 0.0
-      }
-    }
-  },
-  {
-    "timestamp": "2026-03-18T09:53:55.091182",
-    "model_version": "v6.5",
-    "overall_score": 0.0,
-    "overall_rank": "\ud83d\udcc8 BASELINE",
-    "results": {
-      "win_rate": {
-        "timestamp": "2026-03-18T09:53:55.091209",
-        "metric_name": "Trading Win Rate",
-        "metric_key": "win_rate",
-        "value": 0.0,
-        "num_samples": 3,
-        "model_version": "v6.5",
-        "config_snapshot": {},
-        "leaderboard_rank": 0,
-        "leaderboard_total": 0,
-        "beats_models": [],
-        "loses_to_models": [],
-        "percentile": 0.0
-      },
-      "sharpe_ratio": {
-        "timestamp": "2026-03-18T09:53:55.091298",
-        "metric_name": "Backtest Sharpe Ratio",
-        "metric_key": "sharpe_ratio",
-        "value": -1219.1985,
-        "num_samples": 3,
-        "model_version": "v6.5",
-        "config_snapshot": {},
-        "leaderboard_rank": 0,
-        "leaderboard_total": 0,
-        "beats_models": [],
-        "loses_to_models": [],
-        "percentile": 0.0
-      }
-    }
-  },
-  {
-    "timestamp": "2026-03-18T09:53:55.435966",
-    "model_version": "v6.5",
-    "overall_score": 0.0,
-    "overall_rank": "\ud83d\udcc8 BASELINE",
-    "results": {
-      "win_rate": {
-        "timestamp": "2026-03-18T09:53:55.435992",
-        "metric_name": "Trading Win Rate",
-        "metric_key": "win_rate",
-        "value": 0.0,
-        "num_samples": 4,
-        "model_version": "v6.5",
-        "config_snapshot": {},
-        "leaderboard_rank": 0,
-        "leaderboard_total": 0,
-        "beats_models": [],
-        "loses_to_models": [],
-        "percentile": 0.0
-      },
-      "sharpe_ratio": {
-        "timestamp": "2026-03-18T09:53:55.436069",
-        "metric_name": "Backtest Sharpe Ratio",
-        "metric_key": "sharpe_ratio",
-        "value": -679.4342,
-        "num_samples": 4,
         "model_version": "v6.5",
         "config_snapshot": {},
         "leaderboard_rank": 0,
