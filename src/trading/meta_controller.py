@@ -9,7 +9,10 @@ Quant Finance Integration:
   - Kalman SNR → confidence multiplier (high SNR = clear signal)
   - MC risk score → position scale reduction under elevated risk
 """
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 class MetaController:
     """
@@ -22,6 +25,31 @@ class MetaController:
         # optional directional bias: positive to favor longs, negative for shorts
         # small values (0.0-0.1) gently tilt confidence
         self.bias = self.config.get('bias', 0.0)
+
+        # Fix #4: Historical win rate tracker for Kelly sizing
+        self._trade_outcomes: List[bool] = []  # True=win, False=loss
+
+        # Fix A: MetaSizer loaded once at init (not per-call) to avoid overhead
+        try:
+            from src.models.meta_sizer import MetaSizer
+            self._meta_sizer = MetaSizer()
+        except Exception:
+            self._meta_sizer = None
+
+    def record_trade_outcome(self, is_win: bool):
+        """Record trade outcome for Kelly sizing."""
+        self._trade_outcomes.append(is_win)
+        # Keep last 100 trades
+        if len(self._trade_outcomes) > 100:
+            self._trade_outcomes = self._trade_outcomes[-100:]
+
+    @property
+    def historical_win_rate(self) -> float:
+        """Win rate from recent trades, clamped to [0.30, 0.70]."""
+        if len(self._trade_outcomes) < 5:
+            return 0.45  # conservative default until enough data
+        raw = sum(self._trade_outcomes) / len(self._trade_outcomes)
+        return max(0.30, min(0.70, raw))  # clamp
 
     def arbitrate(self,
                   lgb_class: int, lgb_conf: float,
@@ -66,9 +94,9 @@ class MetaController:
             rl_weight = 0.75
             patch_weight = 0.15
         elif hmm_regime == 'bull':
-            # Bull: LGB dominates (strong at capturing directional trends)
-            lgb_weight = 0.55
-            rl_weight = 0.25
+            # Bull: LGB + RL balanced (Fix E: RL weight raised 0.25→0.40 for trend capture)
+            lgb_weight = 0.40
+            rl_weight = 0.40
             patch_weight = 0.20
         elif hmm_regime == 'bear':
             # Bear: balanced with RL edge (needs drawdown protection)
@@ -88,9 +116,12 @@ class MetaController:
 
         position_scale = 1.0
 
-        # ── HMM Crisis Veto ──
+        # ── HMM Crisis Veto ── (Fix #8: hard-block in crisis regime)
         if hmm_crisis_prob > 0.70:
-            position_scale *= 0.3  # Severe reduction in crisis regime
+            logger.warning(f"[META] Crisis regime detected (prob={hmm_crisis_prob:.2f}) — blocking entry")
+            return (0, 0.0, 0.0)  # hard block
+        elif hmm_crisis_prob > 0.50:
+            position_scale *= 0.3  # cautious sizing
 
         # --- Veto Rules ---
         # LightGBM Long + FinBERT Bearish -> Halve size (v5.5)
@@ -103,6 +134,13 @@ class MetaController:
         if lgb_class != 0 and rl_prob < 0.30:
             if lgb_conf < 0.55:
                 return 0, 1.0, 0.0
+
+        # Fix C: Veto on directional disagreement with weak signal
+        lgb_direction = 1 if lgb_class > 0 else (-1 if lgb_class < 0 else 0)
+        rl_direction = 1 if rl_action > 0 else (-1 if rl_action < 0 else 0)
+        if lgb_direction != 0 and rl_direction != 0 and lgb_direction != rl_direction:
+            if min(lgb_conf, abs(rl_prob - 0.5) * 2) < 0.50:
+                return 0, 1.0, 0.0  # VETO: directional disagreement with weak signal
 
         # PatchTST Liquidity Shock Veto (Loss Prevention)
         if patch_result and patch_result.get('liquidity_shock_prob', 0) > 0.70:
@@ -156,19 +194,30 @@ class MetaController:
             agent_adj = agentic_bias if final_class > 0 else -agentic_bias
             final_conf = float(min(1.0, max(0.0, float(final_conf) + float(agent_adj))))
 
-        # --- KELLY SIZING ---
-        from src.models.meta_sizer import MetaSizer
-        ms = MetaSizer()
-        kelly_factor = ms.size(features, win_prob=final_conf, win_loss_ratio=2.0)
+        # --- KELLY SIZING --- (Fix #4: use historical win rate, not blended confidence)
+        # Fix A: use pre-loaded MetaSizer; win_loss_ratio=3.0 matches new atr_tp(4.5)/atr_stop(1.5)
+        if self._meta_sizer is not None:
+            try:
+                kelly_factor = self._meta_sizer.size(features, win_prob=self.historical_win_rate, win_loss_ratio=3.0)
+                kelly_factor = max(0.0, min(1.0, kelly_factor))
+            except Exception:
+                kelly_factor = 0.5
+        else:
+            kelly_factor = 0.5
         position_scale = float(position_scale) * kelly_factor
 
         # --- CORRELATION VETO ---
+        # Fix B: more gradual correlation-based scaling (was 0.90 binary)
         from src.trading.correlation_monitor import CorrelationMonitor
         corr_mon = CorrelationMonitor()
         if asset_name != 'BTC':
             corr = corr_mon.get_correlation('BTC', asset_name)
-            if corr > 0.90:
-                position_scale *= 0.5
+            if corr > 0.85:
+                position_scale *= 0.4
+            elif corr > 0.70:
+                position_scale *= 0.6
+            elif corr > 0.60:
+                position_scale *= 0.8
 
         # ── Monte Carlo Risk Scaling ──
         # MC-derived position scale caps sizing based on forward-looking VaR
@@ -190,6 +239,12 @@ class MetaController:
         position_scale = min(position_scale, evt_position_scale)
 
         # ── Agent Intelligence Overlay ──
+        # Fix #5: if risk layer vetoed (position_scale<=0) AND we had a directional signal,
+        # skip agent blending. But if final_class==0 (weak signal), just return FLAT normally.
+        if position_scale <= 0 and final_class != 0:
+            logger.info("[META] Risk veto active — skipping agent overlay")
+            return (0, 0.0, 0.0)
+
         # Blend existing pipeline (40%) with agent overlay (60%)
         if agentic_enhanced:
             ae = agentic_enhanced
@@ -198,9 +253,11 @@ class MetaController:
             agent_score = ae.get('direction', 0) * ae.get('confidence', 0.0)
             blended = (1 - blend_w) * existing_score + blend_w * agent_score
 
-            if blended > 0.2:
+            # Fix D: dynamic entry threshold scales with blend_weight
+            _entry_thresh = 0.15 + 0.20 * blend_w  # 0.30 agents → thresh=0.21; 0.60 agents → thresh=0.27
+            if blended > _entry_thresh:
                 final_class = 1
-            elif blended < -0.2:
+            elif blended < -_entry_thresh:
                 final_class = -1
             else:
                 final_class = 0

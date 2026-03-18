@@ -104,8 +104,7 @@ def _load_journal_trades():
     try:
         import os
         from src.monitoring.journal import TradingJournal
-        os.environ.setdefault('JOURNAL_ENCRYPTION_KEY',
-                              'e2717e63c5babe3202ba02c93d900edb4d954b01be59462cc4734cc88f6ea1fe')
+        # JOURNAL_ENCRYPTION_KEY must be set in .env — never hardcode
         j = TradingJournal()
         return j.trades or []
     except Exception:
@@ -140,13 +139,26 @@ today_trades = [
     t for t in trades
     if isinstance(t, dict) and _parse_ts(t.get('timestamp', '')).startswith(today_str)
 ]
-# Today's P&L: prefer equity-curve intraday change → fall back to realized closed today
+# ── Today P&L — exchange-authoritative (device-independent) ──
+# Priority 1: portfolio.today_pnl from state (= current_total_value - sod_balance)
+#             Both values come from the Binance API → identical on every device
+#             sharing the same testnet account. Resets to 0 at 00:00 UTC.
+# Priority 2: equity-curve intraday diff (local, varies per device)
+# Priority 3: journal realized P&L for today (closed trades only)
+_sod_balance    = portfolio.get("sod_balance")
+_sod_date       = portfolio.get("sod_date", "")
+_state_today_pnl = portfolio.get("today_pnl")
 _eq_today = [e for e in portfolio.get('equity_curve', []) if str(e.get('t', ''))[:10] == today_str]
-if len(_eq_today) >= 2:
+
+if _sod_balance is not None and _sod_date == today_str and _state_today_pnl is not None:
+    today_pnl = _state_today_pnl
+    _today_pnl_label = f"Today's P&L ⚡ Exchange"
+elif len(_eq_today) >= 2:
     today_pnl = float(_eq_today[-1]['v']) - float(_eq_today[0]['v'])
+    _today_pnl_label = "Today's P&L (Local)"
 else:
-    # Equity curve doesn't have enough today entries — use realized P&L from closed trades today
     today_pnl = daily_pnl.get(today_str, 0)
+    _today_pnl_label = "Today's P&L (Realized)"
 
 # All-time realized P&L and win count (from journal, authoritative)
 _all_closed = [t for t in trades if isinstance(t, dict) and (
@@ -168,7 +180,6 @@ with g1:
     </div>
     """)
 with g2:
-    _today_pnl_label = "Today's P&L" if len(_eq_today) >= 2 else "Today's P&L (Realized)"
     _html(f"""
     <div style="display:flex; gap:14px; padding:16px 0; justify-content:flex-end; align-items:center; flex-wrap:wrap">
         <div style="text-align:center">

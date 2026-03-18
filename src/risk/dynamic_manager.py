@@ -71,6 +71,10 @@ class DynamicRiskManager:
         # Recovery mode
         self.recovery_mode = False
         self.recovery_multiplier = 0.5  # Reduce risk by 50% in recovery
+
+        # Change 8: Drawdown halt tracking (mirrors peak_capital for check_halt_conditions)
+        self._peak_equity: Optional[float] = None
+        self._initial_capital: float = initial_capital
         
         # Trade & Position monitoring (Phase 5: Pro Monitoring)
         self.open_positions: Dict[str, TradeRecord] = {}
@@ -374,6 +378,7 @@ class DynamicRiskManager:
             record.stop_loss = entry_price + self.atr_stop_mult * atr_value
             record.take_profit = entry_price - self.atr_tp_mult * atr_value
             
+        record.holding_bars = 0  # Fix #7: initialize bar counter for time-based exit
         self.open_positions[asset] = record
         logger.info(f"Registered trade for {asset}: Stop={record.stop_loss:.2f}, TP={record.take_profit:.2f}")
 
@@ -423,6 +428,15 @@ class DynamicRiskManager:
             if current_price >= record.stop_loss: return 'stop_loss'
             if record.take_profit > 0 and current_price <= record.take_profit: return 'take_profit'
 
+        # Fix #7: Time-based exit — close stale positions after max_hold_bars
+        max_hold_bars = 8
+        record.holding_bars = getattr(record, 'holding_bars', 0) + 1
+        if record.holding_bars >= max_hold_bars:
+            # Only force-close if position is not in significant profit
+            pnl_pct = record.direction * (current_price - record.entry_price) / record.entry_price
+            if pnl_pct < 0.005:  # less than 0.5% profit
+                return 'time_exit'
+
         return None
 
     def check_all_stops(self, prices: Dict[str, float]) -> List[Dict[str, Any]]:
@@ -447,6 +461,7 @@ class DynamicRiskManager:
         pnl = record.direction * record.size * (exit_price - record.entry_price)
         self.current_capital += pnl
         self.daily_pnl += pnl
+        self._update_circuit_breakers()  # Fix #6: update circuit breakers on trade close
         logger.info(f"Closed {asset} @ {exit_price}. PnL: ${pnl:.2f}")
 
     def calculate_var_es(self, confidence: float = 0.95) -> Tuple[float, float]:
@@ -504,6 +519,36 @@ class DynamicRiskManager:
             "active_breakers": len(active_breakers),
             "timestamp": datetime.now().isoformat()
         }
+
+    def check_halt_conditions(self, current_equity: float, daily_pnl: float) -> tuple:
+        """
+        Returns (should_halt: bool, reason: str, severity: str)
+        severity: 'CAUTION' | 'PAUSE' | 'HALT'
+        Call this every bar in the main trading loop.
+        """
+        # Track peak equity
+        if self._peak_equity is None or current_equity > self._peak_equity:
+            self._peak_equity = current_equity
+
+        drawdown_pct = (self._peak_equity - current_equity) / max(self._peak_equity, 1e-10)
+        daily_loss_pct = abs(daily_pnl) / max(self._initial_capital, 1e-10) if daily_pnl < 0 else 0.0
+
+        if drawdown_pct >= getattr(self, 'max_drawdown_limit_pct', self.risk_limits.max_drawdown_limit_pct if hasattr(self, 'risk_limits') else 0.10):
+            return True, f"Max drawdown {drawdown_pct:.1%} hit", "HALT"
+
+        if daily_loss_pct >= getattr(self, 'kill_switch_daily_loss_pct', self.risk_limits.kill_switch_daily_loss_pct if hasattr(self, 'risk_limits') else 0.04):
+            return True, f"Daily kill switch {daily_loss_pct:.1%} triggered", "HALT"
+
+        # Progressive tightening
+        _max_dd = self.risk_limits.max_drawdown_limit_pct if hasattr(self, 'risk_limits') else 0.10
+        _max_daily = self.risk_limits.kill_switch_daily_loss_pct if hasattr(self, 'risk_limits') else 0.04
+        caution_dd = _max_dd * 0.50
+        caution_daily = _max_daily * 0.50
+
+        if drawdown_pct >= caution_dd or daily_loss_pct >= caution_daily:
+            return False, f"Caution: dd={drawdown_pct:.1%} daily_loss={daily_loss_pct:.1%}", "CAUTION"
+
+        return False, "OK", "OK"
 
     def reset_daily_pnl(self):
         """Reset daily P&L tracking (call at market open)."""
