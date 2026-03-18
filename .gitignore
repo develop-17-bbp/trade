@@ -17,6 +17,7 @@ build/
 # ── Runtime Data (now stored in ~/.trade/) ──
 logs/*
 !logs/.gitkeep
+authority_trade_summaries/
 data/
 memory/
 models/*.txt
