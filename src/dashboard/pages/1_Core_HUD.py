@@ -97,11 +97,31 @@ def _compute_daily_pnl(trades):
 
 
 # ══════════════════════════════════════════════
+# JOURNAL LOADER — authoritative trade source
+# ══════════════════════════════════════════════
+def _load_journal_trades():
+    """Load all trades from encrypted journal (authoritative source of truth)."""
+    try:
+        import os
+        from src.monitoring.journal import TradingJournal
+        os.environ.setdefault('JOURNAL_ENCRYPTION_KEY',
+                              'e2717e63c5babe3202ba02c93d900edb4d954b01be59462cc4734cc88f6ea1fe')
+        j = TradingJournal()
+        return j.trades or []
+    except Exception:
+        return []
+
+
+# ══════════════════════════════════════════════
 # MAIN RENDER
 # ══════════════════════════════════════════════
 state = _load_state()
 portfolio = state.get('portfolio', {})
-trades = state.get('trade_history', [])
+# Trade history: merge dashboard_state (recent) with encrypted journal (all-time)
+_journal_trades = _load_journal_trades()
+_state_trades = state.get('trade_history', [])
+# Use journal trades as the authoritative source; fall back to state trades if journal empty
+trades = _journal_trades if _journal_trades else _state_trades
 open_positions = state.get('open_positions', {})
 trade_stats = _compute_trade_stats(trades)
 daily_pnl = _compute_daily_pnl(trades)
@@ -121,7 +141,9 @@ today_trades = [
     t for t in trades
     if isinstance(t, dict) and _parse_ts(t.get('timestamp', '')).startswith(today_str)
 ]
-today_wins = len([t for t in today_trades if isinstance(t, dict) and t.get('pnl', 0) > 0])
+# Today wins: closed trades today with positive pnl
+today_wins = len([t for t in today_trades if isinstance(t, dict)
+                  and t.get('status') == 'CLOSED' and t.get('pnl', 0) > 0])
 
 g1, g2 = st.columns([3, 2])
 with g1:
@@ -174,14 +196,18 @@ with tab_live:
     balance = portfolio.get('return', 0)
     rr = trade_stats['risk_reward']
 
+    _realized_pnl = trade_stats.get('total_pnl', 0)
+    _closed_count = len([t for t in trades if isinstance(t, dict) and t.get('status') == 'CLOSED'])
+    _total_count = len([t for t in trades if isinstance(t, dict)])
+
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        st.markdown(metric_card("Net P&L", f"${pnl_val:+,.2f}",
-                                GREEN if pnl_val >= 0 else RED,
-                                subtitle=f"{portfolio.get('return', 0):+.1f}% return"), unsafe_allow_html=True)
+        st.markdown(metric_card("Realized P&L", f"${_realized_pnl:+,.2f}",
+                                GREEN if _realized_pnl >= 0 else RED,
+                                subtitle=f"{_closed_count} closed / {_total_count} total"), unsafe_allow_html=True)
     with c2:
         st.markdown(metric_card("Win Rate", f"{wr:.1%}", GREEN if wr > 0.5 else RED,
-                                subtitle=f"{len([t for t in trades if isinstance(t, dict) and t.get('status')=='CLOSED'])} trades"), unsafe_allow_html=True)
+                                subtitle=f"{_closed_count} closed trades"), unsafe_allow_html=True)
     with c3:
         pf_color = GREEN if pf > 1 else RED
         pf_display = f"{pf:.2f}" if pf < 100 else "∞"
@@ -311,27 +337,33 @@ with tab_live:
 
     with bot_left:
         st.markdown("**Recent Trades**")
-        recent = sorted(
-            [t for t in trades if isinstance(t, dict)],
-            key=lambda t: t.get('timestamp', ''), reverse=True
-        )[:12]
+        # Show closed trades first (most informative), then recent open entries
+        _closed = [t for t in trades if isinstance(t, dict) and t.get('status') == 'CLOSED']
+        _open_entries = [t for t in trades if isinstance(t, dict) and t.get('status') != 'CLOSED']
+        _closed_sorted = sorted(_closed, key=lambda t: t.get('timestamp', ''), reverse=True)
+        _open_sorted = sorted(_open_entries, key=lambda t: t.get('timestamp', ''), reverse=True)
+        recent = (_closed_sorted + _open_sorted)[:12]
         if recent:
             for t in recent:
-                pnl_v = t.get('pnl', 0)
-                cls = 'trade-win' if pnl_v >= 0 else 'trade-loss'
-                pnl_c = GREEN if pnl_v >= 0 else RED
+                pnl_v = t.get('pnl') or 0
+                status = t.get('status', 'OPEN')
+                cls = 'trade-win' if (status == 'CLOSED' and pnl_v > 0) else ('trade-loss' if (status == 'CLOSED' and pnl_v < 0) else '')
+                pnl_c = GREEN if pnl_v > 0 else (RED if pnl_v < 0 else MUTED)
                 asset = h(str(t.get('asset', '?')))
                 side = h(str(t.get('side', '?')).upper())
-                ts = str(t.get('timestamp', ''))[:16]
+                ts = _parse_ts(t.get('timestamp', ''))[:16]
                 conf = t.get('confidence', 0)
+                status_badge = f'<span style="font-size:0.65rem; color:{"#22c55e" if status=="CLOSED" else "#64748b"}; margin-left:6px">{status}</span>'
+                pnl_display = f'${pnl_v:+,.2f}' if status == 'CLOSED' else '(open)'
                 _html(f"""
                 <div class="trade-row {cls}">
                     <div>
                         <span style="font-weight:600; color:#e2e8f0">{asset}</span>
                         <span style="font-size:0.7rem; color:#64748b; margin-left:8px">{side} | {ts}</span>
+                        {status_badge}
                     </div>
                     <div style="text-align:right">
-                        <span style="font-weight:600; color:{pnl_c}">${pnl_v:+,.2f}</span>
+                        <span style="font-weight:600; color:{pnl_c}">{pnl_display}</span>
                         <span style="font-size:0.7rem; color:#64748b; margin-left:8px">{conf:.0%}</span>
                     </div>
                 </div>

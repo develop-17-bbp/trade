@@ -47,6 +47,16 @@ def load_state() -> dict:
 
 @st.cache_data(ttl=10)
 def load_journal() -> list:
+    """Load trades from encrypted journal (authoritative source of truth)."""
+    try:
+        os.environ.setdefault('JOURNAL_ENCRYPTION_KEY',
+                              'e2717e63c5babe3202ba02c93d900edb4d954b01be59462cc4734cc88f6ea1fe')
+        from src.monitoring.journal import TradingJournal
+        j = TradingJournal()
+        return j.trades or []
+    except Exception:
+        pass
+    # Fallback: plain JSON journal
     try:
         if os.path.exists("logs/trading_journal.json"):
             with open("logs/trading_journal.json", "r") as f:
@@ -380,28 +390,30 @@ ensemble_correct = sum(1 for p, a in zip(ensemble_preds[:ensemble_total], ensemb
                        if (p > 0 and a > 0) or (p < 0 and a < 0) or (p == 0 and a == 0))
 ensemble_acc = ensemble_correct / ensemble_total if ensemble_total > 0 else 0
 
-# Compute trade-history-based stats as live fallback when performance dict is empty
-_th = state.get("trade_history", [])
-_closed_th = [t for t in _th if isinstance(t, dict) and ('exit_price' in t or t.get('status') == 'CLOSED')]
-_th_win_rate = (sum(1 for t in _closed_th if t.get('pnl', 0) > 0) / len(_closed_th)) if _closed_th else 0.0
-_th_total_pnl = sum(t.get('pnl', 0) for t in _closed_th)
+# Compute trade stats from authoritative journal (already loaded above)
+_closed_journal = [t for t in journal if isinstance(t, dict) and (
+    t.get('status') == 'CLOSED' or
+    ('exit_price' in t and t.get('exit_price') and t.get('status') != 'OPEN')
+)]
+_journal_win_rate = (sum(1 for t in _closed_journal if (t.get('pnl') or 0) > 0) / len(_closed_journal)) if _closed_journal else 0.0
+_journal_total_pnl = sum(t.get('pnl', 0) for t in _closed_journal)
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
     color = "metric-value-green" if ensemble_acc > 0.55 else "metric-value-orange"
     st.markdown(f"""<div class="glass-card"><div class="metric-label">ENSEMBLE ACCURACY</div><div class="metric-value {color}">{ensemble_acc:.1%}</div></div>""", unsafe_allow_html=True)
 with c2:
-    win_rate = float(performance.get("win_rate") or _th_win_rate)
+    win_rate = float(performance.get("win_rate") or _journal_win_rate)
     color = "metric-value-green" if win_rate > 0.55 else "metric-value-orange"
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">TRADE WIN RATE</div><div class="metric-value {color}">{win_rate:.1%}</div></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="glass-card"><div class="metric-label">TRADE WIN RATE</div><div class="metric-value {color}">{win_rate:.1%} ({len(_closed_journal)} closed)</div></div>""", unsafe_allow_html=True)
 with c3:
     sharpe = float(performance.get("sharpe_ratio", 0))
     color = "metric-value-green" if sharpe > 1 else "metric-value-orange" if sharpe > 0 else "metric-value-red"
     st.markdown(f"""<div class="glass-card"><div class="metric-label">SHARPE RATIO</div><div class="metric-value {color}">{sharpe:.2f}</div></div>""", unsafe_allow_html=True)
 with c4:
-    total_pnl = float(performance.get("total_pnl") or _th_total_pnl or state.get("portfolio", {}).get("pnl", 0))
+    total_pnl = float(performance.get("total_pnl") or _journal_total_pnl)
     color = "metric-value-green" if total_pnl > 0 else "metric-value-red"
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">TOTAL P&L</div><div class="metric-value {color}">${total_pnl:,.2f}</div></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="glass-card"><div class="metric-label">REALIZED P&L</div><div class="metric-value {color}">${total_pnl:,.2f}</div></div>""", unsafe_allow_html=True)
 
 # Equity Curve
 if equity_curve and len(equity_curve) > 10:
