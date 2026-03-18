@@ -1468,6 +1468,24 @@ class TradingExecutor:
                 )
                 _force_trade_mode = self.config.get('force_trade', False) and _is_verified_testnet
                 if last_signal != 0 or _force_trade_mode:
+                    # ── CRITICAL GUARD: one position per asset ──
+                    # Without this, the system opens a new trade every bar,
+                    # creating hundreds of orphaned OPEN journal entries.
+                    _open = getattr(self.risk_manager, 'open_positions', {})
+                    if asset in _open:
+                        _existing = _open[asset]
+                        _same_dir = (last_signal > 0 and _existing.direction > 0) or \
+                                    (last_signal < 0 and _existing.direction < 0)
+                        if _same_dir:
+                            # Same direction — already positioned, skip
+                            continue
+                        else:
+                            # Opposite signal — close existing first, then allow new entry
+                            _safe_print(f"  [POSITION] {asset} has open {('LONG' if _existing.direction > 0 else 'SHORT')} — "
+                                        f"signal reversed, closing before re-entry")
+                            self._handle_full_exit(asset, _existing, ohlcv_data['closes'][-1], "signal_reversal")
+                            # After closing, fall through to new entry below
+
                     if last_signal == 0 and _force_trade_mode:
                         # Force a direction based on most recent price action
                         last_signal = 1  # Default to LONG on forced mode
@@ -1989,10 +2007,11 @@ class TradingExecutor:
             self.journal.close_trade(
                 order_id=record.order_id,
                 exit_price=res.executed_price,
-                pnl=pnl
+                pnl=pnl,
+                reason=reason,
             )
 
-            # ═══ AGENT FEEDBACK LOOP: Update agent weights after trade ═══
+            # ═══ FEEDBACK LOOPS: Update agent + meta-controller weights ═══
             try:
                 self.agent_orchestrator.post_trade_feedback({
                     'asset': asset,
@@ -2002,8 +2021,14 @@ class TradingExecutor:
                     'entry_price': record.entry_price,
                     'exit_price': res.executed_price,
                     'reason': reason,
-                    'agent_votes': {},  # Will be populated when we track per-trade
+                    'agent_votes': {},
                 })
+            except Exception:
+                pass
+            # Update Kelly sizing with actual outcome
+            try:
+                if hasattr(self, 'strategy') and hasattr(self.strategy, 'meta_controller'):
+                    self.strategy.meta_controller.record_trade_outcome(pnl > 0)
             except Exception:
                 pass
 

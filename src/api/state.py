@@ -225,6 +225,9 @@ class DashboardState:
                 "t": datetime.now().isoformat(),
                 "v": pnl
             })
+            # Cap equity curve to last 2880 entries (~2 days at 1min bars)
+            if len(p["equity_curve"]) > 2880:
+                p["equity_curve"] = p["equity_curve"][-2880:]
             # Exchange-authoritative fields
             if current_total_value is not None:
                 p["current_total_value"] = current_total_value

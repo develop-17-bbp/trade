@@ -104,8 +104,7 @@ def _load_journal_trades():
     try:
         import os
         from src.monitoring.journal import TradingJournal
-        os.environ.setdefault('JOURNAL_ENCRYPTION_KEY',
-                              'e2717e63c5babe3202ba02c93d900edb4d954b01be59462cc4734cc88f6ea1fe')
+        # JOURNAL_ENCRYPTION_KEY must be set in .env — never hardcode
         j = TradingJournal()
         return j.trades or []
     except Exception:

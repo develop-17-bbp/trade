@@ -30,9 +30,15 @@ logger = logging.getLogger(__name__)
 
 # -- Auth --
 API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
+_DEV_MODE = os.environ.get("TRADE_API_DEV_MODE", "").lower() in ("1", "true", "yes")
 
 def _require_api_key(x_api_key: Optional[str] = Header(default=None)):
-    if API_KEY and x_api_key != API_KEY:
+    if not API_KEY:
+        if _DEV_MODE:
+            return True  # Explicit dev-mode opt-in only
+        raise HTTPException(status_code=403,
+                            detail="DASHBOARD_API_KEY not configured. Set env var or enable TRADE_API_DEV_MODE=1")
+    if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return True
 
@@ -47,8 +53,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(),
-    allow_credentials=True,
+    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:8501").split(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
