@@ -5,10 +5,18 @@ from datetime import datetime
 import threading
 import time
 
-# Resolve state file relative to project root so dashboard and executor always use the same file
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
-STATE_FILE = os.path.join(_PROJECT_ROOT, "logs", "dashboard_state.json")
+# Use centralized path management; fall back to legacy in-repo path for backward compatibility
+try:
+    from src.core.paths import DASHBOARD_STATE_FILE as _DASHBOARD_STATE_FILE
+    _state_path = str(_DASHBOARD_STATE_FILE)
+    # If new path doesn't exist but old path does, prefer old path during transition
+    _legacy_path = "logs/dashboard_state.json"
+    if not _DASHBOARD_STATE_FILE.exists() and os.path.exists(_legacy_path):
+        _state_path = _legacy_path
+except Exception:
+    _state_path = "logs/dashboard_state.json"
+
+STATE_FILE = _state_path
 
 # Default state template (never written directly — only merged)
 _DEFAULT_STATE = {
@@ -16,8 +24,12 @@ _DEFAULT_STATE = {
     "portfolio": {
         "pnl": 0.0,
         "return": 0.0,
-        "total": 0.0,
-        "equity_curve": []
+        "equity_curve": [],
+        # Exchange-authoritative values — device-independent today P&L anchor
+        "sod_balance": None,        # USDT balance at 00:00 UTC (fetched from exchange)
+        "sod_date": "",             # ISO date the sod_balance was captured for
+        "current_total_value": 0.0, # live total portfolio value (USDT + holdings)
+        "today_pnl": 0.0,           # current_total_value - sod_balance (canonical)
     },
     "agentic_log": [],
     "memory_hits": [],
@@ -202,20 +214,54 @@ class DashboardState:
             s["agentic_log"] = s["agentic_log"][:50]
         self._read_modify_write(_mod)
 
-    def update_portfolio(self, pnl: float, asset_return: float, total_value: float = None):
+    def update_portfolio(self, pnl: float, asset_return: float,
+                         current_total_value: float = None,
+                         sod_balance: float = None,
+                         sod_date: str = None):
+        """
+        Update portfolio state.
+        - pnl / asset_return: legacy cumulative figures (kept for equity curve)
+        - current_total_value: live USDT+holdings value from exchange (device-independent)
+        - sod_balance: exchange balance at 00:00 UTC today (set once per day)
+        - sod_date: ISO date string the sod_balance belongs to (e.g. '2026-03-19')
+        today_pnl is automatically recomputed as current_total_value - sod_balance.
+        """
         def _mod(s):
-            port = s.setdefault("portfolio", _DEFAULT_STATE["portfolio"].copy())
-            port["pnl"] = pnl
-            port["return"] = asset_return
-            if total_value is not None:
-                port["total"] = total_value
-            if "equity_curve" not in port:
-                port["equity_curve"] = []
-            port["equity_curve"].append({
+            p = s["portfolio"]
+            p["pnl"] = pnl
+            p["return"] = asset_return
+            p["equity_curve"].append({
                 "t": datetime.now().isoformat(),
                 "v": pnl
             })
-            s["last_update"] = datetime.now().isoformat()
+            # Cap equity curve to last 2880 entries (~2 days at 1min bars)
+            if len(p["equity_curve"]) > 2880:
+                p["equity_curve"] = p["equity_curve"][-2880:]
+            # Exchange-authoritative fields
+            if current_total_value is not None:
+                p["current_total_value"] = current_total_value
+            if sod_balance is not None:
+                p["sod_balance"] = sod_balance
+            if sod_date is not None:
+                p["sod_date"] = sod_date
+            # Recompute today_pnl from exchange values (canonical, device-independent)
+            _sod = p.get("sod_balance")
+            _cur = p.get("current_total_value", 0.0)
+            if _sod is not None and _sod > 0 and _cur > 0:
+                p["today_pnl"] = round(_cur - _sod, 4)
+        self._read_modify_write(_mod)
+
+    def set_sod_balance(self, sod_balance: float, sod_date: str):
+        """
+        Called once at 00:00 UTC by the daily reset scheduler.
+        Anchors today_pnl to the actual exchange balance at midnight.
+        """
+        def _mod(s):
+            p = s["portfolio"]
+            p["sod_balance"] = sod_balance
+            p["sod_date"] = sod_date
+            # Reset today_pnl to 0 at start of new day
+            p["today_pnl"] = 0.0
         self._read_modify_write(_mod)
 
     def set_memory_hits(self, hits: List[Dict]):

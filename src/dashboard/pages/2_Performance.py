@@ -49,8 +49,7 @@ def load_state() -> dict:
 def load_journal() -> list:
     """Load trades from encrypted journal (authoritative source of truth)."""
     try:
-        os.environ.setdefault('JOURNAL_ENCRYPTION_KEY',
-                              'e2717e63c5babe3202ba02c93d900edb4d954b01be59462cc4734cc88f6ea1fe')
+        # JOURNAL_ENCRYPTION_KEY must be set in .env — never hardcode
         from src.monitoring.journal import TradingJournal
         j = TradingJournal()
         return j.trades or []
@@ -227,10 +226,17 @@ equity_curve = state.get("portfolio", {}).get("equity_curve", [])
 daily_pnls = compute_daily_pnl_series(equity_curve)
 
 today_str = datetime.now().strftime("%Y-%m-%d")
-_equity_today_pnl = daily_pnls.get(today_str, 0.0)
 
-# If equity curve has ≤1 entry today (no intraday change measurable),
-# fall back to realized P&L from journal for today's gauge
+# ── Today P&L — exchange-authoritative (device-independent) ──
+# Priority 1: today_pnl from state (= current_total_value - sod_balance, both from exchange)
+#             This is the same on every device sharing the same Binance account.
+# Priority 2: equity curve diff (local, varies per device — fallback only)
+# Priority 3: realized journal P&L (closed trades only)
+_portfolio = state.get("portfolio", {})
+_sod_balance = _portfolio.get("sod_balance")        # set by executor at midnight UTC
+_sod_date    = _portfolio.get("sod_date", "")
+_state_today_pnl = _portfolio.get("today_pnl")      # recomputed each bar: current_total - sod
+
 _journal_closed = [t for t in journal if isinstance(t, dict) and (
     t.get('status') == 'CLOSED' or
     ('exit_price' in t and t.get('exit_price') and t.get('status') != 'OPEN')
@@ -240,8 +246,20 @@ _journal_today_realized = sum(
     if str(t.get('exit_time') or t.get('timestamp', ''))[:10] == today_str
 )
 _eq_today_entries = [e for e in equity_curve if str(e.get('t', ''))[:10] == today_str]
-# Use equity-based P&L only if we have 2+ data points (meaningful change); else use journal realized
-today_pnl = _equity_today_pnl if len(_eq_today_entries) >= 2 else _journal_today_realized
+_equity_today_pnl = daily_pnls.get(today_str, 0.0)
+
+if _sod_balance is not None and _sod_date == today_str and _state_today_pnl is not None:
+    # Best: exchange-derived, resets at midnight UTC, identical on all devices
+    today_pnl = _state_today_pnl
+    _pnl_source = f"Exchange (SOD ${_sod_balance:,.0f})"
+elif len(_eq_today_entries) >= 2:
+    # Fallback: local equity curve diff (device-specific, consistent within one device)
+    today_pnl = _equity_today_pnl
+    _pnl_source = "Equity Curve (local)"
+else:
+    # Last resort: closed-trade realized P&L from journal
+    today_pnl = _journal_today_realized
+    _pnl_source = "Journal (realized)"
 
 col_gauge, col_cards = st.columns([1, 1])
 with col_gauge:
@@ -250,7 +268,7 @@ with col_gauge:
         number={"prefix": "$", "font": {"size": 36, "color": "#fff"}},
         delta={"reference": daily_target, "relative": False, "prefix": "$",
                "increasing": {"color": "#22c55e"}, "decreasing": {"color": "#ef4444"}},
-        title={"text": f"Today's P&L vs ${daily_target:,.0f} Target", "font": {"size": 14, "color": "#8b8ba7"}},
+        title={"text": f"Today's P&L vs ${daily_target:,.0f} Target  [{_pnl_source}]", "font": {"size": 13, "color": "#8b8ba7"}},
         gauge={
             "axis": {"range": [min(-daily_target, today_pnl * 1.2 if today_pnl < 0 else 0),
                                max(daily_target * 2, today_pnl * 1.2)],
@@ -478,7 +496,7 @@ with c4:
     cur_sym = train_state.get("current_symbol", "--")
     st.markdown(f"""<div class="glass-card"><div class="metric-label">CURRENT TARGET</div><div class="metric-value" style="font-size:1.1rem; color:#ffa500;">{cur_sym}</div></div>""", unsafe_allow_html=True)
 with c5:
-    version = state.get("model_version", "v6.0")
+    version = state.get("model_version", "---")
     st.markdown(f"""<div class="glass-card"><div class="metric-label">MODEL VERSION</div><div class="metric-value metric-value-cyan">{version}</div></div>""", unsafe_allow_html=True)
 
 # Model Inventory + Feature Importance
@@ -541,17 +559,27 @@ with cols[4]:
         <div><span class="status-dot {sys_color}"></span>{status}</div>
     </div>""", unsafe_allow_html=True)
 
+_has_exec_data = bool(execution)
 c1, c2, c3, c4 = st.columns(4)
 with c1:
     latency = float(execution.get("latency_ms", 0))
-    lat_color = "metric-value-green" if latency < 100 else "metric-value-orange" if latency < 500 else "metric-value-red"
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">API LATENCY</div><div class="metric-value {lat_color}">{latency:.0f}ms</div></div>""", unsafe_allow_html=True)
+    if _has_exec_data and "latency_ms" in execution:
+        lat_color = "metric-value-green" if latency < 100 else "metric-value-orange" if latency < 500 else "metric-value-red"
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">API LATENCY</div><div class="metric-value {lat_color}">{latency:.0f}ms</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">API LATENCY</div><div class="metric-value" style="color:#64748b">---</div></div>""", unsafe_allow_html=True)
 with c2:
     slippage = float(execution.get("slippage", 0))
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">AVG SLIPPAGE</div><div class="metric-value metric-value-green">{slippage:.3f}%</div></div>""", unsafe_allow_html=True)
+    if _has_exec_data and "slippage" in execution:
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">AVG SLIPPAGE</div><div class="metric-value metric-value-green">{slippage:.3f}%</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">AVG SLIPPAGE</div><div class="metric-value" style="color:#64748b">---</div></div>""", unsafe_allow_html=True)
 with c3:
-    fill = float(execution.get("fill_rate", 100))
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">FILL RATE</div><div class="metric-value metric-value-green">{fill:.1f}%</div></div>""", unsafe_allow_html=True)
+    if _has_exec_data and "fill_rate" in execution:
+        fill = float(execution["fill_rate"])
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">FILL RATE</div><div class="metric-value metric-value-green">{fill:.1f}%</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">FILL RATE</div><div class="metric-value" style="color:#64748b">---</div></div>""", unsafe_allow_html=True)
 with c4:
     max_dd = float(risk.get("max_drawdown", 0))
     dd_color = "metric-value-green" if abs(max_dd) < 5 else "metric-value-orange" if abs(max_dd) < 10 else "metric-value-red"
