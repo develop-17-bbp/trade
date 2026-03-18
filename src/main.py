@@ -27,17 +27,6 @@ import signal
 import yaml
 import logging
 
-try:
-    from src.core.paths import ensure_dirs
-    from src.core.logging_config import configure_logging
-    ensure_dirs()
-    configure_logging(level="INFO")
-except Exception as _log_cfg_err:
-    # Logging config is non-critical — fall back to basicConfig
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    logging.getLogger(__name__).warning(f"Logging config failed, using defaults: {_log_cfg_err}")
-
 # Force UTF-8 stdout/stderr on Windows (prevents UnicodeEncodeError from emojis in logs)
 if sys.platform == "win32":
     import io
