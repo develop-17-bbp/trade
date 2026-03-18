@@ -858,11 +858,11 @@ class TradingExecutor:
 
             total_return_pct = ((total_portfolio_value - self.initial_capital) / self.initial_capital * 100) if self.initial_capital > 0 else 0
 
-            # Update Dashboard State
+            # Update Dashboard State (so PORTFOLIO P&L and TOTAL are visible in backend cards)
             try:
                 from src.api.state import DashboardState
                 pnl_abs = total_portfolio_value - self.initial_capital
-                DashboardState().update_portfolio(pnl=pnl_abs, asset_return=total_return_pct)
+                DashboardState().update_portfolio(pnl=pnl_abs, asset_return=total_return_pct, total_value=total_portfolio_value)
             except: pass
 
             _trades_today = getattr(self.strategy, 'risk_manager', None)
