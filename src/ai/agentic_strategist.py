@@ -76,7 +76,7 @@ class AgenticStrategist:
     Features: Structured Output, Fact-Checking, and Bayesian Confidence Calibration.
     """
 
-    def __init__(self, provider: str = "local", model: str = "llama-3-8b-instruct", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
+    def __init__(self, provider: str = "local", model: str = "mistral", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
         self.use_local_on_failure = use_local_on_failure
         self.provider = provider
         self.model_name = model
@@ -461,16 +461,26 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
         and tries them in order. This ensures the agent system gets real LLM
         reasoning whenever possible.
         """
-        # ── RATE LIMITING: Skip if quota exhausted ──
-        if self.fallback_mode or not self._check_rate_limit():
-            self.logger.info("[Strategist] Rate limit hit — trying local LLM before rule-based")
-            try:
-                return self._local_inference(prompt)
-            except Exception:
-                return self._rule_based_fallback()
-
-        # ── Use LLMRouter with full fallback chain ──
+        # ── LLMRouter path (preferred — handles cloud → local → rule-based automatically) ──
         if self._llm_router:
+            # When cloud quota is exhausted, skip cloud providers and go straight to local
+            if self.fallback_mode or not self._check_rate_limit():
+                self.logger.info("[Strategist] Cloud quota/rate-limit hit — routing to local LLM via router")
+                # Force local-only fallback chain (skip cloud providers)
+                local_chain = [p for p in self._llm_router.providers if p in ('local', 'ollama', 'lmstudio')]
+                if local_chain:
+                    system_prompt = "You are a crypto trading strategist. Return only valid JSON."
+                    result = self._llm_router.query(prompt, system_prompt=system_prompt,
+                                                    fallback_chain=local_chain, cache=False)
+                    if result.get('error') != 'all_providers_failed':
+                        self.fallback_mode = False  # Local LLM worked — reset
+                        return result
+                # No local provider in router — try legacy local inference
+                try:
+                    return self._local_inference(prompt)
+                except Exception:
+                    return self._rule_based_fallback()
+
             system_prompt = "You are a crypto trading strategist. Return only valid JSON."
             result = self._llm_router.query(prompt, system_prompt=system_prompt)
 
@@ -483,18 +493,19 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
             self.fallback_mode = False
             return result
 
-        # ── Legacy path: No router available, try direct ──
-        if self.api_key and self.provider not in ("local",):
-            try:
-                return self._legacy_api_call(prompt)
-            except Exception as e:
-                self.logger.warning(f"[LLM] Legacy API call failed: {e}")
+        # ── Legacy path: No router available ──
+        if not self.fallback_mode and self._check_rate_limit():
+            if self.api_key and self.provider not in ("local",):
+                try:
+                    return self._legacy_api_call(prompt)
+                except Exception as e:
+                    self.logger.warning(f"[LLM] Legacy API call failed: {e}")
 
-        # Try local LLM
+        # Always try local LLM before giving up
         try:
             return self._local_inference(prompt)
         except Exception as e:
-            self.logger.error(f"Local LLM Inference Error: {e}")
+            self.logger.warning(f"[LOCAL-LLM] Not available: {e}")
 
         return self._rule_based_fallback()
 
@@ -541,8 +552,13 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
     def _local_inference(self, prompt: str) -> Dict:
         """Shared logic to execute prompt against local Ollama / LM Studio."""
         import requests
-        
-        model_id = self.model_name if self.provider == "local" else "neural-chat"
+
+        # Resolve model: prefer router's configured local model, then self.model_name, then safe default
+        model_id = "mistral"  # safe default that ships with Ollama
+        if self._llm_router and 'local' in self._llm_router.providers:
+            model_id = self._llm_router.providers['local'].config.model or model_id
+        elif self.model_name:
+            model_id = self.model_name
         self.logger.info(f"[LOCAL-LLM] Calling Local Reasoning Engine: {model_id}")
         
         endpoints = [

@@ -6,6 +6,7 @@ Clean dark navy aesthetic with muted colors and solid cards.
 
 import plotly.graph_objects as go
 import calendar
+from html import escape as _he
 
 # ── Color Palette (ProJournX-inspired muted tones) ──
 GREEN = "#22c55e"
@@ -311,4 +312,4 @@ def source_badge(name: str, status: str) -> str:
     ok = status.upper() == 'ONLINE'
     dc = 'dot-green' if ok else 'dot-red'
     bc = 'badge-green' if ok else 'badge-red'
-    return f'<span class="badge {bc}"><span class="dot {dc}"></span>{name}: {status}</span>'
+    return f'<span class="badge {bc}"><span class="dot {dc}"></span>{_he(name)}: {_he(status)}</span>'

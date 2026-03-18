@@ -59,7 +59,7 @@ models:
 # ── AI Reasoning Layer ──
 ai:
   reasoning_provider: "auto"                # 'auto' = smart detection: cloud API → local Ollama → rule-based
-  reasoning_model: "neural-chat"            # Default local model (used when no cloud API available)
+  reasoning_model: "mistral"                 # Default local model (Ollama mistral, already installed)
 
   # Rate Limiting (to avoid quota exhaustion)
   rate_limit_calls_per_minute: 15     # Conservative rate limiter for free tier

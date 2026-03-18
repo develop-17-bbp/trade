@@ -1,5 +1,6 @@
 param(
     [string]$JournalPath = "logs/trading_journal.json",
+    [string]$EncryptedJournalPath = "logs/trading_journal.enc",
     [string]$OutputDir = "authority_trade_summaries",
     [datetime]$StartDate = [datetime]"2026-03-10",
     [datetime]$EndDate = [datetime]::Today
@@ -102,6 +103,99 @@ function New-MinimalDocx {
     }
 }
 
+function Get-DotEnvValue {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+
+    foreach ($line in Get-Content $Path) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line.TrimStart().StartsWith("#")) { continue }
+        if ($line -match "^\s*$([regex]::Escape($Name))=(.*)$") {
+            return $Matches[1].Trim()
+        }
+    }
+    return $null
+}
+
+function Get-JournalData {
+    param(
+        [string]$PlaintextPath,
+        [string]$EncryptedPath
+    )
+
+    $keyText = [Environment]::GetEnvironmentVariable("JOURNAL_ENCRYPTION_KEY")
+    if ([string]::IsNullOrWhiteSpace($keyText)) {
+        $keyText = Get-DotEnvValue -Path ".env" -Name "JOURNAL_ENCRYPTION_KEY"
+    }
+    if ([string]::IsNullOrWhiteSpace($keyText)) {
+        if (-not (Test-Path $PlaintextPath)) {
+            throw "Journal file not found: $PlaintextPath"
+        }
+        return [pscustomobject]@{
+            Rows = (Get-Content -Raw $PlaintextPath | ConvertFrom-Json)
+            SourcePath = $PlaintextPath
+        }
+    }
+
+    if (Test-Path $EncryptedPath) {
+        try {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $key = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keyText))
+            }
+            finally {
+                $sha.Dispose()
+            }
+
+            $raw = [Convert]::FromBase64String((Get-Content -Raw $EncryptedPath))
+            $iv = $raw[0..15]
+            $ciphertext = $raw[16..($raw.Length - 1)]
+
+            $aes = [System.Security.Cryptography.Aes]::Create()
+            try {
+                $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+                $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+                $aes.Key = $key
+                $aes.IV = $iv
+                $decryptor = $aes.CreateDecryptor()
+                try {
+                    $plainBytes = $decryptor.TransformFinalBlock($ciphertext, 0, $ciphertext.Length)
+                }
+                finally {
+                    $decryptor.Dispose()
+                }
+            }
+            finally {
+                $aes.Dispose()
+            }
+
+            $jsonText = [System.Text.Encoding]::UTF8.GetString($plainBytes)
+            return [pscustomobject]@{
+                Rows = ($jsonText | ConvertFrom-Json)
+                SourcePath = $EncryptedPath
+            }
+        }
+        catch {
+            throw "Failed to read encrypted journal at ${EncryptedPath}: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not (Test-Path $PlaintextPath)) {
+        throw "Journal file not found. Checked encrypted path '$EncryptedPath' and plaintext path '$PlaintextPath'."
+    }
+
+    return [pscustomobject]@{
+        Rows = (Get-Content -Raw $PlaintextPath | ConvertFrom-Json)
+        SourcePath = $PlaintextPath
+    }
+}
+
 function Get-DayStats {
     param([object[]]$Rows)
 
@@ -153,11 +247,9 @@ function Get-DayStats {
     }
 }
 
-if (-not (Test-Path $JournalPath)) {
-    throw "Journal file not found: $JournalPath"
-}
-
-$journal = Get-Content -Raw $JournalPath | ConvertFrom-Json
+$journalData = Get-JournalData -PlaintextPath $JournalPath -EncryptedPath $EncryptedJournalPath
+$journal = $journalData.Rows
+$journalSource = $journalData.SourcePath
 $dateLookup = @{}
 foreach ($row in $journal) {
     $day = ([datetime]$row.timestamp).ToString("yyyy-MM-dd")
@@ -222,7 +314,7 @@ while ($current -le $EndDate.Date) {
         "This file is a plain-language summary of the trade activity recorded for this date in the system journal.",
         "",
         "Important note:",
-        "- The primary source used is logs/trading_journal.json.",
+        "- The primary source used is $journalSource.",
         "- The current journal records SHADOW/testnet entries for this reporting period.",
         "- If the live system is currently trading but the journal has not been updated yet, those newer events are not part of this formal summary.",
         "",
@@ -266,7 +358,7 @@ while ($current -le $EndDate.Date) {
     ) + ($changes | ForEach-Object { "- $_" }) + @(
         "",
         "Source note:",
-        "- Generated from $JournalPath on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')."
+        "- Generated from $journalSource on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')."
     )
 
     $safeName = "$dayKey" + "_trade_summary_for_authorities"

@@ -416,8 +416,8 @@ class LLMRouter:
         env_map = [
             # gemini-2.5-flash: 20 req/day free tier (primary — best quality)
             ('REASONING_LLM_KEY', 'google', 'gemini-2.5-flash', 'gemini'),
-            # gemini-2.0-flash: 1500 req/day free tier (fallback when 2.5-flash quota hits)
-            ('REASONING_LLM_KEY', 'google', 'gemini-2.0-flash', 'gemini_fast'),
+            # gemini-2.0-flash-lite: disabled — this API key only has quota for gemini-2.5-flash
+            # ('REASONING_LLM_KEY', 'google', 'gemini-2.0-flash-lite', 'gemini_fast'),
             ('OPENAI_API_KEY', 'openai', 'gpt-4-turbo', 'openai'),
             ('ANTHROPIC_API_KEY', 'anthropic', 'claude-sonnet-4-20250514', 'claude'),
             ('TOGETHER_API_KEY', 'together', 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', 'together'),

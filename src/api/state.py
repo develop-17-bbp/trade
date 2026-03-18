@@ -47,6 +47,7 @@ _DEFAULT_STATE = {
     "risk_metrics": {
         "vpin_threshold": 0.8,
         "max_drawdown": 0.0,
+        "current_drawdown": 0.0,
         "risk_score": 0.0
     },
     "training_status": "IDLE",
@@ -72,6 +73,7 @@ _DEFAULT_STATE = {
         "L9": []
     },
     "trade_history": [],
+    "open_positions": {},
     "benchmark": {
         "predictions": [],
         "actuals": [],
@@ -302,6 +304,13 @@ class DashboardState:
         """Read-only: returns latest state from disk."""
         self.state = self._read_file()
         return self.state
+
+    def update_open_positions(self, positions: Dict[str, Any]):
+        """Push current open positions with entry price, size, unrealized P&L."""
+        def _mod(s):
+            s["open_positions"] = positions
+            s["last_update"] = datetime.now().isoformat()
+        self._read_modify_write(_mod)
 
     def record_trade(self, trade_data: Dict):
         """Record a completed trade for benchmark tracking."""

@@ -291,6 +291,10 @@ def main():
                 time.sleep(sleep_secs)
                 try:
                     executor.risk_manager.reset_daily_pnl()
+                    # Also reset the strategy's internal RiskManager so daily_trades counter
+                    # and _halted flag don't accumulate across days
+                    if hasattr(executor, 'strategy') and hasattr(executor.strategy, 'risk_manager'):
+                        executor.strategy.risk_manager.reset_daily()
                     logger.info("[SCHEDULER] Daily P&L reset at 00:00 UTC")
                     # Weekly reset on Mondays
                     if datetime.now(timezone.utc).weekday() == 0:
