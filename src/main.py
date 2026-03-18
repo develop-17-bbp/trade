@@ -27,6 +27,17 @@ import signal
 import yaml
 import logging
 
+try:
+    from src.core.paths import ensure_dirs
+    from src.core.logging_config import configure_logging
+    ensure_dirs()
+    configure_logging(level="INFO")
+except Exception as _log_cfg_err:
+    # Logging config is non-critical — fall back to basicConfig
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logging.getLogger(__name__).warning(f"Logging config failed, using defaults: {_log_cfg_err}")
+
 # Force UTF-8 stdout/stderr on Windows (prevents UnicodeEncodeError from emojis in logs)
 if sys.platform == "win32":
     import io
@@ -157,6 +168,32 @@ def main():
     # Reject demo mode CLI flag if user tries it
     if '--demo' in sys.argv or '--live' in sys.argv:
         print("[Warning] Demo mode is no longer supported. Real-time Binance data is enforced.")
+
+    # Production API server (--api flag starts REST API on port 11000 in background thread)
+    # Usage: python -m src.main --api
+    #        python -m src.main --api --api-port 11000
+    # Future: Port 11001 reserved for WebSocket streaming
+    if '--api' in sys.argv:
+        _api_port = 11000
+        if '--api-port' in sys.argv:
+            _port_idx = sys.argv.index('--api-port')
+            if _port_idx + 1 < len(sys.argv):
+                try:
+                    _api_port = int(sys.argv[_port_idx + 1])
+                except ValueError:
+                    pass
+        try:
+            import threading
+            from src.api.production_server import run_production_server
+            api_thread = threading.Thread(
+                target=run_production_server,
+                kwargs={"host": "0.0.0.0", "port": _api_port},
+                daemon=True, name="production-api"
+            )
+            api_thread.start()
+            logger.info(f"Production API started on port {_api_port}")
+        except Exception as _api_err:
+            logger.warning(f"[API] Failed to start production API: {_api_err}")
 
     # Load environment variables
     try:

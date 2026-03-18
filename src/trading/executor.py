@@ -7,6 +7,8 @@ from typing import Dict, Optional, List, Any, Tuple
 from dataclasses import asdict, dataclass
 from dotenv import load_dotenv
 
+from src.core.component import ComponentSandbox, ComponentRegistry
+
 # Load environment variables
 load_dotenv()
 
@@ -90,63 +92,117 @@ class TradingExecutor:
             _safe_print("  [SECURITY WARNING] Shared keys mean a mode misconfiguration could trade real funds.")
 
         exchange_cfg = self.config.get('exchange', {})
-        self.price_source = PriceFetcher(
-            exchange_name=exchange_cfg.get('name', 'binance'),
-            testnet=use_testnet,
+        _registry = ComponentRegistry.get()
+
+        # price_source is critical — system cannot run without real-time price data
+        self.price_source = _registry.register(
+            'price_source',
+            lambda: PriceFetcher(
+                exchange_name=exchange_cfg.get('name', 'binance'),
+                testnet=use_testnet,
+            ),
+            critical=True,
         )
         if not self.price_source.is_available:
             raise RuntimeError(
                 "[FATAL] Exchange not available. Real-time data is required. "
                 "Ensure CCXT is installed and Binance API is accessible."
             )
-        self.news = NewsFetcher(
-            newsapi_key=os.environ.get('NEWSAPI_KEY'),
-            cryptopanic_token=os.environ.get('CRYPTOPANIC_TOKEN'),
+        self.news = _registry.register(
+            'news',
+            lambda: NewsFetcher(
+                newsapi_key=os.environ.get('NEWSAPI_KEY'),
+                cryptopanic_token=os.environ.get('CRYPTOPANIC_TOKEN'),
+            ),
+            critical=False,
         )
-        self.institutional = InstitutionalFetcher()
-        self.on_chain = OnChainFetcher()
+        self.institutional = _registry.register(
+            'institutional', lambda: InstitutionalFetcher(), critical=False
+        )
+        self.on_chain = _registry.register(
+            'on_chain', lambda: OnChainFetcher(), critical=False
+        )
         self.on_chain_portfolio = OnChainPortfolioManager()
-        self.free_data = FreeDataAggregator()  # Free data sources (Fear/Greed, IV, etc.)
+        self.free_data = _registry.register(
+            'free_data', lambda: FreeDataAggregator(), critical=False
+        )  # Free data sources (Fear/Greed, IV, etc.)
         _ai_cfg = self.config.get('ai', {})
         _prov = _ai_cfg.get('reasoning_provider', 'auto')
         _model = _ai_cfg.get('reasoning_model', 'mistral')
 
-        self.strategist = AgenticStrategist(
-            provider=_prov,
-            model=_model,
-            use_local_on_failure=_ai_cfg.get('use_local_on_failure', True)
+        self.strategist = _registry.register(
+            'strategist',
+            lambda: AgenticStrategist(
+                provider=_prov,
+                model=_model,
+                use_local_on_failure=_ai_cfg.get('use_local_on_failure', True)
+            ),
+            critical=False,
         )
-        
+
         # Phase 6: Advanced Learning Engine
-        self.advanced_learning = AdvancedLearningEngine(
-            meta_model_path=self.config.get('models_path', 'models') + "/meta_learning_model.json"
+        self.advanced_learning = _registry.register(
+            'advanced_learning',
+            lambda: AdvancedLearningEngine(
+                meta_model_path=self.config.get('models_path', 'models') + "/meta_learning_model.json"
+            ),
+            critical=False,
         )
-        self.rl_agent = ReinforcementLearningAgent(
-            learning_rate=self.config.get('rl', {}).get('learning_rate', 0.001),
-            gamma=self.config.get('rl', {}).get('gamma', 0.99)
+        self.rl_agent = _registry.register(
+            'rl_agent',
+            lambda: ReinforcementLearningAgent(
+                learning_rate=self.config.get('rl', {}).get('learning_rate', 0.001),
+                gamma=self.config.get('rl', {}).get('gamma', 0.99)
+            ),
+            critical=False,
         )
-        self.adaptive_algo = AdaptiveAlgorithmLayer()
-        
+        self.adaptive_algo = _registry.register(
+            'adaptive_algo', lambda: AdaptiveAlgorithmLayer(), critical=False
+        )
+
         # Phase 5: Autonomous Trading Components
-        self.portfolio_allocator = PortfolioAllocator(
-            total_capital=self.initial_capital,
-            max_allocation_pct=self.config.get('portfolio', {}).get('max_allocation_pct', 0.05)
+        self.portfolio_allocator = _registry.register(
+            'portfolio_allocator',
+            lambda: PortfolioAllocator(
+                total_capital=self.initial_capital,
+                max_allocation_pct=self.config.get('portfolio', {}).get('max_allocation_pct', 0.05)
+            ),
+            critical=False,
         )
-        self.portfolio_hedger = PortfolioHedger()
+        self.portfolio_hedger = _registry.register(
+            'portfolio_hedger', lambda: PortfolioHedger(), critical=False
+        )
         self.health_checker = SystemHealthChecker(check_interval_sec=60)
         self.failover_controller = ExecutionFailoverController(primary_exchange=self.price_source)
-        
+
         # New Microstructure & Regime Components
-        self.microstructure = MicrostructureAnalyzer(depth=20)
-        self.regime_detector = VolatilityRegimeDetector(lookback=100)
-        self.event_guard = MarketEventGuard()
+        self.microstructure = _registry.register(
+            'microstructure', lambda: MicrostructureAnalyzer(depth=20), critical=False
+        )
+        self.regime_detector = _registry.register(
+            'regime_detector', lambda: VolatilityRegimeDetector(lookback=100), critical=False
+        )
+        self.event_guard = _registry.register(
+            'event_guard', lambda: MarketEventGuard(), critical=False
+        )
         self.simulator = AdvancedSimulator(iterations=1000)
-        
-        self.risk_manager = DynamicRiskManager(initial_capital=self.initial_capital)
-        
+
+        # risk_manager is critical — needed for position tracking and safety limits
+        self.risk_manager = _registry.register(
+            'risk_manager',
+            lambda: DynamicRiskManager(initial_capital=self.initial_capital),
+            critical=True,
+        )
+
         # LOSS PREVENTION LAYER: Profit Protector + Loss Aversion
-        self.profit_protector = ProfitProtector(initial_capital=self.initial_capital)
-        self.loss_aversion = LossAversionFilter()
+        self.profit_protector = _registry.register(
+            'profit_protector',
+            lambda: ProfitProtector(initial_capital=self.initial_capital),
+            critical=False,
+        )
+        self.loss_aversion = _registry.register(
+            'loss_aversion', lambda: LossAversionFilter(), critical=False
+        )
         
         self.agentic_bias = 0.0
         self.iteration_count = 0
@@ -157,22 +213,22 @@ class TradingExecutor:
         self.lgbm = None
         self.patch_tst = None
         if _use_lgbm:
-            try:
+            def _make_lgbm():
                 from src.models.lightgbm_classifier import LightGBMClassifier
-                self.lgbm = LightGBMClassifier(self.config)
-            except Exception as e:
-                _safe_print(f"  [WARN] LightGBM disabled: {e}")
+                return LightGBMClassifier(self.config)
+            self.lgbm = _registry.register('lgbm', _make_lgbm, critical=False)
         if _use_patch_tst:
-            try:
+            def _make_patchtst():
                 from src.ai.patchtst_model import PatchTSTClassifier
-                self.patch_tst = PatchTSTClassifier()
-            except Exception as e:
-                _safe_print(f"  [WARN] PatchTST disabled: {e}")
+                return PatchTSTClassifier()
+            self.patch_tst = _registry.register('patch_tst', _make_patchtst, critical=False)
         if not _use_lgbm or not _use_patch_tst:
             _safe_print("  [ML] LightGBM/PatchTST disabled by default (set ai.use_lightgbm & ai.use_patch_tst: true in config to enable).")
         
         # Risk & Compliance Infrastructure
-        self.vpin = VPINGuard(bucket_size=5.0, threshold=0.75) # 5 BTC buckets
+        self.vpin = _registry.register(
+            'vpin', lambda: VPINGuard(bucket_size=5.0, threshold=0.75), critical=False
+        )  # 5 BTC buckets
         self.stream = SignalStreamAgent()
         self.audit_log = TradingJournal() # Enhanced version for reasoning traces
         
@@ -190,7 +246,11 @@ class TradingExecutor:
         
         # Multi-Agent Intelligence Overlay (12-agent pipeline)
         self.math_injector = MathInjector(self.config)
-        self.agent_orchestrator = AgentOrchestrator(self.config)
+        self.agent_orchestrator = _registry.register(
+            'agent_orchestrator',
+            lambda: AgentOrchestrator(self.config),
+            critical=False,
+        )
 
         # ═══ SECURITY: Model Integrity Verification ═══
         try:
@@ -227,12 +287,20 @@ class TradingExecutor:
         _safe_print("  [AGENTS] 12-Agent Intelligence Overlay INITIALIZED.")
         _safe_print("  [AUDIT] Audit Trail established. Stream and Compliance ready.")
 
-        # Strategy
-        self.strategy = HybridStrategy(self.config)
+        # Strategy — critical: system cannot trade without it
+        self.strategy = _registry.register(
+            'strategy',
+            lambda: HybridStrategy(self.config),
+            critical=True,
+        )
 
         # Sentiment
-        self.sentiment = SentimentPipeline(
-            use_transformer=self.config.get('ai', {}).get('use_transformer', False),
+        self.sentiment = _registry.register(
+            'sentiment',
+            lambda: SentimentPipeline(
+                use_transformer=self.config.get('ai', {}).get('use_transformer', False),
+            ),
+            critical=False,
         )
 
         # Robinhood Integration (optional for live trading)
@@ -1773,6 +1841,37 @@ class TradingExecutor:
 
     def _check_active_stops(self, current_prices: Dict[str, float]):
         """Scans for stop-loss, take-profit, or partial exit triggers."""
+        # Update trailing stops before checking hard stop/TP levels
+        try:
+            if (hasattr(self, 'profit_protector') and self.profit_protector and
+                    hasattr(self.profit_protector, 'update_trailing_stop')):
+                open_positions = getattr(self.risk_manager, 'open_positions', {})
+                for asset, record in open_positions.items():
+                    current_price = current_prices.get(asset)
+                    if current_price is None:
+                        continue
+                    _updated_sl = getattr(record, 'stop_loss', 0.0) or 0.0
+                    try:
+                        # Estimate ATR as 2% of price if not available from features
+                        _atr = current_price * 0.02
+                        _new_sl = self.profit_protector.update_trailing_stop(
+                            asset=asset,
+                            current_price=current_price,
+                            direction=record.direction,
+                            entry_price=record.entry_price,
+                            atr=_atr,
+                            trail_atr_mult=1.5
+                        )
+                        # Only move stop in favorable direction (never widen stop)
+                        if record.direction > 0 and _new_sl > _updated_sl:
+                            record.stop_loss = _new_sl
+                        elif record.direction < 0 and _new_sl < _updated_sl:
+                            record.stop_loss = _new_sl
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # DynamicRiskManager now holds the check_all_stops logic
         triggers = self.risk_manager.check_all_stops(current_prices)
         for t in triggers:
@@ -1826,8 +1925,16 @@ class TradingExecutor:
         if res.success:
             pnl = (res.executed_price - record.entry_price) * record.size * record.direction
             return_pct = ((res.executed_price - record.entry_price) / record.entry_price * 100) * record.direction
-            
+
             self.risk_manager.close_position(asset, res.executed_price)
+
+            # Clean up trailing stop tracking when position is closed
+            try:
+                if hasattr(self, 'profit_protector') and hasattr(self.profit_protector, 'reset_trail'):
+                    self.profit_protector.reset_trail(asset)
+            except Exception:
+                pass
+
             self.journal.close_trade(
                 order_id=record.order_id,
                 exit_price=res.executed_price,

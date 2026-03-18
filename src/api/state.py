@@ -5,7 +5,18 @@ from datetime import datetime
 import threading
 import time
 
-STATE_FILE = "logs/dashboard_state.json"
+# Use centralized path management; fall back to legacy in-repo path for backward compatibility
+try:
+    from src.core.paths import DASHBOARD_STATE_FILE as _DASHBOARD_STATE_FILE
+    _state_path = str(_DASHBOARD_STATE_FILE)
+    # If new path doesn't exist but old path does, prefer old path during transition
+    _legacy_path = "logs/dashboard_state.json"
+    if not _DASHBOARD_STATE_FILE.exists() and os.path.exists(_legacy_path):
+        _state_path = _legacy_path
+except Exception:
+    _state_path = "logs/dashboard_state.json"
+
+STATE_FILE = _state_path
 
 # Default state template (never written directly — only merged)
 _DEFAULT_STATE = {
