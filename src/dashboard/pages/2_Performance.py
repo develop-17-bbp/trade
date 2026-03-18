@@ -227,7 +227,21 @@ equity_curve = state.get("portfolio", {}).get("equity_curve", [])
 daily_pnls = compute_daily_pnl_series(equity_curve)
 
 today_str = datetime.now().strftime("%Y-%m-%d")
-today_pnl = daily_pnls.get(today_str, 0.0)
+_equity_today_pnl = daily_pnls.get(today_str, 0.0)
+
+# If equity curve has ≤1 entry today (no intraday change measurable),
+# fall back to realized P&L from journal for today's gauge
+_journal_closed = [t for t in journal if isinstance(t, dict) and (
+    t.get('status') == 'CLOSED' or
+    ('exit_price' in t and t.get('exit_price') and t.get('status') != 'OPEN')
+)]
+_journal_today_realized = sum(
+    t.get('pnl', 0) for t in _journal_closed
+    if str(t.get('exit_time') or t.get('timestamp', ''))[:10] == today_str
+)
+_eq_today_entries = [e for e in equity_curve if str(e.get('t', ''))[:10] == today_str]
+# Use equity-based P&L only if we have 2+ data points (meaningful change); else use journal realized
+today_pnl = _equity_today_pnl if len(_eq_today_entries) >= 2 else _journal_today_realized
 
 col_gauge, col_cards = st.columns([1, 1])
 with col_gauge:
