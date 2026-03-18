@@ -154,7 +154,7 @@ class TradingJournal:
         self._save_journal()
         logger.info(f"Journaled {side} trade for {asset} (Order: {order_id}) - Audit Trail Saved.")
 
-    def close_trade(self, order_id: str, exit_price: float, pnl: float):
+    def close_trade(self, order_id: str, exit_price: float, pnl: float, reason: str = ""):
         """Update existing trade with exit data."""
         for entry in self.trades:
             if entry["order_id"] == order_id:
@@ -162,6 +162,8 @@ class TradingJournal:
                 entry["exit_price"] = exit_price
                 entry["exit_time"] = datetime.now().isoformat()
                 entry["pnl"] = pnl
+                if reason:
+                    entry["reason"] = reason
                 # Calculate R-Multiple
                 try:
                     entry["return_pct"] = (exit_price - entry["price"]) / entry["price"] if entry["side"] == "buy" else (entry["price"] - exit_price) / entry["price"]

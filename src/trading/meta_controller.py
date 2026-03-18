@@ -239,8 +239,9 @@ class MetaController:
         position_scale = min(position_scale, evt_position_scale)
 
         # ── Agent Intelligence Overlay ──
-        # Fix #5: if risk layer vetoed (position_scale<=0), skip agent blending entirely
-        if position_scale <= 0:
+        # Fix #5: if risk layer vetoed (position_scale<=0) AND we had a directional signal,
+        # skip agent blending. But if final_class==0 (weak signal), just return FLAT normally.
+        if position_scale <= 0 and final_class != 0:
             logger.info("[META] Risk veto active — skipping agent overlay")
             return (0, 0.0, 0.0)
 
