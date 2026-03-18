@@ -71,6 +71,10 @@ class DynamicRiskManager:
         # Recovery mode
         self.recovery_mode = False
         self.recovery_multiplier = 0.5  # Reduce risk by 50% in recovery
+
+        # Change 8: Drawdown halt tracking (mirrors peak_capital for check_halt_conditions)
+        self._peak_equity: Optional[float] = None
+        self._initial_capital: float = initial_capital
         
         # Trade & Position monitoring (Phase 5: Pro Monitoring)
         self.open_positions: Dict[str, TradeRecord] = {}
@@ -504,6 +508,36 @@ class DynamicRiskManager:
             "active_breakers": len(active_breakers),
             "timestamp": datetime.now().isoformat()
         }
+
+    def check_halt_conditions(self, current_equity: float, daily_pnl: float) -> tuple:
+        """
+        Returns (should_halt: bool, reason: str, severity: str)
+        severity: 'CAUTION' | 'PAUSE' | 'HALT'
+        Call this every bar in the main trading loop.
+        """
+        # Track peak equity
+        if self._peak_equity is None or current_equity > self._peak_equity:
+            self._peak_equity = current_equity
+
+        drawdown_pct = (self._peak_equity - current_equity) / max(self._peak_equity, 1e-10)
+        daily_loss_pct = abs(daily_pnl) / max(self._initial_capital, 1e-10) if daily_pnl < 0 else 0.0
+
+        if drawdown_pct >= getattr(self, 'max_drawdown_limit_pct', self.risk_limits.max_drawdown_limit_pct if hasattr(self, 'risk_limits') else 0.10):
+            return True, f"Max drawdown {drawdown_pct:.1%} hit", "HALT"
+
+        if daily_loss_pct >= getattr(self, 'kill_switch_daily_loss_pct', self.risk_limits.kill_switch_daily_loss_pct if hasattr(self, 'risk_limits') else 0.04):
+            return True, f"Daily kill switch {daily_loss_pct:.1%} triggered", "HALT"
+
+        # Progressive tightening
+        _max_dd = self.risk_limits.max_drawdown_limit_pct if hasattr(self, 'risk_limits') else 0.10
+        _max_daily = self.risk_limits.kill_switch_daily_loss_pct if hasattr(self, 'risk_limits') else 0.04
+        caution_dd = _max_dd * 0.50
+        caution_daily = _max_daily * 0.50
+
+        if drawdown_pct >= caution_dd or daily_loss_pct >= caution_daily:
+            return False, f"Caution: dd={drawdown_pct:.1%} daily_loss={daily_loss_pct:.1%}", "CAUTION"
+
+        return False, "OK", "OK"
 
     def reset_daily_pnl(self):
         """Reset daily P&L tracking (call at market open)."""

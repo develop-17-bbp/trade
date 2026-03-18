@@ -17,8 +17,21 @@ import hashlib
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-JOURNAL_FILE = "logs/trading_journal.json"
-ENCRYPTED_JOURNAL_FILE = "logs/trading_journal.enc"
+# Use centralized path management; fall back to legacy in-repo paths for backward compatibility
+try:
+    from src.core.paths import TRADING_JOURNAL_FILE as _JOURNAL_ENC_PATH, get_log_path as _get_log_path
+    ENCRYPTED_JOURNAL_FILE = str(_JOURNAL_ENC_PATH)
+    JOURNAL_FILE = str(_get_log_path("trading_journal.json"))
+    # During transition: if old path exists but new path doesn't, use old path
+    _legacy_enc = "logs/trading_journal.enc"
+    _legacy_plain = "logs/trading_journal.json"
+    if not _JOURNAL_ENC_PATH.exists() and os.path.exists(_legacy_enc):
+        ENCRYPTED_JOURNAL_FILE = _legacy_enc
+    if not _get_log_path("trading_journal.json").exists() and os.path.exists(_legacy_plain):
+        JOURNAL_FILE = _legacy_plain
+except Exception:
+    JOURNAL_FILE = "logs/trading_journal.json"
+    ENCRYPTED_JOURNAL_FILE = "logs/trading_journal.enc"
 
 
 def _get_encryption_key() -> Optional[bytes]:
@@ -75,7 +88,9 @@ class TradingJournal:
         self.trades = self._load_journal()
 
     def _ensure_log_dir(self):
-        os.makedirs("logs", exist_ok=True)
+        # Ensure both the new runtime dir and legacy dir exist
+        os.makedirs(os.path.dirname(os.path.abspath(JOURNAL_FILE)), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(ENCRYPTED_JOURNAL_FILE)), exist_ok=True)
 
     def _load_journal(self) -> List[Dict]:
         # Try encrypted file first
