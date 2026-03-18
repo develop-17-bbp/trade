@@ -335,6 +335,20 @@ def main():
                     if hasattr(executor, 'strategy') and hasattr(executor.strategy, 'risk_manager'):
                         executor.strategy.risk_manager.reset_daily()
                     logger.info("[SCHEDULER] Daily P&L reset at 00:00 UTC")
+
+                    # ── Re-anchor SOD balance from exchange at midnight ──
+                    # This ensures today_pnl on ALL devices resets to 0 at the
+                    # same time using the same Binance account balance as the anchor.
+                    try:
+                        from src.api.state import DashboardState
+                        _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        _bal = executor.price_source.get_balance() if hasattr(executor, 'price_source') else {}
+                        _usdt = _bal.get('free', {}).get('USDT', 0.0) if 'error' not in _bal else 0.0
+                        if _usdt > 0:
+                            DashboardState().set_sod_balance(_usdt, _today)
+                            logger.info(f"[SCHEDULER] SOD balance reset: ${_usdt:,.2f} USDT ({_today})")
+                    except Exception as _sod_e:
+                        logger.warning(f"[SCHEDULER] SOD balance reset failed: {_sod_e}")
                     # Weekly reset on Mondays
                     if datetime.now(timezone.utc).weekday() == 0:
                         executor.risk_manager.reset_weekly_pnl()

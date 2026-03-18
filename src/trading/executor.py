@@ -414,6 +414,26 @@ class TradingExecutor:
                     self.risk_manager.initial_capital = usdt_free
                     self.risk_manager.current_capital = usdt_free
                     self.risk_manager.peak_capital = usdt_free
+
+                # ── SOD (Start-of-Day) Balance Anchor ──
+                # Fetch the canonical today-P&L anchor from the exchange.
+                # Using the live balance here means ALL devices with the same
+                # Binance testnet key see the same sod_balance → same today P&L.
+                try:
+                    from src.api.state import DashboardState
+                    _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    _ds = DashboardState()
+                    _existing_sod = _ds.get_full_state().get("portfolio", {}).get("sod_date", "")
+                    if _existing_sod != _today_str:
+                        # New day (or first run) — set SOD from live exchange balance
+                        _sod_val = usdt_free if usdt_free > 0 else self.initial_capital
+                        _ds.set_sod_balance(_sod_val, _today_str)
+                        _safe_print(f"  📅 SOD balance anchored: ${_sod_val:,.2f} USDT ({_today_str})")
+                    else:
+                        _safe_print(f"  📅 SOD already set for {_today_str}")
+                except Exception as _sod_err:
+                    logger.warning(f"[SOD] Failed to set SOD balance: {_sod_err}")
+
                 _safe_print(f"\n  💰 Reference Capital: ${self.initial_capital:,.2f} USDT")
             else:
                 is_invalid_creds = balance.get('invalid_credentials', False)
@@ -930,7 +950,13 @@ class TradingExecutor:
             try:
                 from src.api.state import DashboardState
                 pnl_abs = total_portfolio_value - self.initial_capital
-                DashboardState().update_portfolio(pnl=pnl_abs, asset_return=total_return_pct)
+                # Pass current_total_value so today_pnl = current_total_value - sod_balance
+                # is computed device-independently from exchange data (not local equity curve)
+                DashboardState().update_portfolio(
+                    pnl=pnl_abs,
+                    asset_return=total_return_pct,
+                    current_total_value=total_portfolio_value,
+                )
             except: pass
 
             _trades_today = getattr(self.strategy, 'risk_manager', None)
