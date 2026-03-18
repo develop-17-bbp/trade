@@ -5,7 +5,10 @@ from datetime import datetime
 import threading
 import time
 
-STATE_FILE = "logs/dashboard_state.json"
+# Resolve state file relative to project root so dashboard and executor always use the same file
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
+STATE_FILE = os.path.join(_PROJECT_ROOT, "logs", "dashboard_state.json")
 
 # Default state template (never written directly — only merged)
 _DEFAULT_STATE = {
@@ -212,6 +215,7 @@ class DashboardState:
                 "t": datetime.now().isoformat(),
                 "v": pnl
             })
+            s["last_update"] = datetime.now().isoformat()
         self._read_modify_write(_mod)
 
     def set_memory_hits(self, hits: List[Dict]):
@@ -353,6 +357,7 @@ class DashboardState:
         """Push computed benchmark metrics (win_rate, sharpe, etc)."""
         def _mod(s):
             s["performance"] = metrics
+            s["last_update"] = datetime.now().isoformat()
         self._read_modify_write(_mod)
 
     def update_agent_overlay(self, agent_data: Dict[str, Any]):
