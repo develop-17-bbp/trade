@@ -227,10 +227,17 @@ equity_curve = state.get("portfolio", {}).get("equity_curve", [])
 daily_pnls = compute_daily_pnl_series(equity_curve)
 
 today_str = datetime.now().strftime("%Y-%m-%d")
-_equity_today_pnl = daily_pnls.get(today_str, 0.0)
 
-# If equity curve has ≤1 entry today (no intraday change measurable),
-# fall back to realized P&L from journal for today's gauge
+# ── Today P&L — exchange-authoritative (device-independent) ──
+# Priority 1: today_pnl from state (= current_total_value - sod_balance, both from exchange)
+#             This is the same on every device sharing the same Binance account.
+# Priority 2: equity curve diff (local, varies per device — fallback only)
+# Priority 3: realized journal P&L (closed trades only)
+_portfolio = state.get("portfolio", {})
+_sod_balance = _portfolio.get("sod_balance")        # set by executor at midnight UTC
+_sod_date    = _portfolio.get("sod_date", "")
+_state_today_pnl = _portfolio.get("today_pnl")      # recomputed each bar: current_total - sod
+
 _journal_closed = [t for t in journal if isinstance(t, dict) and (
     t.get('status') == 'CLOSED' or
     ('exit_price' in t and t.get('exit_price') and t.get('status') != 'OPEN')
@@ -240,8 +247,20 @@ _journal_today_realized = sum(
     if str(t.get('exit_time') or t.get('timestamp', ''))[:10] == today_str
 )
 _eq_today_entries = [e for e in equity_curve if str(e.get('t', ''))[:10] == today_str]
-# Use equity-based P&L only if we have 2+ data points (meaningful change); else use journal realized
-today_pnl = _equity_today_pnl if len(_eq_today_entries) >= 2 else _journal_today_realized
+_equity_today_pnl = daily_pnls.get(today_str, 0.0)
+
+if _sod_balance is not None and _sod_date == today_str and _state_today_pnl is not None:
+    # Best: exchange-derived, resets at midnight UTC, identical on all devices
+    today_pnl = _state_today_pnl
+    _pnl_source = f"Exchange (SOD ${_sod_balance:,.0f})"
+elif len(_eq_today_entries) >= 2:
+    # Fallback: local equity curve diff (device-specific, consistent within one device)
+    today_pnl = _equity_today_pnl
+    _pnl_source = "Equity Curve (local)"
+else:
+    # Last resort: closed-trade realized P&L from journal
+    today_pnl = _journal_today_realized
+    _pnl_source = "Journal (realized)"
 
 col_gauge, col_cards = st.columns([1, 1])
 with col_gauge:
@@ -250,7 +269,7 @@ with col_gauge:
         number={"prefix": "$", "font": {"size": 36, "color": "#fff"}},
         delta={"reference": daily_target, "relative": False, "prefix": "$",
                "increasing": {"color": "#22c55e"}, "decreasing": {"color": "#ef4444"}},
-        title={"text": f"Today's P&L vs ${daily_target:,.0f} Target", "font": {"size": 14, "color": "#8b8ba7"}},
+        title={"text": f"Today's P&L vs ${daily_target:,.0f} Target  [{_pnl_source}]", "font": {"size": 13, "color": "#8b8ba7"}},
         gauge={
             "axis": {"range": [min(-daily_target, today_pnl * 1.2 if today_pnl < 0 else 0),
                                max(daily_target * 2, today_pnl * 1.2)],
