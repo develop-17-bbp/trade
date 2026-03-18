@@ -388,7 +388,7 @@ def render_section_daily_target(state: dict, config: dict):
             },
         ))
         gauge.update_layout(**_plotly_layout(height=280))
-        st.plotly_chart(gauge, use_container_width=True)
+        st.plotly_chart(gauge, width="stretch")
 
     with col_cards:
         # Compute streak and stats
@@ -458,7 +458,7 @@ def render_section_daily_target(state: dict, config: dict):
             title="30-Day P&L vs 1% Target", height=300,
             xaxis_title="Date", yaxis_title="P&L ($)",
         ))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info("Awaiting equity curve data to display daily P&L history.")
 
@@ -548,7 +548,7 @@ def render_section_model_accuracy(state: dict):
                             margin=dict(l=180, r=20, t=40, b=20),
                             xaxis=dict(tickformat=".0%", range=[0, 1]),
                         ))
-                        st.plotly_chart(fig_lb, use_container_width=True)
+                        st.plotly_chart(fig_lb, width="stretch")
 
                     # ── Rolling Accuracy ──
                     if len(preds) >= 50:
@@ -567,7 +567,7 @@ def render_section_model_accuracy(state: dict):
                                 title="Rolling 50-Prediction Accuracy", height=220,
                                 yaxis=dict(tickformat=".0%", range=[0.3, 0.8]),
                             ))
-                            st.plotly_chart(fig_roll, use_container_width=True)
+                            st.plotly_chart(fig_roll, width="stretch")
 
                     # ── Confusion Matrix ──
                     if len(preds) >= 10:
@@ -584,7 +584,7 @@ def render_section_model_accuracy(state: dict):
                             title="Direction Confusion Matrix", height=220,
                             margin=dict(l=100, r=20, t=40, b=40),
                         ))
-                        st.plotly_chart(fig_cm, use_container_width=True)
+                        st.plotly_chart(fig_cm, width="stretch")
 
                     if total == 0:
                         st.info(f"No predictions recorded yet for {name}. Start the trading system to collect data.")
@@ -676,7 +676,7 @@ def render_section_ensemble(state: dict):
             title="Ensemble vs Individual Model Accuracy", height=320,
             yaxis=dict(tickformat=".0%", range=[0, 1]),
         ))
-        st.plotly_chart(fig_compare, use_container_width=True)
+        st.plotly_chart(fig_compare, width="stretch")
 
     with col_agree:
         # Signal agreement analysis
@@ -730,7 +730,7 @@ def render_section_ensemble(state: dict):
                 title="Accuracy by Model Agreement Level", height=320,
                 yaxis=dict(tickformat=".0%", range=[0, 1]),
             ))
-            st.plotly_chart(fig_agree, use_container_width=True)
+            st.plotly_chart(fig_agree, width="stretch")
         else:
             st.info("Need 10+ ensemble predictions for agreement analysis.")
 
@@ -754,7 +754,7 @@ def render_section_ensemble(state: dict):
                 fig_s.add_hline(y=1, line_dash="dot", line_color="#00ff9d",
                                 annotation_text="Good (1.0)", annotation_font_size=10)
                 fig_s.update_layout(**_plotly_layout(title="Rolling Sharpe Ratio", height=280))
-                st.plotly_chart(fig_s, use_container_width=True)
+                st.plotly_chart(fig_s, width="stretch")
 
         with col_dd:
             dd = compute_drawdown(eq_vals)
@@ -769,7 +769,7 @@ def render_section_ensemble(state: dict):
                     title="Drawdown (%)", height=280,
                     yaxis=dict(ticksuffix="%"),
                 ))
-                st.plotly_chart(fig_dd, use_container_width=True)
+                st.plotly_chart(fig_dd, width="stretch")
 
     # ── Radar Chart ──
     try:
@@ -793,7 +793,7 @@ def render_section_ensemble(state: dict):
         fig_radar = bench.generate_radar_chart(our_scores)
         if fig_radar:
             fig_radar.update_layout(**_plotly_layout(title="Multi-Metric Performance Radar", height=400))
-            st.plotly_chart(fig_radar, use_container_width=True)
+            st.plotly_chart(fig_radar, width="stretch")
     except Exception:
         pass
 
@@ -883,7 +883,7 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                     'Last Trained': m['modified'],
                 })
             inv_df = pd.DataFrame(inv_data)
-            st.dataframe(inv_df, use_container_width=True, hide_index=True, height=250)
+            st.dataframe(inv_df, width="stretch", hide_index=True, height=250)
         else:
             st.info("No trained models found in models/ directory.")
 
@@ -903,7 +903,7 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                 title="Feature Importance (Top 10)", height=280,
                 margin=dict(l=140, r=20, t=40, b=40),
             ))
-            st.plotly_chart(fig_fi, use_container_width=True)
+            st.plotly_chart(fig_fi, width="stretch")
         else:
             st.info("Feature importance not available. Run training to generate.")
 
@@ -940,7 +940,7 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                 title="Training Accuracy Over Time", height=320,
                 yaxis=dict(tickformat=".0%", range=[0.3, 0.8]),
             ))
-            st.plotly_chart(fig_acc, use_container_width=True)
+            st.plotly_chart(fig_acc, width="stretch")
         else:
             # Fallback: benchmark history
             history = load_benchmark_history()
@@ -957,7 +957,7 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                     title="Benchmark History", height=320,
                     yaxis=dict(tickformat=".0%"),
                 ))
-                st.plotly_chart(fig_bh, use_container_width=True)
+                st.plotly_chart(fig_bh, width="stretch")
             else:
                 st.info("No training history yet. Run continuous training to populate.")
 
@@ -1001,7 +1001,7 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                     xaxis=dict(tickformat=".0%", title="Predicted Confidence"),
                     yaxis=dict(tickformat=".0%", title="Actual Win Rate", range=[0, 1]),
                 ))
-                st.plotly_chart(fig_cal, use_container_width=True)
+                st.plotly_chart(fig_cal, width="stretch")
             else:
                 st.info("Insufficient closed trades for calibration plot.")
         else:
@@ -1040,7 +1040,7 @@ def render_section_training(state: dict, fi_df: pd.DataFrame, journal: list):
                     barmode="group",
                     yaxis=dict(tickformat=".0%"),
                 ))
-                st.plotly_chart(fig_asset, use_container_width=True)
+                st.plotly_chart(fig_asset, width="stretch")
 
                 # Training count per asset
                 c_cols = st.columns(len(assets))
@@ -1147,7 +1147,7 @@ def render_section_health(state: dict):
             },
         ))
         fig_lat.update_layout(**_plotly_layout(height=250))
-        st.plotly_chart(fig_lat, use_container_width=True)
+        st.plotly_chart(fig_lat, width="stretch")
 
     with col_risk:
         vpin = float(risk.get("vpin_threshold", 0.8))
@@ -1170,7 +1170,7 @@ def render_section_health(state: dict):
             },
         ))
         fig_risk.update_layout(**_plotly_layout(height=250))
-        st.plotly_chart(fig_risk, use_container_width=True)
+        st.plotly_chart(fig_risk, width="stretch")
 
     # ── Last Update ──
     if last_update:

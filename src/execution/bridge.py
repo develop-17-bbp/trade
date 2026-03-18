@@ -3,6 +3,7 @@ import random
 import mmap
 import os
 import sys
+import tempfile
 import struct
 import logging
 from typing import Dict, Any, Optional
@@ -44,8 +45,11 @@ class FastExecutionBridge:
                 # Windows: anonymous mmap with a named tag (no backing file needed)
                 self.shm = mmap.mmap(-1, self.buf_size, tagname=self.buffer_name)
             else:
-                # Linux/Mac: file-backed shm
-                shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") else "/tmp"
+                # Linux/Mac: file-backed shm (Linux /dev/shm if present, else OS temp dir)
+                if sys.platform == "linux" and os.path.isdir("/dev/shm"):
+                    shm_dir = "/dev/shm"
+                else:
+                    shm_dir = tempfile.gettempdir()
                 self._shm_path = os.path.join(shm_dir, self.buffer_name)
                 with open(self._shm_path, "wb") as f:
                     f.write(b"\0" * self.buf_size)

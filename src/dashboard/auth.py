@@ -45,7 +45,7 @@ def check_auth() -> bool:
 
     with st.form("login_form"):
         entered = st.text_input("Password", type="password", placeholder="Enter dashboard password")
-        submitted = st.form_submit_button("Authenticate", use_container_width=True)
+        submitted = st.form_submit_button("Authenticate", type="primary")
 
         if submitted:
             # Constant-time comparison to prevent timing attacks

@@ -242,7 +242,7 @@ with col_gauge:
         },
     ))
     gauge.update_layout(**plotly_layout(height=280))
-    st.plotly_chart(gauge, use_container_width=True)
+    st.plotly_chart(gauge, width="stretch")
 
 with col_cards:
     sorted_dates = sorted(daily_pnls.keys())
@@ -283,7 +283,7 @@ if last_30:
                   annotation_text=f"1% Target (${daily_target:,.0f})", annotation_font_color="#3b82f6")
     fig.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
     fig.update_layout(**plotly_layout(title="30-Day P&L vs 1% Target", height=300))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 else:
     st.info("Awaiting equity curve data to display daily P&L history.")
 
@@ -351,7 +351,7 @@ for row_start in range(0, 4, 2):
                         title=f"Rank #{our_rank}/{len(combined)}", height=max(200, len(combined) * 30),
                         margin=dict(l=180, r=20, t=40, b=20), xaxis=dict(tickformat=".0%", range=[0, 1]),
                     ))
-                    st.plotly_chart(fig_lb, use_container_width=True)
+                    st.plotly_chart(fig_lb, width="stretch")
 
                 if len(preds) >= 50:
                     rolling = compute_rolling_accuracy(preds, acts, 50)
@@ -360,7 +360,7 @@ for row_start in range(0, 4, 2):
                         fig_roll.add_trace(go.Scatter(y=rolling, mode="lines", line=dict(color=color, width=2), fill="tozeroy"))
                         fig_roll.add_hline(y=0.5, line_dash="dot", line_color="#555")
                         fig_roll.update_layout(**plotly_layout(title="Rolling 50-Prediction Accuracy", height=220, yaxis=dict(tickformat=".0%")))
-                        st.plotly_chart(fig_roll, use_container_width=True)
+                        st.plotly_chart(fig_roll, width="stretch")
 
                 if total == 0:
                     st.info(f"No predictions yet for {name}.")
@@ -416,14 +416,14 @@ if equity_curve and len(equity_curve) > 10:
             fig_s.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_width=1)
             fig_s.add_hline(y=1, line_dash="dot", line_color="#22c55e", annotation_text="Good (1.0)")
             fig_s.update_layout(**plotly_layout(title="Rolling Sharpe Ratio", height=280))
-            st.plotly_chart(fig_s, use_container_width=True)
+            st.plotly_chart(fig_s, width="stretch")
     with col_dd:
         dd = compute_drawdown(eq_vals)
         if dd:
             fig_dd = go.Figure()
             fig_dd.add_trace(go.Scatter(x=eq_times[-len(dd):], y=dd, mode="lines", line=dict(color="#ef4444", width=1.5), fill="tozeroy", fillcolor="rgba(255,77,109,0.15)"))
             fig_dd.update_layout(**plotly_layout(title="Drawdown (%)", height=280, yaxis=dict(ticksuffix="%")))
-            st.plotly_chart(fig_dd, use_container_width=True)
+            st.plotly_chart(fig_dd, width="stretch")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -463,7 +463,7 @@ with col_inv:
         inv_data = []
         for m in model_inv:
             inv_data.append({'Model': m['asset'], 'Size (KB)': m['size_kb'], 'Last Trained': m['modified']})
-        st.dataframe(pd.DataFrame(inv_data), use_container_width=True, hide_index=True, height=250)
+        st.dataframe(pd.DataFrame(inv_data), width="stretch", hide_index=True, height=250)
     else:
         st.info("No trained models found.")
 
@@ -475,7 +475,7 @@ with col_fi:
             marker_color=["#3b82f6" if i < 3 else "#3498db" if i < 6 else "#555" for i in range(len(top_10))][::-1],
         ))
         fig_fi.update_layout(**plotly_layout(title="Feature Importance (Top 10)", height=280, margin=dict(l=140, r=20, t=40, b=40)))
-        st.plotly_chart(fig_fi, use_container_width=True)
+        st.plotly_chart(fig_fi, width="stretch")
     else:
         st.info("Feature importance not available yet.")
 
