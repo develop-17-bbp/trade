@@ -235,6 +235,9 @@ A: Increase min_confidence to 0.70. Or reduce trades/hour to 2.
 **Q: LightGBM error?**  
 A: Run `pip install lightgbm scikit-learn`
 
+**Q: Segmentation fault on startup (e.g. after "META-LEARNING Model loaded")?**  
+A: Crash is often in OpenMP (`libomp.dylib`) when multiple copies load (LightGBM, scikit-learn, PyTorch). The app now sets `OMP_NUM_THREADS=1` on macOS before any libs load to avoid this. If it still crashes: in `config.yaml` under `ai:` set `use_lightgbm: false` and `use_patch_tst: false`. You can also run with `OMP_NUM_THREADS=1 python -m src.main --mode testnet`.
+
 **Q: Can't reach 55% after Step 4?**  
 A: See PRODUCTION_READINESS_GUIDE.md for premium data integration.
 

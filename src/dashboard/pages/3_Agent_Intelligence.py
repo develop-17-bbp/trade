@@ -235,7 +235,7 @@ if agent_votes:
         fig_pie.update_layout(**plotly_layout(
             title=f"Vote Distribution ({total_agents} agents)", height=300,
         ))
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie, width="stretch")
 
     with col_bar:
         # Weighted confidence by direction
@@ -258,7 +258,7 @@ if agent_votes:
             title="Weighted Probability (Bayesian)", height=300,
             yaxis=dict(tickformat=".0%", range=[0, 1]),
         ))
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width="stretch")
 
 
 # ═══ AGENT WEIGHTS ═══
@@ -281,7 +281,7 @@ if agent_weights:
         xaxis=dict(tickangle=-45),
         yaxis=dict(range=[0, max(weights) * 1.3] if weights else [0, 3]),
     ))
-    st.plotly_chart(fig_weights, use_container_width=True)
+    st.plotly_chart(fig_weights, width="stretch")
 
 
 # ═══ LOSS PREVENTION DASHBOARD ═══
@@ -330,7 +330,7 @@ fig_mode = go.Figure(go.Indicator(
     },
 ))
 fig_mode.update_layout(**plotly_layout(height=250))
-st.plotly_chart(fig_mode, use_container_width=True)
+st.plotly_chart(fig_mode, width="stretch")
 
 # Mode description table
 st.markdown("""

@@ -41,9 +41,7 @@ from src.monitoring.event_guard import MarketEventGuard
 from src.data.microstructure import MicrostructureAnalyzer
 from src.trading.advanced_backtest import AdvancedSimulator
 
-# Institutional Institutional Components
-from src.models.lightgbm_classifier import LightGBMClassifier
-from src.ai.patchtst_model import PatchTSTClassifier
+# Institutional Components (optional: can be disabled via config to avoid native lib segfaults)
 from src.risk.vpin_guard import VPINGuard
 from infra.signal_stream import SignalStreamAgent
 from testing.chaos_engine import ChaosEngine
@@ -153,10 +151,25 @@ class TradingExecutor:
         self.agentic_bias = 0.0
         self.iteration_count = 0
 
-        # Institutional Ensemble Engines
-        self.lgbm = LightGBMClassifier(self.config)
-        # self.rl_agent is already initialized above
-        self.patch_tst = PatchTSTClassifier()
+        # Institutional Ensemble Engines (default off to avoid segfault on Python 3.14 / ARM; set ai.use_lightgbm/use_patch_tst: true to enable)
+        _use_lgbm = self.config.get('ai', {}).get('use_lightgbm', False)
+        _use_patch_tst = self.config.get('ai', {}).get('use_patch_tst', False)
+        self.lgbm = None
+        self.patch_tst = None
+        if _use_lgbm:
+            try:
+                from src.models.lightgbm_classifier import LightGBMClassifier
+                self.lgbm = LightGBMClassifier(self.config)
+            except Exception as e:
+                _safe_print(f"  [WARN] LightGBM disabled: {e}")
+        if _use_patch_tst:
+            try:
+                from src.ai.patchtst_model import PatchTSTClassifier
+                self.patch_tst = PatchTSTClassifier()
+            except Exception as e:
+                _safe_print(f"  [WARN] PatchTST disabled: {e}")
+        if not _use_lgbm or not _use_patch_tst:
+            _safe_print("  [ML] LightGBM/PatchTST disabled by default (set ai.use_lightgbm & ai.use_patch_tst: true in config to enable).")
         
         # Risk & Compliance Infrastructure
         self.vpin = VPINGuard(bucket_size=5.0, threshold=0.75) # 5 BTC buckets
@@ -1409,14 +1422,20 @@ class TradingExecutor:
                 time_of_day=time.localtime().tm_hour,
                 day_of_week=time.localtime().tm_wday
             )
-            rl_action_obj = self.rl_agent.select_action(m_state) 
-            ptst_res = self.patch_tst.predict(prices)
+            rl_action_obj = self.rl_agent.select_action(m_state)
+            if self.patch_tst:
+                ptst_res = self.patch_tst.predict(prices)
+            else:
+                ptst_res = {'prob_up': 0.5, 'prob_shock': 0.0, 'regime': 'NEUTRAL'}
             
             # Map RL action to probability-like score
             rl_score = 0.8 if rl_action_obj.action_type == "BUY" else (0.2 if rl_action_obj.action_type == "SELL" else 0.5)
             
-            # Ensemble Consensus (3-Way Voting)
-            ensemble_confidence = (l1_score + ptst_res['prob_up'] + rl_score) / 3
+            # Ensemble Consensus (3-Way Voting; use 2-way if PatchTST disabled)
+            if self.patch_tst:
+                ensemble_confidence = (l1_score + ptst_res['prob_up'] + rl_score) / 3
+            else:
+                ensemble_confidence = (l1_score + rl_score) / 2
 
             # ═══ AGENT INTELLIGENCE OVERLAY: Blend into ensemble ═══
             agentic_enhanced_dict = None

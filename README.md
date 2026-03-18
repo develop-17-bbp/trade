@@ -744,14 +744,16 @@ trade/
 
 ## Quick Start
 
+**Supported platforms:** Windows, macOS (Intel & Apple Silicon), and Linux. The same commands work everywhere; only the venv activation step differs by OS.
+
 ### 1. Environment Setup
 
 ```bash
-python -m venv venv
+python -m venv .venv
 # Windows:
-.\venv\Scripts\activate
+.\.venv\Scripts\activate
 # Linux/Mac:
-source venv/bin/activate
+source .venv/bin/activate
 
 pip install -r requirements.txt
 ```
