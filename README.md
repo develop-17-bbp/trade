@@ -744,7 +744,7 @@ trade/
 
 ## Quick Start
 
-**Supported platforms:** Windows, macOS (Intel & Apple Silicon), and Linux. The same commands work everywhere; only the venv activation step differs by OS.
+**Supported platforms:** Windows, macOS (Intel & Apple Silicon), and Linux. **Python 3.11+** is required (CI uses 3.12). The same commands work everywhere; only the venv activation step differs by OS.
 
 ### 1. Environment Setup
 
