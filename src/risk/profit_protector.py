@@ -266,16 +266,60 @@ class ProfitProtector:
     def generate_breakeven_stop(self, entry_price: float, slippage_bps: int = 10) -> float:
         """
         Generate a stop loss that protects entry (breakeven + tiny margin).
-        
+
         Args:
             entry_price: Entry price
             slippage_bps: Slippage in basis points (10 = 0.1%)
-        
+
         Returns:
             Stop loss price that locks breakeven
         """
         slippage_pct = slippage_bps / 10000.0
         return entry_price * (1.0 - slippage_pct)
+
+    def update_trailing_stop(self, asset: str, current_price: float, direction: int,
+                              entry_price: float, atr: float, trail_atr_mult: float = 1.5) -> float:
+        """
+        Computes an updated trailing stop level.
+        For LONG: trail stop = max(ever_seen_high - trail_atr_mult * ATR, entry_price - 1.0 * ATR)
+        For SHORT: trail stop = min(ever_seen_low + trail_atr_mult * ATR, entry_price + 1.0 * ATR)
+
+        Returns: new stop-loss price (float)
+        """
+        if not hasattr(self, '_trail_highs'):
+            self._trail_highs: dict = {}
+            self._trail_lows: dict = {}
+
+        trail_distance = trail_atr_mult * atr
+
+        if direction > 0:  # LONG
+            # Track highest price seen since entry
+            prev_high = self._trail_highs.get(asset, entry_price)
+            new_high = max(prev_high, current_price)
+            self._trail_highs[asset] = new_high
+            # Trail stop: high - trail_distance (but never below entry - 1 ATR)
+            new_stop = new_high - trail_distance
+            floor_stop = entry_price - atr  # Minimum protection floor
+            return max(new_stop, floor_stop)
+
+        elif direction < 0:  # SHORT
+            # Track lowest price seen since entry
+            prev_low = self._trail_lows.get(asset, entry_price)
+            new_low = min(prev_low, current_price)
+            self._trail_lows[asset] = new_low
+            # Trail stop: low + trail_distance (but never above entry + 1 ATR)
+            new_stop = new_low + trail_distance
+            ceiling_stop = entry_price + atr
+            return min(new_stop, ceiling_stop)
+
+        return entry_price  # Flat/unknown direction
+
+    def reset_trail(self, asset: str) -> None:
+        """Call when a position is closed to clean up trail tracking."""
+        if hasattr(self, '_trail_highs'):
+            self._trail_highs.pop(asset, None)
+        if hasattr(self, '_trail_lows'):
+            self._trail_lows.pop(asset, None)
 
 
 class LossAversionFilter:

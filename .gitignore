@@ -1,5 +1,39 @@
+# ── Python ──
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# ── Secrets ──
 .env
+.env.*
+*.env
+
+# ── Runtime Data (now stored in ~/.trade/) ──
+logs/*
+!logs/.gitkeep
+data/
+memory/
+models/*.txt
+models/*.pt
+models/*.pkl
+models/*.json
+
+# ── Databases ──
+*.db
+*.sqlite
+*.sqlite3
+
+# ── OS ──
 .DS_Store
+Thumbs.db
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp

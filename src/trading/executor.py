@@ -7,6 +7,8 @@ from typing import Dict, Optional, List, Any, Tuple
 from dataclasses import asdict, dataclass
 from dotenv import load_dotenv
 
+from src.core.component import ComponentSandbox, ComponentRegistry
+
 # Load environment variables
 load_dotenv()
 
@@ -90,63 +92,117 @@ class TradingExecutor:
             _safe_print("  [SECURITY WARNING] Shared keys mean a mode misconfiguration could trade real funds.")
 
         exchange_cfg = self.config.get('exchange', {})
-        self.price_source = PriceFetcher(
-            exchange_name=exchange_cfg.get('name', 'binance'),
-            testnet=use_testnet,
+        _registry = ComponentRegistry.get()
+
+        # price_source is critical — system cannot run without real-time price data
+        self.price_source = _registry.register(
+            'price_source',
+            lambda: PriceFetcher(
+                exchange_name=exchange_cfg.get('name', 'binance'),
+                testnet=use_testnet,
+            ),
+            critical=True,
         )
         if not self.price_source.is_available:
             raise RuntimeError(
                 "[FATAL] Exchange not available. Real-time data is required. "
                 "Ensure CCXT is installed and Binance API is accessible."
             )
-        self.news = NewsFetcher(
-            newsapi_key=os.environ.get('NEWSAPI_KEY'),
-            cryptopanic_token=os.environ.get('CRYPTOPANIC_TOKEN'),
+        self.news = _registry.register(
+            'news',
+            lambda: NewsFetcher(
+                newsapi_key=os.environ.get('NEWSAPI_KEY'),
+                cryptopanic_token=os.environ.get('CRYPTOPANIC_TOKEN'),
+            ),
+            critical=False,
         )
-        self.institutional = InstitutionalFetcher()
-        self.on_chain = OnChainFetcher()
+        self.institutional = _registry.register(
+            'institutional', lambda: InstitutionalFetcher(), critical=False
+        )
+        self.on_chain = _registry.register(
+            'on_chain', lambda: OnChainFetcher(), critical=False
+        )
         self.on_chain_portfolio = OnChainPortfolioManager()
-        self.free_data = FreeDataAggregator()  # Free data sources (Fear/Greed, IV, etc.)
+        self.free_data = _registry.register(
+            'free_data', lambda: FreeDataAggregator(), critical=False
+        )  # Free data sources (Fear/Greed, IV, etc.)
         _ai_cfg = self.config.get('ai', {})
         _prov = _ai_cfg.get('reasoning_provider', 'auto')
         _model = _ai_cfg.get('reasoning_model', 'mistral')
 
-        self.strategist = AgenticStrategist(
-            provider=_prov,
-            model=_model,
-            use_local_on_failure=_ai_cfg.get('use_local_on_failure', True)
+        self.strategist = _registry.register(
+            'strategist',
+            lambda: AgenticStrategist(
+                provider=_prov,
+                model=_model,
+                use_local_on_failure=_ai_cfg.get('use_local_on_failure', True)
+            ),
+            critical=False,
         )
-        
+
         # Phase 6: Advanced Learning Engine
-        self.advanced_learning = AdvancedLearningEngine(
-            meta_model_path=self.config.get('models_path', 'models') + "/meta_learning_model.json"
+        self.advanced_learning = _registry.register(
+            'advanced_learning',
+            lambda: AdvancedLearningEngine(
+                meta_model_path=self.config.get('models_path', 'models') + "/meta_learning_model.json"
+            ),
+            critical=False,
         )
-        self.rl_agent = ReinforcementLearningAgent(
-            learning_rate=self.config.get('rl', {}).get('learning_rate', 0.001),
-            gamma=self.config.get('rl', {}).get('gamma', 0.99)
+        self.rl_agent = _registry.register(
+            'rl_agent',
+            lambda: ReinforcementLearningAgent(
+                learning_rate=self.config.get('rl', {}).get('learning_rate', 0.001),
+                gamma=self.config.get('rl', {}).get('gamma', 0.99)
+            ),
+            critical=False,
         )
-        self.adaptive_algo = AdaptiveAlgorithmLayer()
-        
+        self.adaptive_algo = _registry.register(
+            'adaptive_algo', lambda: AdaptiveAlgorithmLayer(), critical=False
+        )
+
         # Phase 5: Autonomous Trading Components
-        self.portfolio_allocator = PortfolioAllocator(
-            total_capital=self.initial_capital,
-            max_allocation_pct=self.config.get('portfolio', {}).get('max_allocation_pct', 0.05)
+        self.portfolio_allocator = _registry.register(
+            'portfolio_allocator',
+            lambda: PortfolioAllocator(
+                total_capital=self.initial_capital,
+                max_allocation_pct=self.config.get('portfolio', {}).get('max_allocation_pct', 0.05)
+            ),
+            critical=False,
         )
-        self.portfolio_hedger = PortfolioHedger()
+        self.portfolio_hedger = _registry.register(
+            'portfolio_hedger', lambda: PortfolioHedger(), critical=False
+        )
         self.health_checker = SystemHealthChecker(check_interval_sec=60)
         self.failover_controller = ExecutionFailoverController(primary_exchange=self.price_source)
-        
+
         # New Microstructure & Regime Components
-        self.microstructure = MicrostructureAnalyzer(depth=20)
-        self.regime_detector = VolatilityRegimeDetector(lookback=100)
-        self.event_guard = MarketEventGuard()
+        self.microstructure = _registry.register(
+            'microstructure', lambda: MicrostructureAnalyzer(depth=20), critical=False
+        )
+        self.regime_detector = _registry.register(
+            'regime_detector', lambda: VolatilityRegimeDetector(lookback=100), critical=False
+        )
+        self.event_guard = _registry.register(
+            'event_guard', lambda: MarketEventGuard(), critical=False
+        )
         self.simulator = AdvancedSimulator(iterations=1000)
-        
-        self.risk_manager = DynamicRiskManager(initial_capital=self.initial_capital)
-        
+
+        # risk_manager is critical — needed for position tracking and safety limits
+        self.risk_manager = _registry.register(
+            'risk_manager',
+            lambda: DynamicRiskManager(initial_capital=self.initial_capital),
+            critical=True,
+        )
+
         # LOSS PREVENTION LAYER: Profit Protector + Loss Aversion
-        self.profit_protector = ProfitProtector(initial_capital=self.initial_capital)
-        self.loss_aversion = LossAversionFilter()
+        self.profit_protector = _registry.register(
+            'profit_protector',
+            lambda: ProfitProtector(initial_capital=self.initial_capital),
+            critical=False,
+        )
+        self.loss_aversion = _registry.register(
+            'loss_aversion', lambda: LossAversionFilter(), critical=False
+        )
         
         self.agentic_bias = 0.0
         self.iteration_count = 0
@@ -157,22 +213,22 @@ class TradingExecutor:
         self.lgbm = None
         self.patch_tst = None
         if _use_lgbm:
-            try:
+            def _make_lgbm():
                 from src.models.lightgbm_classifier import LightGBMClassifier
-                self.lgbm = LightGBMClassifier(self.config)
-            except Exception as e:
-                _safe_print(f"  [WARN] LightGBM disabled: {e}")
+                return LightGBMClassifier(self.config)
+            self.lgbm = _registry.register('lgbm', _make_lgbm, critical=False)
         if _use_patch_tst:
-            try:
+            def _make_patchtst():
                 from src.ai.patchtst_model import PatchTSTClassifier
-                self.patch_tst = PatchTSTClassifier()
-            except Exception as e:
-                _safe_print(f"  [WARN] PatchTST disabled: {e}")
+                return PatchTSTClassifier()
+            self.patch_tst = _registry.register('patch_tst', _make_patchtst, critical=False)
         if not _use_lgbm or not _use_patch_tst:
             _safe_print("  [ML] LightGBM/PatchTST disabled by default (set ai.use_lightgbm & ai.use_patch_tst: true in config to enable).")
         
         # Risk & Compliance Infrastructure
-        self.vpin = VPINGuard(bucket_size=5.0, threshold=0.75) # 5 BTC buckets
+        self.vpin = _registry.register(
+            'vpin', lambda: VPINGuard(bucket_size=5.0, threshold=0.75), critical=False
+        )  # 5 BTC buckets
         self.stream = SignalStreamAgent()
         self.audit_log = TradingJournal() # Enhanced version for reasoning traces
         
@@ -190,7 +246,11 @@ class TradingExecutor:
         
         # Multi-Agent Intelligence Overlay (12-agent pipeline)
         self.math_injector = MathInjector(self.config)
-        self.agent_orchestrator = AgentOrchestrator(self.config)
+        self.agent_orchestrator = _registry.register(
+            'agent_orchestrator',
+            lambda: AgentOrchestrator(self.config),
+            critical=False,
+        )
 
         # ═══ SECURITY: Model Integrity Verification ═══
         try:
@@ -227,12 +287,20 @@ class TradingExecutor:
         _safe_print("  [AGENTS] 12-Agent Intelligence Overlay INITIALIZED.")
         _safe_print("  [AUDIT] Audit Trail established. Stream and Compliance ready.")
 
-        # Strategy
-        self.strategy = HybridStrategy(self.config)
+        # Strategy — critical: system cannot trade without it
+        self.strategy = _registry.register(
+            'strategy',
+            lambda: HybridStrategy(self.config),
+            critical=True,
+        )
 
         # Sentiment
-        self.sentiment = SentimentPipeline(
-            use_transformer=self.config.get('ai', {}).get('use_transformer', False),
+        self.sentiment = _registry.register(
+            'sentiment',
+            lambda: SentimentPipeline(
+                use_transformer=self.config.get('ai', {}).get('use_transformer', False),
+            ),
+            critical=False,
         )
 
         # Robinhood Integration (optional for live trading)
@@ -346,6 +414,26 @@ class TradingExecutor:
                     self.risk_manager.initial_capital = usdt_free
                     self.risk_manager.current_capital = usdt_free
                     self.risk_manager.peak_capital = usdt_free
+
+                # ── SOD (Start-of-Day) Balance Anchor ──
+                # Fetch the canonical today-P&L anchor from the exchange.
+                # Using the live balance here means ALL devices with the same
+                # Binance testnet key see the same sod_balance → same today P&L.
+                try:
+                    from src.api.state import DashboardState
+                    _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    _ds = DashboardState()
+                    _existing_sod = _ds.get_full_state().get("portfolio", {}).get("sod_date", "")
+                    if _existing_sod != _today_str:
+                        # New day (or first run) — set SOD from live exchange balance
+                        _sod_val = usdt_free if usdt_free > 0 else self.initial_capital
+                        _ds.set_sod_balance(_sod_val, _today_str)
+                        _safe_print(f"  📅 SOD balance anchored: ${_sod_val:,.2f} USDT ({_today_str})")
+                    else:
+                        _safe_print(f"  📅 SOD already set for {_today_str}")
+                except Exception as _sod_err:
+                    logger.warning(f"[SOD] Failed to set SOD balance: {_sod_err}")
+
                 _safe_print(f"\n  💰 Reference Capital: ${self.initial_capital:,.2f} USDT")
             else:
                 is_invalid_creds = balance.get('invalid_credentials', False)
@@ -862,7 +950,13 @@ class TradingExecutor:
             try:
                 from src.api.state import DashboardState
                 pnl_abs = total_portfolio_value - self.initial_capital
-                DashboardState().update_portfolio(pnl=pnl_abs, asset_return=total_return_pct, total_value=total_portfolio_value)
+                # Pass current_total_value so today_pnl = current_total_value - sod_balance
+                # is computed device-independently from exchange data (not local equity curve)
+                DashboardState().update_portfolio(
+                    pnl=pnl_abs,
+                    asset_return=total_return_pct,
+                    current_total_value=total_portfolio_value,
+                )
             except: pass
 
             _trades_count = getattr(self.risk_manager, 'daily_trades', 0)
@@ -1373,6 +1467,24 @@ class TradingExecutor:
                 )
                 _force_trade_mode = self.config.get('force_trade', False) and _is_verified_testnet
                 if last_signal != 0 or _force_trade_mode:
+                    # ── CRITICAL GUARD: one position per asset ──
+                    # Without this, the system opens a new trade every bar,
+                    # creating hundreds of orphaned OPEN journal entries.
+                    _open = getattr(self.risk_manager, 'open_positions', {})
+                    if asset in _open:
+                        _existing = _open[asset]
+                        _same_dir = (last_signal > 0 and _existing.direction > 0) or \
+                                    (last_signal < 0 and _existing.direction < 0)
+                        if _same_dir:
+                            # Same direction — already positioned, skip
+                            continue
+                        else:
+                            # Opposite signal — close existing first, then allow new entry
+                            _safe_print(f"  [POSITION] {asset} has open {('LONG' if _existing.direction > 0 else 'SHORT')} — "
+                                        f"signal reversed, closing before re-entry")
+                            self._handle_full_exit(asset, _existing, ohlcv_data['closes'][-1], "signal_reversal")
+                            # After closing, fall through to new entry below
+
                     if last_signal == 0 and _force_trade_mode:
                         # Force a direction based on most recent price action
                         last_signal = 1  # Default to LONG on forced mode
@@ -1642,19 +1754,44 @@ class TradingExecutor:
                 order_book = None  # Testnet API unavailable — skip order book, use direct execution
             
             slippage_est = self.router.slippage.estimate_price_impact(qty, 5000000.0) # 5M ADV default
-            
-            # Select Institutional Execution Algorithm
-            execution_id = self.router.execute_advanced_order(
-                symbol=symbol, side=side, quantity=qty, 
-                algo="TWAP" if qty > 0.05 else "Direct", # Force TWAP for multi-BTC trades
-                order_book=order_book
-            )
+
+            # ── Entry Execution: Limit order with market fallback ──
+            # Default: limit order at current price (+ offset for faster fill)
+            # Falls back to market after timeout_sec if unfilled.
+            exec_cfg = self.config.get('execution', {})
+            _use_limit = exec_cfg.get('entry_type', 'limit') == 'limit'
+            _limit_timeout = exec_cfg.get('limit_timeout_sec', 30)
+            _limit_offset_bps = exec_cfg.get('limit_offset_bps', 5)  # 0.05% aggressive
+
+            # Use USD notional to decide limit vs TWAP (not raw qty which varies per asset)
+            _notional_usd = qty * current_price
+            _twap_threshold_usd = exec_cfg.get('twap_threshold_usd', 5000)
+
+            if _use_limit and _notional_usd <= _twap_threshold_usd:
+                # Normal orders: limit with market fallback
+                _safe_print(f"  [PHASE 5] LIMIT ORDER: {side} {qty:.6f} {symbol} @ {current_price} "
+                            f"(${_notional_usd:.0f}, timeout={_limit_timeout}s, offset={_limit_offset_bps}bps)")
+                _exec_result = self.router.execute_limit_with_fallback(
+                    symbol=symbol, side=side, quantity=qty,
+                    limit_price=current_price,
+                    timeout_sec=_limit_timeout,
+                    price_offset_bps=_limit_offset_bps,
+                )
+                execution_id = _exec_result.order_id if _exec_result.success else "FAILED"
+            else:
+                # Large orders (>$5k notional): TWAP/VWAP via advanced order
+                execution_id = self.router.execute_advanced_order(
+                    symbol=symbol, side=side, quantity=qty,
+                    algo="TWAP" if _notional_usd > _twap_threshold_usd else "Direct",
+                    order_book=order_book
+                )
 
             # 5. EXECUTION AUDIT
-            _safe_print(f"  [PHASE 5] ORDER INITIATED: {execution_id} (Slippage Est: {slippage_est:.4%})")
+            _exec_type = "LIMIT" if (_use_limit and _notional_usd <= _twap_threshold_usd) else ("TWAP" if _notional_usd > _twap_threshold_usd else "DIRECT")
+            _safe_print(f"  [PHASE 5] ORDER INITIATED: {execution_id} (Slippage Est: {slippage_est:.4%}, Type: {_exec_type})")
             self.stream.log_execution(
-                order_id=execution_id, symbol=symbol, side=side, 
-                qty=qty, price=current_price, slippage=slippage_est, type="TWAP" if qty > 0.05 else "DIRECT"
+                order_id=execution_id, symbol=symbol, side=side,
+                qty=qty, price=current_price, slippage=slippage_est, type=_exec_type
             )
             
             if execution_id != "FAILED":
@@ -1772,6 +1909,37 @@ class TradingExecutor:
 
     def _check_active_stops(self, current_prices: Dict[str, float]):
         """Scans for stop-loss, take-profit, or partial exit triggers."""
+        # Update trailing stops before checking hard stop/TP levels
+        try:
+            if (hasattr(self, 'profit_protector') and self.profit_protector and
+                    hasattr(self.profit_protector, 'update_trailing_stop')):
+                open_positions = getattr(self.risk_manager, 'open_positions', {})
+                for asset, record in open_positions.items():
+                    current_price = current_prices.get(asset)
+                    if current_price is None:
+                        continue
+                    _updated_sl = getattr(record, 'stop_loss', 0.0) or 0.0
+                    try:
+                        # Estimate ATR as 2% of price if not available from features
+                        _atr = current_price * 0.02
+                        _new_sl = self.profit_protector.update_trailing_stop(
+                            asset=asset,
+                            current_price=current_price,
+                            direction=record.direction,
+                            entry_price=record.entry_price,
+                            atr=_atr,
+                            trail_atr_mult=1.5
+                        )
+                        # Only move stop in favorable direction (never widen stop)
+                        if record.direction > 0 and _new_sl > _updated_sl:
+                            record.stop_loss = _new_sl
+                        elif record.direction < 0 and _new_sl < _updated_sl:
+                            record.stop_loss = _new_sl
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # DynamicRiskManager now holds the check_all_stops logic
         triggers = self.risk_manager.check_all_stops(current_prices)
         for t in triggers:
@@ -1825,15 +1993,24 @@ class TradingExecutor:
         if res.success:
             pnl = (res.executed_price - record.entry_price) * record.size * record.direction
             return_pct = ((res.executed_price - record.entry_price) / record.entry_price * 100) * record.direction
-            
+
             self.risk_manager.close_position(asset, res.executed_price)
+
+            # Clean up trailing stop tracking when position is closed
+            try:
+                if hasattr(self, 'profit_protector') and hasattr(self.profit_protector, 'reset_trail'):
+                    self.profit_protector.reset_trail(asset)
+            except Exception:
+                pass
+
             self.journal.close_trade(
                 order_id=record.order_id,
                 exit_price=res.executed_price,
-                pnl=pnl
+                pnl=pnl,
+                reason=reason,
             )
 
-            # ═══ AGENT FEEDBACK LOOP: Update agent weights after trade ═══
+            # ═══ FEEDBACK LOOPS: Update agent + meta-controller weights ═══
             try:
                 self.agent_orchestrator.post_trade_feedback({
                     'asset': asset,
@@ -1843,8 +2020,14 @@ class TradingExecutor:
                     'entry_price': record.entry_price,
                     'exit_price': res.executed_price,
                     'reason': reason,
-                    'agent_votes': {},  # Will be populated when we track per-trade
+                    'agent_votes': {},
                 })
+            except Exception:
+                pass
+            # Update Kelly sizing with actual outcome
+            try:
+                if hasattr(self, 'strategy') and hasattr(self.strategy, 'meta_controller'):
+                    self.strategy.meta_controller.record_trade_outcome(pnl > 0)
             except Exception:
                 pass
 

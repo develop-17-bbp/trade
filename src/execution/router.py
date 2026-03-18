@@ -108,7 +108,135 @@ class ExecutionRouter:
         self.circuit_open = False
         self.circuit_reset_time = 300  # 5 minutes
 
-    def execute_advanced_order(self, symbol: str, side: str, quantity: float, 
+    def execute_limit_with_fallback(self, symbol: str, side: str, quantity: float,
+                                    limit_price: float, timeout_sec: int = 30,
+                                    price_offset_bps: int = 0) -> ExecutionResult:
+        """
+        Place a limit order and wait up to timeout_sec for fill.
+        If not filled (or partially filled), cancel the remainder and
+        send a market order for the unfilled quantity.
+
+        Args:
+            symbol: Trading pair (e.g., "BTC/USDT")
+            side: "buy" or "sell"
+            quantity: Total order quantity
+            limit_price: Limit price to place
+            timeout_sec: Seconds to wait for fill before market fallback
+            price_offset_bps: Basis points to improve limit price for faster fill
+                              (positive = more aggressive, e.g. 10 = 0.10%)
+
+        Returns:
+            ExecutionResult — may combine a partial limit fill + market fill
+        """
+        # ── Apply price offset for faster fill ──
+        if price_offset_bps > 0:
+            offset_pct = price_offset_bps / 10_000.0
+            if side == "buy":
+                limit_price = round(limit_price * (1 + offset_pct), 4)
+            else:
+                limit_price = round(limit_price * (1 - offset_pct), 4)
+
+        # ── Attempt limit order via real exchange API ──
+        if self.price_source is None or not getattr(self.price_source, 'is_authenticated', False):
+            logger.info(f"  [LIMIT] No exchange API — falling back to market order")
+            return self.execute_order(symbol, side, quantity, order_type="market")
+
+        try:
+            result = self.price_source.place_order(
+                symbol=symbol, side=side, amount=quantity,
+                order_type='limit', price=limit_price,
+            )
+            if result.get('status') != 'success':
+                logger.warning(f"  [LIMIT] Limit order rejected: {result.get('message')} — market fallback")
+                return self.execute_order(symbol, side, quantity, order_type="market")
+
+            order_id = str(result['order_id'])
+            logger.info(f"  [LIMIT] Placed limit {side} {quantity:.6f} {symbol} @ {limit_price} "
+                         f"(timeout={timeout_sec}s, order={order_id})")
+        except Exception as e:
+            logger.warning(f"  [LIMIT] Exception placing limit order: {e} — market fallback")
+            return self.execute_order(symbol, side, quantity, order_type="market")
+
+        # ── Poll for fill within timeout ──
+        poll_interval = min(2.0, timeout_sec / 5.0)
+        elapsed = 0.0
+        filled_qty = 0.0
+        fill_price = None
+
+        while elapsed < timeout_sec:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            try:
+                status = self.price_source.fetch_order(order_id, symbol)
+            except Exception:
+                continue
+
+            order_status = status.get('status', 'open')
+            filled_qty = float(status.get('filled', 0))
+            fill_price = status.get('average') or status.get('price') or limit_price
+
+            if order_status == 'closed':
+                # Fully filled
+                fee_info = status.get('fee') or {}
+                fee_cost = float(fee_info.get('cost', 0.0)) if isinstance(fee_info, dict) else 0.0
+                logger.info(f"  [LIMIT] Filled {filled_qty:.6f} @ {fill_price} in {elapsed:.1f}s")
+                return ExecutionResult(
+                    success=True,
+                    order_id=order_id,
+                    executed_price=round(float(fill_price), 4),
+                    executed_quantity=filled_qty,
+                    fee=round(fee_cost, 6),
+                    exchange_used="binance",
+                )
+            elif order_status == 'canceled':
+                break
+
+        # ── Timeout: cancel remaining and market-fill the rest ──
+        remaining = quantity - filled_qty
+        logger.info(f"  [LIMIT] Timeout after {elapsed:.0f}s — filled {filled_qty:.6f}, "
+                     f"remaining {remaining:.6f}")
+
+        # Cancel the limit order
+        if remaining > 0:
+            try:
+                self.price_source.cancel_order(order_id, symbol)
+                logger.info(f"  [LIMIT] Cancelled unfilled limit order {order_id}")
+            except Exception as e:
+                logger.warning(f"  [LIMIT] Cancel failed: {e}")
+
+        if remaining <= 0 or remaining < quantity * 0.001:
+            # Fully (or nearly fully) filled by limit
+            return ExecutionResult(
+                success=True,
+                order_id=order_id,
+                executed_price=round(float(fill_price or limit_price), 4),
+                executed_quantity=filled_qty,
+                fee=0.0,
+                exchange_used="binance",
+            )
+
+        # ── Market order for unfilled portion ──
+        logger.info(f"  [LIMIT→MARKET] Sending market order for remaining {remaining:.6f}")
+        market_result = self.execute_order(symbol, side, remaining, order_type="market")
+
+        # Combine results: use VWAP of limit fill + market fill
+        total_filled = filled_qty + (market_result.executed_quantity or 0)
+        if total_filled > 0 and fill_price and market_result.executed_price:
+            vwap = (filled_qty * float(fill_price) +
+                    (market_result.executed_quantity or 0) * market_result.executed_price) / total_filled
+        else:
+            vwap = market_result.executed_price or float(fill_price or limit_price)
+
+        return ExecutionResult(
+            success=market_result.success,
+            order_id=f"{order_id}+{market_result.order_id}",
+            executed_price=round(vwap, 4),
+            executed_quantity=round(total_filled, 8),
+            fee=round((market_result.fee or 0), 6),
+            exchange_used="binance",
+        )
+
+    def execute_advanced_order(self, symbol: str, side: str, quantity: float,
                               algo: str = "TWAP", order_book: Optional[Dict] = None) -> str:
         """
         Institutional Smart Order Routing: Selects TWAP, VWAP, or Direct based on liquidity.
