@@ -4,11 +4,23 @@ Unified Trading Dashboard — ProJournX Style
 Launch: streamlit run src/dashboard/app.py --server.port 8501
 """
 import sys
+import logging
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+# Suppress noisy Tornado WebSocket warnings (tab close during auto-refresh)
+logging.getLogger("tornado.application").setLevel(logging.CRITICAL)
+logging.getLogger("tornado.general").setLevel(logging.CRITICAL)
+
 import streamlit as st
 from datetime import datetime
+
+# Load .env so JOURNAL_ENCRYPTION_KEY and other secrets are available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 st.set_page_config(
     page_title="Autonomous Trading Desk",
@@ -26,17 +38,21 @@ if not check_auth():
 from src.dashboard.theme import MARKETEDGE_CSS, GREEN, RED, MUTED
 st.markdown(MARKETEDGE_CSS, unsafe_allow_html=True)
 
-# ── Sidebar: Greeting + Quick Stats ──
-try:
-    from src.api.state import DashboardState
-    state = DashboardState().get_full_state()
-except Exception:
-    state = {}
+# ── Shared data (cached — no duplicate disk reads) ──
+from src.dashboard.data import (
+    load_dashboard_state, load_journal_trades,
+    compute_today_pnl, compute_trade_summary, filter_closed,
+)
 
+state = load_dashboard_state()
+journal = load_journal_trades()
+portfolio = state.get('portfolio', {})
 now = datetime.now()
+today_str = now.strftime('%Y-%m-%d')
+
+# ── Greeting ──
 hour = now.hour
 greeting = "Good morning" if hour < 12 else ("Good afternoon" if hour < 17 else "Good evening")
-
 st.sidebar.markdown(f"""
 <div style="padding:16px 0 12px 0; border-bottom: 1px solid #1e2330; margin-bottom:16px">
     <div style="font-size:1.1rem; font-weight:600; color:#e2e8f0">{greeting}, Trader</div>
@@ -44,29 +60,78 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-portfolio = state.get('portfolio', {})
-pnl = portfolio.get('pnl', 0.0)
+# ── Today P&L (exchange-anchored) ──
+pnl, pnl_source = compute_today_pnl(portfolio, journal, today_str)
 pnl_color = GREEN if pnl >= 0 else RED
-trades = state.get('trade_history', [])
-today_str = now.strftime('%Y-%m-%d')
-today_trades = [t for t in trades if isinstance(t, dict) and str(t.get('timestamp', '')).startswith(today_str)]
-today_wins = len([t for t in today_trades if isinstance(t, dict) and t.get('pnl', 0) > 0])
 
+# ── Trade stats (single-pass) ──
+stats = compute_trade_summary(journal, today_str)
+
+# ── Account Balance ──
+_current_total = portfolio.get('current_total_value')
+_sod = portfolio.get('sod_balance')
+if _current_total and _current_total > 0:
+    balance_str = f"${_current_total:,.2f}"
+elif _sod and _sod > 0:
+    balance_str = f"${_sod:,.2f}"
+else:
+    balance_str = "---"
+
+# ── Sidebar: Quick Stats Grid ──
 st.sidebar.markdown(f"""
-<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px">
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px">
+    <div class="pj-card" style="padding:10px; text-align:center; margin:0">
+        <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Account Balance</div>
+        <div style="font-size:1rem; font-weight:700; color:#e2e8f0">{balance_str}</div>
+    </div>
     <div class="pj-card" style="padding:10px; text-align:center; margin:0">
         <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Today's P&L</div>
         <div style="font-size:1rem; font-weight:700; color:{pnl_color}">${pnl:+,.2f}</div>
     </div>
-    <div class="pj-card" style="padding:10px; text-align:center; margin:0">
-        <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Trades / Wins</div>
-        <div style="font-size:1rem; font-weight:700; color:#e2e8f0">{len(today_trades)} / {today_wins}</div>
+</div>
+<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:12px">
+    <div class="pj-card" style="padding:8px; text-align:center; margin:0">
+        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Trades</div>
+        <div style="font-size:0.9rem; font-weight:700; color:#e2e8f0">{stats['today_count']}</div>
+    </div>
+    <div class="pj-card" style="padding:8px; text-align:center; margin:0">
+        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Wins</div>
+        <div style="font-size:0.9rem; font-weight:700; color:{GREEN}">{stats['today_wins']}</div>
+    </div>
+    <div class="pj-card" style="padding:8px; text-align:center; margin:0">
+        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Win Rate</div>
+        <div style="font-size:0.9rem; font-weight:700; color:{GREEN if stats['win_rate'] > 0.5 else MUTED}">{stats['win_rate']:.0%}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 show_dev_mode_warning()
 
+# ── Recent Trades (last 5 closed) ──
+_recent_closed = filter_closed(journal)[-5:]
+if _recent_closed:
+    st.sidebar.markdown('<div style="font-size:0.65rem; color:#64748b; text-transform:uppercase; margin:8px 0 4px">Recent Trades</div>', unsafe_allow_html=True)
+    for t in reversed(_recent_closed):
+        _asset = t.get('asset', '?')
+        _side = t.get('side', '?').upper()
+        _t_pnl = t.get('pnl', 0)
+        _t_color = GREEN if _t_pnl > 0 else RED
+        _ts = str(t.get('exit_time') or t.get('timestamp', ''))[:16]
+        st.sidebar.markdown(f"""
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 8px; margin:2px 0; background:rgba(255,255,255,0.03); border-radius:6px; font-size:0.72rem">
+            <span style="color:#94a3b8">{_asset} {_side}</span>
+            <span style="color:{_t_color}; font-weight:600">${_t_pnl:+,.2f}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ── Data source + refresh ──
+last_update = state.get("last_update") or "---"
+st.sidebar.caption(f"Data: **{last_update[:19] if isinstance(last_update, str) and len(last_update) > 19 else last_update}** | Source: {pnl_source}")
+if st.sidebar.button("Refresh data", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
+# ── Agent Overlay ──
 agent_overlay = state.get('agent_overlay', {})
 if agent_overlay.get('enabled'):
     dec = agent_overlay.get('last_decision', {})

@@ -45,8 +45,8 @@ class SignalCombiner:
         self.w_l2 = cfg.get('l2_weight', 0.30)
         self.w_l3 = cfg.get('l3_weight', 0.20)
 
-        # L2 staleness decay rate
-        self.l2_decay_rate = cfg.get('l2_decay_rate', 0.002)  # per second
+        # L2 staleness decay rate — Fix A: faster decay so stale sentiment penalized harder
+        self.l2_decay_rate = cfg.get('l2_decay_rate', 0.005)  # per second (was 0.002)
         self.l2_max_age = cfg.get('l2_max_age', 600)  # 10 minutes max
 
         # Signal thresholds for final decision
@@ -156,7 +156,12 @@ class SignalCombiner:
             adjusted_size *= 0.5
 
         # ---- Confidence (composite) ----
-        confidence = abs(final_signal) * (1 - risk_score) * (0.5 + 0.5 * l2_decay)
+        # Fix B: weighted average instead of multiplicative (prevents collapse compounding)
+        signal_contrib  = abs(final_signal)                    # 0-1
+        risk_contrib    = 1.0 - risk_score                     # high risk = lower
+        sentiment_boost = 0.5 + 0.5 * l2_decay                # fresh sentiment = boost
+        confidence = 0.50 * signal_contrib + 0.30 * risk_contrib + 0.20 * sentiment_boost
+        confidence = max(0.0, min(1.0, confidence))
 
         return {
             'final_signal': final_signal,

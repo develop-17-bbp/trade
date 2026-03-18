@@ -158,6 +158,32 @@ def main():
     if '--demo' in sys.argv or '--live' in sys.argv:
         print("[Warning] Demo mode is no longer supported. Real-time Binance data is enforced.")
 
+    # Production API server (--api flag starts REST API on port 11000 in background thread)
+    # Usage: python -m src.main --api
+    #        python -m src.main --api --api-port 11000
+    # Future: Port 11001 reserved for WebSocket streaming
+    if '--api' in sys.argv:
+        _api_port = 11000
+        if '--api-port' in sys.argv:
+            _port_idx = sys.argv.index('--api-port')
+            if _port_idx + 1 < len(sys.argv):
+                try:
+                    _api_port = int(sys.argv[_port_idx + 1])
+                except ValueError:
+                    pass
+        try:
+            import threading
+            from src.api.production_server import run_production_server
+            api_thread = threading.Thread(
+                target=run_production_server,
+                kwargs={"host": "0.0.0.0", "port": _api_port},
+                daemon=True, name="production-api"
+            )
+            api_thread.start()
+            logger.info(f"Production API started on port {_api_port}")
+        except Exception as _api_err:
+            logger.warning(f"[API] Failed to start production API: {_api_err}")
+
     # Load environment variables
     try:
         from dotenv import load_dotenv
@@ -309,6 +335,20 @@ def main():
                     if hasattr(executor, 'strategy') and hasattr(executor.strategy, 'risk_manager'):
                         executor.strategy.risk_manager.reset_daily()
                     logger.info("[SCHEDULER] Daily P&L reset at 00:00 UTC")
+
+                    # ── Re-anchor SOD balance from exchange at midnight ──
+                    # This ensures today_pnl on ALL devices resets to 0 at the
+                    # same time using the same Binance account balance as the anchor.
+                    try:
+                        from src.api.state import DashboardState
+                        _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        _bal = executor.price_source.get_balance() if hasattr(executor, 'price_source') else {}
+                        _usdt = _bal.get('free', {}).get('USDT', 0.0) if 'error' not in _bal else 0.0
+                        if _usdt > 0:
+                            DashboardState().set_sod_balance(_usdt, _today)
+                            logger.info(f"[SCHEDULER] SOD balance reset: ${_usdt:,.2f} USDT ({_today})")
+                    except Exception as _sod_e:
+                        logger.warning(f"[SCHEDULER] SOD balance reset failed: {_sod_e}")
                     # Weekly reset on Mondays
                     if datetime.now(timezone.utc).weekday() == 0:
                         executor.risk_manager.reset_weekly_pnl()

@@ -95,6 +95,7 @@ class LightGBMClassifier:
         self._garch_fitted = False
         self._calibration_model = None
         self.confidence_threshold = cfg.get('confidence_threshold', self.CONFIDENCE_THRESHOLD)
+        self.config = cfg  # Store for Platt scaling constants (Fix B)
 
         # trade logging buffer used for incremental retraining
         self._trade_log: List[Dict[str, float]] = []
@@ -112,17 +113,19 @@ class LightGBMClassifier:
         
     def _calibrate_probability(self, prob_array: Any) -> float:
         """
-        Calibrate the raw probability output from LightGBM using Platt Scaling.
-        This method assumes a 3-class output [prob_short, prob_flat, prob_long].
+        Platt scaling calibration. Constants should be updated after each retraining
+        using a holdout validation set. Current defaults are approximate.
+        TODO: auto-calibrate A, B from validation set in retrain pipeline.
         """
         try:
             import numpy as np
-            # We calibrate based on the highest raw probability
             raw_prob = float(np.max(prob_array))
-            
-            # Platt Scaling (Bayesian shift) - clamp input to avoid overflow
-            A, B = -2.0, 0.5
-            z = max(-100, min(100, A * raw_prob + B))  # Prevent overflow
+            # Platt scaling: P(y=1|f) = 1 / (1 + exp(A*f + B))
+            # Ideal A, B calibrated from validation set. Use conservative defaults.
+            # Fix B: configurable constants; loosened A (-2.0→-1.5) to reduce over-confidence
+            A = self.config.get('platt_A', -1.5)  # was -2.0
+            B = self.config.get('platt_B', 0.3)   # was 0.5
+            z = max(-100, min(100, A * raw_prob + B))
             calibrated = 1.0 / (1.0 + math.exp(z))
             return float(max(0.0, min(1.0, calibrated)))
         except Exception:
@@ -306,6 +309,40 @@ class LightGBMClassifier:
                 f['sentiment_mean'] = 0.0
                 f['sentiment_z_score'] = 0.0
             
+            # ── Fix A: 5 new high-signal features ──
+
+            # Mean Reversion Strength
+            rsi_14 = f.get('rsi_14', 50.0)
+            f['rsi_mean_reversion'] = (rsi_14 - 50.0) / 50.0  # -1 to +1, 0=neutral
+
+            # Volatility Regime Encoding
+            vol = f.get('realized_vol_20', 0.0)
+            vol_ma = f.get('vol_ma_50', vol)
+            f['vol_regime'] = 1.0 if vol > vol_ma * 1.2 else (-1.0 if vol < vol_ma * 0.8 else 0.0)
+
+            # Trend Confirmation (EMA stack)
+            ema10 = f.get('ema_10_20_ratio', 0.0)
+            ema20 = f.get('ema_10_20_ratio', 0.0)  # use ratio as proxy
+            ema50 = f.get('sma_10_50_ratio', 0.0)
+            if ema10 > 0 and ema50 > 0:
+                f['trend_stack'] = 1.0 if (f.get('ema_10_20_ratio', 1.0) > 1.0 and f.get('sma_10_50_ratio', 1.0) > 1.0) else \
+                                   (-1.0 if (f.get('ema_10_20_ratio', 1.0) < 1.0 and f.get('sma_10_50_ratio', 1.0) < 1.0) else 0.0)
+            else:
+                f['trend_stack'] = 0.0
+
+            # RSI Divergence Signal
+            rsi_change = f.get('rsi_14', 50) - f.get('rsi_14_prev', f.get('rsi_14', 50))
+            price_change = f.get('returns_1', 0.0)
+            if price_change != 0:
+                f['rsi_divergence'] = -1.0 if (price_change > 0 and rsi_change < 0) else (1.0 if (price_change < 0 and rsi_change > 0) else 0.0)
+            else:
+                f['rsi_divergence'] = 0.0
+
+            # Volume Confirmation
+            volume = f.get('volume_delta', 0.0)
+            vol_sma = f.get('volume_sma_20', volume)
+            f['volume_confirm'] = min(2.0, abs(volume) / (abs(vol_sma) + 1e-10))  # ratio, capped at 2x
+
             features.append(f)
         return features
 
@@ -418,8 +455,22 @@ class LightGBMClassifier:
         """Predict using trained LightGBM model."""
         try:
             import numpy as np
+            import logging
+            _logger = logging.getLogger(__name__)
             X = np.array([[f.get(name, 0.0) for name in self.FEATURE_NAMES]
                           for f in features])
+
+            # Before prediction, align feature count with model expectations
+            if self._lgb_model is not None:
+                expected = self._lgb_model.num_feature()
+                if X.shape[1] > expected:
+                    _logger.warning(f"[LGB] Truncating features {X.shape[1]} -> {expected} to match trained model")
+                    X = X[:, :expected]
+                elif X.shape[1] < expected:
+                    pad = np.zeros((X.shape[0], expected - X.shape[1]))
+                    _logger.warning(f"[LGB] Padded features {X.shape[1]} -> {expected}")
+                    X = np.hstack([X, pad])
+
             proba = self._lgb_model.predict(X, predict_disable_shape_check=True)
             results = []
             for p in proba:
@@ -525,9 +576,20 @@ class LightGBMClassifier:
             X.append([entry.get(name, 0.0) for name in self.FEATURE_NAMES])
         if not X:
             return
-        X_arr = np.array(X)
+        import logging
+        _logger = logging.getLogger(__name__)
+        import pandas as pd
+        X_arr = pd.DataFrame(X, columns=self.FEATURE_NAMES)
+
+        # Drop columns that are all zeros (likely unpopulated institutional signals)
+        zero_cols = [c for c in X_arr.columns if (X_arr[c] == 0).all()]
+        if zero_cols:
+            _logger.info(f"[LGB-TRAIN] Dropping {len(zero_cols)} all-zero columns: {zero_cols[:5]}...")
+            X_arr = X_arr.drop(columns=zero_cols)
+
+        X_arr = X_arr.values
         y_arr = np.array(y)
-        
+
         tuner = ModelTuner(n_trials=20) # Low trials for quick fine-tuning
         best_params = tuner.tune_lightgbm(X_arr, y_arr)
         
