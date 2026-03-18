@@ -380,12 +380,18 @@ ensemble_correct = sum(1 for p, a in zip(ensemble_preds[:ensemble_total], ensemb
                        if (p > 0 and a > 0) or (p < 0 and a < 0) or (p == 0 and a == 0))
 ensemble_acc = ensemble_correct / ensemble_total if ensemble_total > 0 else 0
 
+# Compute trade-history-based stats as live fallback when performance dict is empty
+_th = state.get("trade_history", [])
+_closed_th = [t for t in _th if isinstance(t, dict) and ('exit_price' in t or t.get('status') == 'CLOSED')]
+_th_win_rate = (sum(1 for t in _closed_th if t.get('pnl', 0) > 0) / len(_closed_th)) if _closed_th else 0.0
+_th_total_pnl = sum(t.get('pnl', 0) for t in _closed_th)
+
 c1, c2, c3, c4 = st.columns(4)
 with c1:
     color = "metric-value-green" if ensemble_acc > 0.55 else "metric-value-orange"
     st.markdown(f"""<div class="glass-card"><div class="metric-label">ENSEMBLE ACCURACY</div><div class="metric-value {color}">{ensemble_acc:.1%}</div></div>""", unsafe_allow_html=True)
 with c2:
-    win_rate = float(performance.get("win_rate", 0))
+    win_rate = float(performance.get("win_rate") or _th_win_rate)
     color = "metric-value-green" if win_rate > 0.55 else "metric-value-orange"
     st.markdown(f"""<div class="glass-card"><div class="metric-label">TRADE WIN RATE</div><div class="metric-value {color}">{win_rate:.1%}</div></div>""", unsafe_allow_html=True)
 with c3:
@@ -393,7 +399,7 @@ with c3:
     color = "metric-value-green" if sharpe > 1 else "metric-value-orange" if sharpe > 0 else "metric-value-red"
     st.markdown(f"""<div class="glass-card"><div class="metric-label">SHARPE RATIO</div><div class="metric-value {color}">{sharpe:.2f}</div></div>""", unsafe_allow_html=True)
 with c4:
-    total_pnl = float(performance.get("total_pnl", state.get("portfolio", {}).get("pnl", 0)))
+    total_pnl = float(performance.get("total_pnl") or _th_total_pnl or state.get("portfolio", {}).get("pnl", 0))
     color = "metric-value-green" if total_pnl > 0 else "metric-value-red"
     st.markdown(f"""<div class="glass-card"><div class="metric-label">TOTAL P&L</div><div class="metric-value {color}">${total_pnl:,.2f}</div></div>""", unsafe_allow_html=True)
 
@@ -446,7 +452,7 @@ with c4:
     cur_sym = train_state.get("current_symbol", "--")
     st.markdown(f"""<div class="glass-card"><div class="metric-label">CURRENT TARGET</div><div class="metric-value" style="font-size:1.1rem; color:#ffa500;">{cur_sym}</div></div>""", unsafe_allow_html=True)
 with c5:
-    version = state.get("model_version", "v6.5")
+    version = state.get("model_version", "v6.0")
     st.markdown(f"""<div class="glass-card"><div class="metric-label">MODEL VERSION</div><div class="metric-value metric-value-cyan">{version}</div></div>""", unsafe_allow_html=True)
 
 # Model Inventory + Feature Importance

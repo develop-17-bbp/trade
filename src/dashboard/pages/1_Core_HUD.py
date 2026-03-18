@@ -38,9 +38,30 @@ def _load_state():
     return state_manager.get_full_state()
 
 
+def _parse_ts(ts) -> str:
+    """Normalize a timestamp to ISO date string. Handles both ISO strings and Unix floats."""
+    if not ts:
+        return ''
+    ts_str = str(ts)
+    # If it looks like a Unix timestamp (all digits / float)
+    try:
+        if ts_str.replace('.', '', 1).isdigit():
+            return datetime.fromtimestamp(float(ts_str)).isoformat()
+    except (ValueError, OSError):
+        pass
+    return ts_str
+
+
 def _compute_trade_stats(trades):
     """Compute win rate, profit factor, risk:reward from trade history."""
-    closed = [t for t in trades if isinstance(t, dict) and t.get('status') == 'CLOSED']
+    # Include trades marked CLOSED, or any trade that has exit_price (backward compat)
+    closed = [
+        t for t in trades
+        if isinstance(t, dict) and (
+            t.get('status') == 'CLOSED' or
+            ('exit_price' in t and t.get('status') != 'OPEN')
+        )
+    ]
     if not closed:
         return {'win_rate': 0, 'profit_factor': 0, 'risk_reward': '0:0', 'total_pnl': 0}
 
@@ -68,9 +89,10 @@ def _compute_daily_pnl(trades):
         ts = t.get('exit_time') or t.get('timestamp', '')
         if not ts:
             continue
-        ts = str(ts)
-        day = ts[:10]
-        daily[day] += t.get('pnl', 0)
+        iso = _parse_ts(ts)
+        day = iso[:10]  # Always "YYYY-MM-DD" after normalization
+        if day:
+            daily[day] += t.get('pnl', 0)
     return dict(daily)
 
 
@@ -80,6 +102,7 @@ def _compute_daily_pnl(trades):
 state = _load_state()
 portfolio = state.get('portfolio', {})
 trades = state.get('trade_history', [])
+open_positions = state.get('open_positions', {})
 trade_stats = _compute_trade_stats(trades)
 daily_pnl = _compute_daily_pnl(trades)
 sources = state.get('sources', {})
@@ -94,7 +117,10 @@ greeting = "Good morning" if hour < 12 else ("Good afternoon" if hour < 17 else 
 
 today_str = now.strftime('%Y-%m-%d')
 today_pnl = daily_pnl.get(today_str, 0)
-today_trades = [t for t in trades if isinstance(t, dict) and str(t.get('timestamp', '')).startswith(today_str)]
+today_trades = [
+    t for t in trades
+    if isinstance(t, dict) and _parse_ts(t.get('timestamp', '')).startswith(today_str)
+]
 today_wins = len([t for t in today_trades if isinstance(t, dict) and t.get('pnl', 0) > 0])
 
 g1, g2 = st.columns([3, 2])
@@ -163,8 +189,9 @@ with tab_live:
                                 subtitle="BREAKEVEN" if pf == 0 else ""), unsafe_allow_html=True)
     with c4:
         perf = state.get('performance', {})
-        acc = perf.get('accuracy', state.get('accuracy', 0.5))
-        st.markdown(metric_card("AI Accuracy", f"{acc:.1%}", BLUE,
+        # Prefer live benchmark accuracy → trade win_rate → root accuracy field
+        acc = perf.get('accuracy') or perf.get('win_rate') or trade_stats.get('win_rate') or state.get('accuracy', 0.0)
+        st.markdown(metric_card("AI Accuracy", f"{float(acc):.1%}", BLUE,
                                 subtitle=f"Model v{state.get('model_version', '?')}"), unsafe_allow_html=True)
     with c5:
         st.markdown(metric_card("Risk:Reward", rr, AMBER), unsafe_allow_html=True)
@@ -239,6 +266,44 @@ with tab_live:
                              index=now.month - 1, format_func=lambda m: f"{now.year}-{m:02d}",
                              key="cal_month", label_visibility="collapsed")
     st.markdown(calendar_heatmap_html(daily_pnl, now.year, cal_month), unsafe_allow_html=True)
+
+    # ── Open Positions ──
+    st.markdown('<div class="section-title">Open Positions</div>', unsafe_allow_html=True)
+    if open_positions:
+        pos_cols = st.columns(min(len(open_positions), 4))
+        for idx, (pos_asset, pos) in enumerate(open_positions.items()):
+            col = pos_cols[idx % len(pos_cols)]
+            with col:
+                upnl = pos.get('unrealized_pnl', 0)
+                upnl_color = GREEN if upnl >= 0 else RED
+                dir_color = GREEN if pos.get('direction') == 'LONG' else RED
+                _html(f"""
+                <div class="pj-card" style="padding:12px; border-left:3px solid {dir_color}">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+                        <span style="font-weight:700; color:#e2e8f0; font-size:0.9rem">{h(pos_asset)}</span>
+                        <span style="font-size:0.75rem; font-weight:600; color:{dir_color}; background:{dir_color}22; padding:2px 7px; border-radius:4px">{h(pos.get('direction','?'))}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:#94a3b8">
+                        <span>Entry</span><span style="color:#e2e8f0">${pos.get('entry_price', 0):,.4f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:#94a3b8">
+                        <span>Current</span><span style="color:#e2e8f0">${pos.get('current_price', 0):,.4f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:0.72rem; color:#94a3b8">
+                        <span>Size</span><span style="color:#e2e8f0">{pos.get('size', 0):.6f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; margin-top:6px; padding-top:6px; border-top:1px solid #1e2330">
+                        <span style="color:#64748b">Unrealized P&L</span>
+                        <span style="font-weight:700; color:{upnl_color}">${upnl:+,.2f}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:0.68rem; color:#475569; margin-top:4px">
+                        <span>SL: ${pos.get('stop_loss',0):,.4f}</span>
+                        <span>TP: ${pos.get('take_profit',0):,.4f}</span>
+                    </div>
+                </div>
+                """)
+    else:
+        st.caption("No open positions")
 
     # ── Recent Trades + Polymarket ──
     st.markdown('<div class="section-title">Recent Activity</div>', unsafe_allow_html=True)

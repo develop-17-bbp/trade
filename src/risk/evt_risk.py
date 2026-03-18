@@ -34,8 +34,8 @@ class EVTRisk:
     Peaks-Over-Threshold (POT) with Generalized Pareto Distribution.
     """
 
-    def __init__(self, threshold_quantile: float = 0.95,
-                 var_level: float = 0.99, min_exceedances: int = 20):
+    def __init__(self, threshold_quantile: float = 0.90,
+                 var_level: float = 0.99, min_exceedances: int = 10):
         """
         Args:
             threshold_quantile: Quantile for threshold selection (0.90 - 0.95 typical)
@@ -74,7 +74,9 @@ class EVTRisk:
         n_exc = len(exceedances)
 
         if n_exc < self.min_exceedances:
-            logger.warning(f"EVT: Only {n_exc} exceedances (need {self.min_exceedances})")
+            # Not enough tail data yet — use conservative defaults.
+            # This is expected during warm-up (need ~400 candles for 20 exceedances at 95th pct).
+            logger.debug(f"EVT: Only {n_exc} exceedances (need {self.min_exceedances}) — using safe defaults")
             return self._default_params()
 
         # Method of Moments for GPD

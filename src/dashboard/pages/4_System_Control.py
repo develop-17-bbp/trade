@@ -17,6 +17,19 @@ import plotly.graph_objects as go
 from src.api.state import DashboardState
 from src.dashboard.theme import MARKETEDGE_CSS, metric_card, plotly_layout
 
+
+def _parse_ts(ts) -> str:
+    """Normalize Unix float or ISO timestamp to ISO string."""
+    if not ts:
+        return ''
+    ts_str = str(ts)
+    try:
+        if ts_str.replace('.', '', 1).isdigit():
+            return datetime.fromtimestamp(float(ts_str)).isoformat()
+    except (ValueError, OSError):
+        pass
+    return ts_str
+
 st.markdown(MARKETEDGE_CSS, unsafe_allow_html=True)
 
 state_manager = DashboardState()
@@ -186,7 +199,7 @@ if trade_history:
         conf = trade.get("confidence", 0)
         entry = trade.get("entry_price", 0)
         exit_p = trade.get("exit_price", 0)
-        ts = trade.get("timestamp", trade.get("entry_time", ""))
+        ts = _parse_ts(trade.get("timestamp", trade.get("entry_time", "")))
 
         st.markdown(f"""
         <div style="background: rgba(15,15,30,0.7); padding: 12px 16px; border-radius: 10px; margin-bottom: 6px; border-left: 4px solid {pnl_color}; display:flex; justify-content:space-between; align-items:center;">

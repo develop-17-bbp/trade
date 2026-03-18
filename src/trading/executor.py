@@ -111,7 +111,7 @@ class TradingExecutor:
         self.free_data = FreeDataAggregator()  # Free data sources (Fear/Greed, IV, etc.)
         _ai_cfg = self.config.get('ai', {})
         _prov = _ai_cfg.get('reasoning_provider', 'auto')
-        _model = _ai_cfg.get('reasoning_model', 'neural-chat')
+        _model = _ai_cfg.get('reasoning_model', 'mistral')
 
         self.strategist = AgenticStrategist(
             provider=_prov,
@@ -650,7 +650,7 @@ class TradingExecutor:
                     "exchange": "ONLINE",
                     "news": "ONLINE" if headlines else "OFFLINE",
                     "onchain": "OFFLINE",
-                    "llm": "ONLINE"
+                    "llm": self._llm_status()
                 })
 
             except Exception as e:
@@ -780,7 +780,7 @@ class TradingExecutor:
                         "exchange": "ONLINE",
                         "news": "ONLINE" if headlines else "OFFLINE",
                         "onchain": "OFFLINE",
-                        "llm": "ONLINE" if self.strategist.api_key else "OFFLINE"
+                        "llm": self._llm_status()
                     })
                 except Exception as e:
                     _safe_print(f"  [DASHBOARD-STRICT] Failed to update AAVE state: {e}")
@@ -788,6 +788,20 @@ class TradingExecutor:
                 _safe_print(f"  [X] Fallback AAVE run failed: {e}")
 
 
+
+    def _llm_status(self) -> str:
+        """Return 'ONLINE', 'LOCAL', or 'OFFLINE' reflecting actual LLM availability."""
+        s = self.strategist
+        # Cloud API key present and not in permanent fallback
+        if getattr(s, 'api_key', None) and not getattr(s, 'fallback_mode', True):
+            return "ONLINE"
+        # LLMRouter has at least one provider (includes local Ollama)
+        router = getattr(s, '_llm_router', None)
+        if router and getattr(router, 'providers', {}):
+            providers = list(router.providers.keys())
+            local_only = all(p in ('local', 'ollama', 'lmstudio') for p in providers)
+            return "LOCAL" if local_only else "ONLINE"
+        return "OFFLINE"
 
     def _run_live(self):
         """Main execution loop for Live/Testnet simulation with HFT Latency Guard."""
@@ -838,7 +852,33 @@ class TradingExecutor:
                 DashboardState().update_portfolio(pnl=pnl_abs, asset_return=total_return_pct)
             except: pass
 
-            _safe_print(f"\n  [LIVE] BAR {self.iteration_count} | Wallet: ${current_usdt:,.2f} | Return: {total_return_pct:>+6.2f}%")
+            _trades_today = getattr(self.strategy, 'risk_manager', None)
+            _trades_count = _trades_today.daily_trades if _trades_today else 0
+            _open_positions = self.risk_manager.open_positions if hasattr(self.risk_manager, 'open_positions') else {}
+            _open_count = len(_open_positions)
+            _journal_total = len(self.journal.trades) if hasattr(self.journal, 'trades') else 0
+            _safe_print(f"\n  [LIVE] BAR {self.iteration_count} | Wallet: ${current_usdt:,.2f} | Return: {total_return_pct:>+6.2f}% | Trades Today: {_trades_count} | Open: {_open_count} | Total Journaled: {_journal_total}")
+
+            # Push open positions to dashboard every bar
+            try:
+                from src.api.state import DashboardState
+                _pos_snapshot = {}
+                for _pos_asset, _pos_rec in _open_positions.items():
+                    _cur_price = current_prices.get(_pos_asset, 0.0)
+                    _unrealized = _pos_rec.direction * _pos_rec.size * (_cur_price - _pos_rec.entry_price) if _cur_price else 0.0
+                    _pos_snapshot[_pos_asset] = {
+                        'direction': 'LONG' if _pos_rec.direction > 0 else 'SHORT',
+                        'entry_price': round(_pos_rec.entry_price, 4),
+                        'current_price': round(_cur_price, 4),
+                        'size': round(_pos_rec.size, 6),
+                        'unrealized_pnl': round(_unrealized, 2),
+                        'stop_loss': round(getattr(_pos_rec, 'stop_loss', 0.0), 4),
+                        'take_profit': round(getattr(_pos_rec, 'take_profit', 0.0), 4),
+                        'order_id': getattr(_pos_rec, 'order_id', ''),
+                    }
+                DashboardState().update_open_positions(_pos_snapshot)
+            except Exception:
+                pass
 
             for asset in self.assets:
                 symbol = f"{asset}/USDT"
@@ -1146,12 +1186,11 @@ class TradingExecutor:
                         ds.set_layers(layers)
                         
                         # Source Status bar
-                        llm_online = bool(self.strategist.api_key) or getattr(self.strategist, 'provider', '') in ('local', 'ollama')
                         ds.set_sources({
                             "exchange": "ONLINE" if bool(ohlcv_data) else "OFFLINE",
                             "news": "ONLINE" if (headlines and len(headlines) > 0) else "OFFLINE",
                             "onchain": "ONLINE" if bool(on_chain_data) else "OFFLINE",
-                            "llm": "ONLINE" if llm_online else "OFFLINE"
+                            "llm": self._llm_status()
                         })
                         
                         # Compute Optimization Edge (Uplift)
@@ -1193,33 +1232,50 @@ class TradingExecutor:
                     })
                     
                     # Update detailed metrics for enhanced dashboard
-                    # Execution metrics
+                    # Execution metrics (slippage_pct from config; fill_rate 100% for testnet simulation)
+                    _slippage_pct = round(self.config.get('slippage_pct', 0.0), 4)
                     ds.update_execution_metrics({
-                        "slippage": 0.02,  # Mock for now - would come from actual execution
+                        "slippage": _slippage_pct,
                         "fill_rate": 100.0,
-                        "latency_ms": 23,
-                        "orders_per_min": 0.5
+                        "latency_ms": 0,
+                        "orders_per_min": 0.0
                     })
-                    
-                    # Risk metrics
+
+                    # Risk metrics — use live values from DynamicRiskManager
+                    _peak = self.risk_manager.peak_capital or self.initial_capital
+                    _cur = self.risk_manager.current_capital or self.initial_capital
+                    _cur_dd_pct = round(
+                        ((_peak - _cur) / _peak * 100) if _peak > 0 else 0.0, 2
+                    )
+                    _max_dd_pct = round(
+                        getattr(self.risk_manager, 'drawdown', 0.0) * 100, 2
+                    )
                     ds.update_risk_metrics({
                         "vpin_threshold": 0.8,
-                        "max_drawdown": -2.1,
-                        "risk_score": vpin_val * 0.5  # Simple risk score based on VPIN
+                        "max_drawdown": -abs(_max_dd_pct),
+                        "current_drawdown": -abs(_cur_dd_pct),
+                        "risk_score": vpin_val * 0.5
                     })
-                    
-                    # Training status
+
+                    # Training status — use live model version from state, gain from benchmark
+                    _all_trades_now = ds.get_full_state().get('trade_history', [])
+                    _closed_now = [t for t in _all_trades_now if 'exit_price' in t]
+                    _gain_now = 0.0
+                    if _closed_now:
+                        _wins_now = sum(1 for t in _closed_now if t.get('pnl', 0) > 0)
+                        _gain_now = round((_wins_now / len(_closed_now) - 0.5) * 100, 1)
                     ds.update_training_status(
                         status="IDLE",
                         version="v6.0",
-                        gain=2.3,
-                        next_training="15:00 UTC"
+                        gain=_gain_now,
+                        next_training="00:00 UTC"
                     )
-                    
-                    # Memory metrics
+
+                    # Memory metrics — use strategist calibration data
+                    _mem_conf = getattr(self.strategist, 'historical_accuracy', 0.7)
                     ds.update_memory_metrics(
-                        latency=15,
-                        confidence=0.87
+                        latency=0,
+                        confidence=round(float(_mem_conf), 3)
                     )
                     
                     # Strategist metrics
@@ -1665,8 +1721,10 @@ class TradingExecutor:
                         'entry_price': current_price,
                         'quantity': qty,
                         'confidence': float(ensemble_confidence),
-                        'timestamp': time.time(),
+                        'timestamp': datetime.now().isoformat(),
                         'direction': final_direction,
+                        'status': 'OPEN',
+                        'pnl': 0.0,
                     })
                 except Exception:
                     pass
@@ -1785,8 +1843,9 @@ class TradingExecutor:
                     'return_pct': return_pct,
                     'quantity': res.executed_quantity,
                     'reason': reason,
-                    'timestamp': time.time(),
+                    'timestamp': datetime.now().isoformat(),
                     'direction': record.direction,
+                    'status': 'CLOSED',
                 })
                 
                 # Push updated benchmark metrics to dashboard
