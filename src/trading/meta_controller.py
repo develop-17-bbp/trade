@@ -9,7 +9,10 @@ Quant Finance Integration:
   - Kalman SNR → confidence multiplier (high SNR = clear signal)
   - MC risk score → position scale reduction under elevated risk
 """
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 class MetaController:
     """
@@ -23,12 +26,30 @@ class MetaController:
         # small values (0.0-0.1) gently tilt confidence
         self.bias = self.config.get('bias', 0.0)
 
+        # Fix #4: Historical win rate tracker for Kelly sizing
+        self._trade_outcomes: List[bool] = []  # True=win, False=loss
+
         # Fix A: MetaSizer loaded once at init (not per-call) to avoid overhead
         try:
             from src.models.meta_sizer import MetaSizer
             self._meta_sizer = MetaSizer()
         except Exception:
             self._meta_sizer = None
+
+    def record_trade_outcome(self, is_win: bool):
+        """Record trade outcome for Kelly sizing."""
+        self._trade_outcomes.append(is_win)
+        # Keep last 100 trades
+        if len(self._trade_outcomes) > 100:
+            self._trade_outcomes = self._trade_outcomes[-100:]
+
+    @property
+    def historical_win_rate(self) -> float:
+        """Win rate from recent trades, clamped to [0.30, 0.70]."""
+        if len(self._trade_outcomes) < 5:
+            return 0.45  # conservative default until enough data
+        raw = sum(self._trade_outcomes) / len(self._trade_outcomes)
+        return max(0.30, min(0.70, raw))  # clamp
 
     def arbitrate(self,
                   lgb_class: int, lgb_conf: float,
@@ -95,9 +116,12 @@ class MetaController:
 
         position_scale = 1.0
 
-        # ── HMM Crisis Veto ──
+        # ── HMM Crisis Veto ── (Fix #8: hard-block in crisis regime)
         if hmm_crisis_prob > 0.70:
-            position_scale *= 0.3  # Severe reduction in crisis regime
+            logger.warning(f"[META] Crisis regime detected (prob={hmm_crisis_prob:.2f}) — blocking entry")
+            return (0, 0.0, 0.0)  # hard block
+        elif hmm_crisis_prob > 0.50:
+            position_scale *= 0.3  # cautious sizing
 
         # --- Veto Rules ---
         # LightGBM Long + FinBERT Bearish -> Halve size (v5.5)
@@ -170,11 +194,11 @@ class MetaController:
             agent_adj = agentic_bias if final_class > 0 else -agentic_bias
             final_conf = float(min(1.0, max(0.0, float(final_conf) + float(agent_adj))))
 
-        # --- KELLY SIZING ---
+        # --- KELLY SIZING --- (Fix #4: use historical win rate, not blended confidence)
         # Fix A: use pre-loaded MetaSizer; win_loss_ratio=3.0 matches new atr_tp(4.5)/atr_stop(1.5)
         if self._meta_sizer is not None:
             try:
-                kelly_factor = self._meta_sizer.size(features, win_prob=final_conf, win_loss_ratio=3.0)
+                kelly_factor = self._meta_sizer.size(features, win_prob=self.historical_win_rate, win_loss_ratio=3.0)
                 kelly_factor = max(0.0, min(1.0, kelly_factor))
             except Exception:
                 kelly_factor = 0.5
@@ -215,6 +239,11 @@ class MetaController:
         position_scale = min(position_scale, evt_position_scale)
 
         # ── Agent Intelligence Overlay ──
+        # Fix #5: if risk layer vetoed (position_scale<=0), skip agent blending entirely
+        if position_scale <= 0:
+            logger.info("[META] Risk veto active — skipping agent overlay")
+            return (0, 0.0, 0.0)
+
         # Blend existing pipeline (40%) with agent overlay (60%)
         if agentic_enhanced:
             ae = agentic_enhanced

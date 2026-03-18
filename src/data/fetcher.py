@@ -357,6 +357,26 @@ class PriceFetcher:
             print(f"Warning: fetch_open_orders failed: {e}")
             return []
 
+    def fetch_order(self, order_id: str, symbol: str) -> Dict:
+        """Fetch a single order by ID to check fill status."""
+        if not self.is_authenticated:
+            return {'status': 'error', 'message': 'Not authenticated'}
+        try:
+            self._throttle()
+            order = self.exchange.fetch_order(order_id, symbol)
+            return {
+                'status': order.get('status', 'unknown'),   # 'open', 'closed', 'canceled'
+                'order_id': order.get('id'),
+                'filled': float(order.get('filled', 0)),
+                'remaining': float(order.get('remaining', 0)),
+                'price': order.get('price'),
+                'average': order.get('average'),
+                'cost': order.get('cost'),
+                'fee': order.get('fee'),
+            }
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
     def cancel_order(self, order_id: str, symbol: str) -> Dict:
         """Cancel an open order."""
         if not self.is_authenticated:

@@ -378,6 +378,7 @@ class DynamicRiskManager:
             record.stop_loss = entry_price + self.atr_stop_mult * atr_value
             record.take_profit = entry_price - self.atr_tp_mult * atr_value
             
+        record.holding_bars = 0  # Fix #7: initialize bar counter for time-based exit
         self.open_positions[asset] = record
         logger.info(f"Registered trade for {asset}: Stop={record.stop_loss:.2f}, TP={record.take_profit:.2f}")
 
@@ -427,6 +428,15 @@ class DynamicRiskManager:
             if current_price >= record.stop_loss: return 'stop_loss'
             if record.take_profit > 0 and current_price <= record.take_profit: return 'take_profit'
 
+        # Fix #7: Time-based exit — close stale positions after max_hold_bars
+        max_hold_bars = 8
+        record.holding_bars = getattr(record, 'holding_bars', 0) + 1
+        if record.holding_bars >= max_hold_bars:
+            # Only force-close if position is not in significant profit
+            pnl_pct = record.direction * (current_price - record.entry_price) / record.entry_price
+            if pnl_pct < 0.005:  # less than 0.5% profit
+                return 'time_exit'
+
         return None
 
     def check_all_stops(self, prices: Dict[str, float]) -> List[Dict[str, Any]]:
@@ -451,6 +461,7 @@ class DynamicRiskManager:
         pnl = record.direction * record.size * (exit_price - record.entry_price)
         self.current_capital += pnl
         self.daily_pnl += pnl
+        self._update_circuit_breakers()  # Fix #6: update circuit breakers on trade close
         logger.info(f"Closed {asset} @ {exit_price}. PnL: ${pnl:.2f}")
 
     def calculate_var_es(self, confidence: float = 0.95) -> Tuple[float, float]:

@@ -1737,19 +1737,44 @@ class TradingExecutor:
                 order_book = None  # Testnet API unavailable — skip order book, use direct execution
             
             slippage_est = self.router.slippage.estimate_price_impact(qty, 5000000.0) # 5M ADV default
-            
-            # Select Institutional Execution Algorithm
-            execution_id = self.router.execute_advanced_order(
-                symbol=symbol, side=side, quantity=qty, 
-                algo="TWAP" if qty > 0.05 else "Direct", # Force TWAP for multi-BTC trades
-                order_book=order_book
-            )
+
+            # ── Entry Execution: Limit order with market fallback ──
+            # Default: limit order at current price (+ offset for faster fill)
+            # Falls back to market after timeout_sec if unfilled.
+            exec_cfg = self.config.get('execution', {})
+            _use_limit = exec_cfg.get('entry_type', 'limit') == 'limit'
+            _limit_timeout = exec_cfg.get('limit_timeout_sec', 30)
+            _limit_offset_bps = exec_cfg.get('limit_offset_bps', 5)  # 0.05% aggressive
+
+            # Use USD notional to decide limit vs TWAP (not raw qty which varies per asset)
+            _notional_usd = qty * current_price
+            _twap_threshold_usd = exec_cfg.get('twap_threshold_usd', 5000)
+
+            if _use_limit and _notional_usd <= _twap_threshold_usd:
+                # Normal orders: limit with market fallback
+                _safe_print(f"  [PHASE 5] LIMIT ORDER: {side} {qty:.6f} {symbol} @ {current_price} "
+                            f"(${_notional_usd:.0f}, timeout={_limit_timeout}s, offset={_limit_offset_bps}bps)")
+                _exec_result = self.router.execute_limit_with_fallback(
+                    symbol=symbol, side=side, quantity=qty,
+                    limit_price=current_price,
+                    timeout_sec=_limit_timeout,
+                    price_offset_bps=_limit_offset_bps,
+                )
+                execution_id = _exec_result.order_id if _exec_result.success else "FAILED"
+            else:
+                # Large orders (>$5k notional): TWAP/VWAP via advanced order
+                execution_id = self.router.execute_advanced_order(
+                    symbol=symbol, side=side, quantity=qty,
+                    algo="TWAP" if _notional_usd > _twap_threshold_usd else "Direct",
+                    order_book=order_book
+                )
 
             # 5. EXECUTION AUDIT
-            _safe_print(f"  [PHASE 5] ORDER INITIATED: {execution_id} (Slippage Est: {slippage_est:.4%})")
+            _exec_type = "LIMIT" if (_use_limit and _notional_usd <= _twap_threshold_usd) else ("TWAP" if _notional_usd > _twap_threshold_usd else "DIRECT")
+            _safe_print(f"  [PHASE 5] ORDER INITIATED: {execution_id} (Slippage Est: {slippage_est:.4%}, Type: {_exec_type})")
             self.stream.log_execution(
-                order_id=execution_id, symbol=symbol, side=side, 
-                qty=qty, price=current_price, slippage=slippage_est, type="TWAP" if qty > 0.05 else "DIRECT"
+                order_id=execution_id, symbol=symbol, side=side,
+                qty=qty, price=current_price, slippage=slippage_est, type=_exec_type
             )
             
             if execution_id != "FAILED":
