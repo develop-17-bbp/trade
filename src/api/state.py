@@ -13,6 +13,7 @@ _DEFAULT_STATE = {
     "portfolio": {
         "pnl": 0.0,
         "return": 0.0,
+        "total": 0.0,
         "equity_curve": []
     },
     "agentic_log": [],
@@ -140,6 +141,15 @@ class DashboardState:
             # Merge defaults for any missing keys (schema migration)
             merged = _DEFAULT_STATE.copy()
             merged.update(file_state)
+            # Deep-merge portfolio so pnl/return/total are always present and visible in cards
+            default_portfolio = _DEFAULT_STATE["portfolio"].copy()
+            file_portfolio = merged.get("portfolio") or {}
+            if isinstance(file_portfolio, dict):
+                default_portfolio.update(file_portfolio)
+                # Preserve equity_curve from file (list), don't overwrite with empty
+                if file_portfolio.get("equity_curve"):
+                    default_portfolio["equity_curve"] = file_portfolio["equity_curve"]
+            merged["portfolio"] = default_portfolio
             return merged
         except (json.JSONDecodeError, FileNotFoundError, Exception):
             return _DEFAULT_STATE.copy()
@@ -189,11 +199,16 @@ class DashboardState:
             s["agentic_log"] = s["agentic_log"][:50]
         self._read_modify_write(_mod)
 
-    def update_portfolio(self, pnl: float, asset_return: float):
+    def update_portfolio(self, pnl: float, asset_return: float, total_value: float = None):
         def _mod(s):
-            s["portfolio"]["pnl"] = pnl
-            s["portfolio"]["return"] = asset_return
-            s["portfolio"]["equity_curve"].append({
+            port = s.setdefault("portfolio", _DEFAULT_STATE["portfolio"].copy())
+            port["pnl"] = pnl
+            port["return"] = asset_return
+            if total_value is not None:
+                port["total"] = total_value
+            if "equity_curve" not in port:
+                port["equity_curve"] = []
+            port["equity_curve"].append({
                 "t": datetime.now().isoformat(),
                 "v": pnl
             })
