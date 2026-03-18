@@ -153,15 +153,28 @@ class HybridStrategy:
             rl_a, rl_p = rl_predictions[i]
 
             f = features[i]
-            
-            # Meta-Arbitration
+
+            # Fix A: Detect market regime for regime-adaptive weighting
+            _regime = 'sideways'
+            _crisis_prob = 0.0
+            try:
+                if hasattr(self, 'adaptive_engine') and self.adaptive_engine:
+                    _regime_data = self.adaptive_engine.get_current_regime() if hasattr(self.adaptive_engine, 'get_current_regime') else {}
+                    _regime = _regime_data.get('regime', 'sideways') if isinstance(_regime_data, dict) else str(_regime_data)
+                    _crisis_prob = float(_regime_data.get('crisis_prob', 0.0)) if isinstance(_regime_data, dict) else 0.0
+            except Exception:
+                pass
+
+            # Meta-Arbitration — pass hmm regime for adaptive weighting
             final_dir, final_conf, p_scale = self.meta_controller.arbitrate(
                 lgb_class=lgb_c, lgb_conf=float(lgb_p),
                 rl_action=rl_a, rl_prob=float(rl_p),
                 features=f,
                 finbert_score=l2_aggregate.get('aggregate_score', 0.0),
                 patch_result=patch_result,
-                agentic_bias=agentic_bias
+                agentic_bias=agentic_bias,
+                hmm_regime=_regime,
+                hmm_crisis_prob=_crisis_prob,
             )
 
             # Adaptive Strategy Selection
@@ -171,10 +184,18 @@ class HybridStrategy:
             is_safe, risk_reason = self.risk_manager.is_trade_safe(
                 prices[i], final_dir, atr_vals[i], account_balance
             )
-            
+
             if not is_safe:
                 final_dir = 0
                 p_scale = 0.0
+
+            # Fix B: 2-bar confirmation — require signal to persist; block low-confidence reversals
+            if i > 0 and final_dir != 0:
+                prev_dir = final_signals[i-1] if len(final_signals) > 0 else 0
+                if prev_dir != 0 and prev_dir != final_dir:
+                    if final_conf < 0.80:  # Only allow reversals on very high confidence
+                        final_dir = 0
+                        final_conf = 0.0
 
             final_signals.append(final_dir)
             final_decisions.append({

@@ -438,8 +438,16 @@ class RiskManager:
             if record.take_profit > 0 and current_price <= record.take_profit:
                 return 'take_profit'
 
+        # Fix #7: Time-based exit — close stale positions after max_hold_bars
+        max_hold_bars = 8
+        record.holding_bars = getattr(record, 'holding_bars', 0) + 1
+        if record.holding_bars >= max_hold_bars:
+            pnl_pct = record.direction * (current_price - record.entry_price) / record.entry_price
+            if pnl_pct < 0.005:  # less than 0.5% profit
+                return 'time_exit'
+
         return None
-        
+
     def check_all_stops(self, prices: Dict[str, float]) -> List[Dict[str, Any]]:
         """Utility to check all open positions against current prices."""
         results = []
