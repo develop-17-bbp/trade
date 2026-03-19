@@ -42,7 +42,7 @@ risk:
 
 # ── Signal Generation Settings ──
 signal:
-  min_confidence: 0.75              # Raised to 0.75 (only high-conviction setups)
+  min_confidence: 0.60              # Lowered from 0.75 — was filtering valid setups in trending markets
   use_ensemble: true                # Use L1+L2+L3 ensemble
   neutral_threshold: 0.50           # Below this = directional entry
   
@@ -76,7 +76,7 @@ ai:
 # ── Multi-Agent Intelligence Overlay ──
 agents:
   enabled: true                         # Master switch for 12-agent overlay
-  blend_weight: 0.30                    # 30% agent overlay, 70% existing pipeline (agents over-trusted)
+  blend_weight: 0.45                    # 45% agent overlay, 55% existing pipeline (balanced blend)
   consensus_threshold: 0.70             # Need 70% agent consensus for directional trade
   weight_update_alpha: 0.15             # Bayesian EMA learning rate for agent weights
   loss_prevention:
