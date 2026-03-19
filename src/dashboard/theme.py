@@ -31,6 +31,39 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .stApp {
     background: #0f1117 !important;
 }
+/* Root view: full width; main content is capped and padded below */
+.appview-container,
+[data-testid="stAppViewContainer"] {
+    max-width: none !important;
+    width: 100% !important;
+}
+
+/* ── Main content: capped width + padding for breathing room (not edge-to-edge) ── */
+/* Old structure */
+.main .block-container {
+    max-width: 1400px !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
+/* Streamlit 1.40+ structure (stMain / stMainBlockContainer) */
+section[data-testid="stMain"] > div[data-testid="stMainBlockContainer"],
+section[data-testid="stMain"] div[data-testid="stMainBlockContainer"] {
+    max-width: 1400px !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
+/* Main section: full width so centering of block container works */
+.appview-container .main,
+[data-testid="stAppViewContainer"] section[data-testid="stMain"] {
+    max-width: none !important;
+    width: 100% !important;
+}
 
 /* Sidebar */
 [data-testid="stSidebar"] {
@@ -42,19 +75,46 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     color: #94a3b8;
 }
 
-/* Cards */
-.pj-card {
+/* Cards: fill container width so they use appropriate space in columns and full-width rows */
+.pj-card,
+.glass-card,
+.layer-card {
     background: #1a1e2e; border: 1px solid #2a2e3e;
     border-radius: 10px; padding: 18px;
     margin-bottom: 14px;
     transition: border-color 0.2s ease;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
 }
 .pj-card:hover { border-color: #3b82f6; }
 
-.glass-card, .layer-card {
-    background: #1a1e2e; border: 1px solid #2a2e3e;
-    border-radius: 10px; padding: 18px;
-    margin-bottom: 14px;
+/* Column content: let cards and markdown use full column width (main + Streamlit 1.40+) */
+.main [data-testid="column"] > div,
+.main [data-testid="column"] .stMarkdown,
+section[data-testid="stMain"] [data-testid="column"] > div,
+section[data-testid="stMain"] [data-testid="column"] .stMarkdown {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+.main [data-testid="column"] .stMarkdown > div,
+section[data-testid="stMain"] [data-testid="column"] .stMarkdown > div {
+    width: 100% !important;
+}
+/* Horizontal (column) blocks: use full width */
+[data-testid="stHorizontalBlock"] {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+[data-testid="stHorizontalBlock"] > div {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+}
+/* Vertical blocks in main: expand to full width so content isn't cramped */
+.main [data-testid="stVerticalBlock"] > div,
+section[data-testid="stMain"] [data-testid="stVerticalBlock"] > div {
+    width: 100% !important;
+    max-width: 100% !important;
 }
 
 /* Metric cards */
@@ -297,9 +357,11 @@ def calendar_heatmap_html(daily_pnl: dict, year: int, month: int) -> str:
             elif pnl > 0:
                 intensity = min(1.0, abs(pnl) / 500)
                 bg, tc = f'rgba(34,197,94,{0.15 + intensity * 0.5})', '#22c55e'
-            else:
+            elif pnl < 0:
                 intensity = min(1.0, abs(pnl) / 500)
                 bg, tc = f'rgba(239,68,68,{0.15 + intensity * 0.5})', '#ef4444'
+            else:
+                bg, tc = 'rgba(148,163,184,0.2)', '#94a3b8'
             tip = f'title="${pnl:+,.2f}"' if pnl is not None else ''
             html += f'<div class="cal-cell" style="background:{bg};color:{tc}" {tip}>{day}</div>'
 
