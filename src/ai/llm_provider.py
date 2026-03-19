@@ -506,8 +506,8 @@ class LLMRouter:
                 logger.warning(f"LLM [{provider_name}] failed ({latency:.1f}s): {e}")
                 continue
 
-        # All providers failed — return safe default
-        logger.error("All LLM providers failed!")
+        # All providers failed — return safe default (rule-based fallback used)
+        logger.warning("All LLM providers failed — using rule-based fallback")
         return {
             'error': 'all_providers_failed',
             'market_regime': 'UNKNOWN',

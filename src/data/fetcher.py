@@ -276,6 +276,33 @@ class PriceFetcher:
                 }
             return {'error': str(e)}
 
+    def total_portfolio_value_usd(self, asset_symbols: List[str]) -> Optional[float]:
+        """
+        Spot portfolio NAV in USDT: USDT balance + sum(holding * USDT price) for each symbol.
+        Uses *total* balances from the exchange. Pass configured trading assets plus BNB (fees).
+        """
+        balance = self.get_balance()
+        if 'error' in balance:
+            return None
+        total_bal = balance.get('total', {})
+        if not total_bal:
+            return None
+        usdt = float(total_bal.get('USDT', 0) or 0)
+        nav = usdt
+        for sym in asset_symbols:
+            if not sym or sym == 'USDT':
+                continue
+            amt = float(total_bal.get(sym, 0) or 0)
+            if amt <= 0:
+                continue
+            try:
+                p = self.fetch_latest_price(f"{sym}/USDT")
+                if p and float(p) > 0:
+                    nav += amt * float(p)
+            except Exception:
+                pass
+        return round(nav, 4)
+
     def place_order(self, symbol: str, side: str, amount: float,
                     order_type: str = 'market', price: Optional[float] = None) -> Dict:
         """
