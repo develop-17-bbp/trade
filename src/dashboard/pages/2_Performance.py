@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Dict, List, Any
 import plotly.graph_objects as go
 
+from src.dashboard.data import compute_today_pnl
 from src.dashboard.theme import MARKETEDGE_CSS, metric_card, plotly_layout
 from src.dashboard.data import load_dashboard_state, load_journal_trades, compute_today_pnl
 
@@ -199,6 +200,13 @@ today_str = datetime.now().strftime("%Y-%m-%d")
 _portfolio = state.get("portfolio", {})
 today_pnl, _pnl_src_full = compute_today_pnl(_portfolio, journal, today_str)
 _pnl_source = _pnl_src_full
+# ── Today P&L — exchange-authoritative (device-independent) ──
+# Priority 1: today_pnl from state (= current_total_value - sod_balance, both from exchange)
+#             This is the same on every device sharing the same Binance account.
+# Priority 2: equity curve diff (local, varies per device — fallback only)
+# Shared helper keeps this aligned with the main dashboard.
+_portfolio = state.get("portfolio", {})
+today_pnl, _pnl_source = compute_today_pnl(_portfolio, journal, today_str)
 
 col_gauge, col_cards = st.columns([1, 1])
 with col_gauge:
