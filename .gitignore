@@ -15,24 +15,24 @@ build/
 *.env
 
 # ── Runtime Data (now stored in ~/.trade/) ──
-logs/*
+# logs/*
 !logs/.gitkeep
 authority_trade_summaries/
-data/
-memory/
-models/*.txt
-models/*.pt
-models/*.pkl
-models/*.json
+# data/
+# memory/
+# models/*.txt
+# models/*.pt
+# models/*.pkl
+# models/*.json
 
-# ── Databases ──
-*.db
-*.sqlite
-*.sqlite3
+# # ── Databases ──
+# *.db
+# *.sqlite
+# *.sqlite3
 
 # ── OS ──
 .DS_Store
-Thumbs.db
+# Thumbs.db
 
 # ── IDE ──
 .vscode/
