@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any
 import plotly.graph_objects as go
 
+from src.dashboard.data import compute_today_pnl
 from src.dashboard.theme import MARKETEDGE_CSS, metric_card, plotly_layout
 
 st.markdown(MARKETEDGE_CSS, unsafe_allow_html=True)
@@ -231,35 +232,9 @@ today_str = datetime.now().strftime("%Y-%m-%d")
 # Priority 1: today_pnl from state (= current_total_value - sod_balance, both from exchange)
 #             This is the same on every device sharing the same Binance account.
 # Priority 2: equity curve diff (local, varies per device — fallback only)
-# Priority 3: realized journal P&L (closed trades only)
+# Shared helper keeps this aligned with the main dashboard.
 _portfolio = state.get("portfolio", {})
-_sod_balance = _portfolio.get("sod_balance")        # set by executor at midnight UTC
-_sod_date    = _portfolio.get("sod_date", "")
-_state_today_pnl = _portfolio.get("today_pnl")      # recomputed each bar: current_total - sod
-
-_journal_closed = [t for t in journal if isinstance(t, dict) and (
-    t.get('status') == 'CLOSED' or
-    ('exit_price' in t and t.get('exit_price') and t.get('status') != 'OPEN')
-)]
-_journal_today_realized = sum(
-    t.get('pnl', 0) for t in _journal_closed
-    if str(t.get('exit_time') or t.get('timestamp', ''))[:10] == today_str
-)
-_eq_today_entries = [e for e in equity_curve if str(e.get('t', ''))[:10] == today_str]
-_equity_today_pnl = daily_pnls.get(today_str, 0.0)
-
-if _sod_balance is not None and _sod_date == today_str and _state_today_pnl is not None:
-    # Best: exchange-derived, resets at midnight UTC, identical on all devices
-    today_pnl = _state_today_pnl
-    _pnl_source = f"Exchange (SOD ${_sod_balance:,.0f})"
-elif len(_eq_today_entries) >= 2:
-    # Fallback: local equity curve diff (device-specific, consistent within one device)
-    today_pnl = _equity_today_pnl
-    _pnl_source = "Equity Curve (local)"
-else:
-    # Last resort: closed-trade realized P&L from journal
-    today_pnl = _journal_today_realized
-    _pnl_source = "Journal (realized)"
+today_pnl, _pnl_source = compute_today_pnl(_portfolio, journal, today_str)
 
 col_gauge, col_cards = st.columns([1, 1])
 with col_gauge:

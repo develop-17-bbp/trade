@@ -85,42 +85,42 @@ def filter_today(trades: List[Dict], date_str: Optional[str] = None) -> List[Dic
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TODAY P&L — exchange-authoritative, device-independent
+# TODAY P&L — journal-authoritative for true today-only realized P&L
 # ═══════════════════════════════════════════════════════════════════
 
 def compute_today_pnl(portfolio: Dict, journal_trades: List[Dict] = None,
                       date_str: Optional[str] = None) -> Tuple[float, str]:
     """
     Three-tier P&L priority:
-      1. Exchange SOD (today_pnl = current_total - sod_balance)
-      2. Equity curve intraday diff
-      3. Journal realized P&L (closed trades only)
+      1. Journal realized P&L from trades closed today
+      2. Equity curve intraday diff (fallback only)
+      3. Exchange/state today_pnl (fallback only)
 
     Returns: (pnl_value, source_label)
     """
     if date_str is None:
         date_str = datetime.now().strftime('%Y-%m-%d')
 
-    # Priority 1: Exchange-derived SOD balance
-    sod_balance = portfolio.get('sod_balance')
-    sod_date = portfolio.get('sod_date', '')
-    state_today_pnl = portfolio.get('today_pnl')
-
-    if sod_balance is not None and sod_date == date_str and state_today_pnl is not None:
-        return float(state_today_pnl), f"Exchange (SOD ${sod_balance:,.0f})"
+    # Priority 1: Journal realized P&L.
+    # If there are no closed trades today, the correct day P&L is 0.0.
+    if journal_trades is not None:
+        closed_today = filter_today(filter_closed(journal_trades), date_str)
+        realized = sum(float(t.get('pnl', 0) or 0) for t in closed_today)
+        return realized, "Journal (today realized)"
 
     # Priority 2: Equity curve intraday diff
     equity_curve = portfolio.get('equity_curve', [])
     eq_today = [e for e in equity_curve if str(e.get('t', ''))[:10] == date_str]
     if len(eq_today) >= 2:
         diff = float(eq_today[-1].get('v', 0)) - float(eq_today[0].get('v', 0))
-        return diff, "Equity Curve (local)"
+        return diff, "Equity Curve (fallback)"
 
-    # Priority 3: Journal realized P&L
-    if journal_trades is not None:
-        closed_today = filter_today(filter_closed(journal_trades), date_str)
-        realized = sum(t.get('pnl', 0) for t in closed_today)
-        return realized, "Journal (realized)"
+    # Priority 3: Exchange/state fallback
+    sod_balance = portfolio.get('sod_balance')
+    sod_date = portfolio.get('sod_date', '')
+    state_today_pnl = portfolio.get('today_pnl')
+    if sod_balance is not None and sod_date == date_str and state_today_pnl is not None:
+        return float(state_today_pnl), f"Exchange (fallback, SOD ${sod_balance:,.0f})"
 
     return float(portfolio.get('pnl', 0.0)), "Cumulative (fallback)"
 
