@@ -9,16 +9,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time
 import json
 import os
 import yaml
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Any
 import plotly.graph_objects as go
 
 from src.dashboard.data import compute_today_pnl
 from src.dashboard.theme import MARKETEDGE_CSS, metric_card, plotly_layout
+from src.dashboard.data import load_dashboard_state, load_journal_trades, compute_today_pnl
 
 st.markdown(MARKETEDGE_CSS, unsafe_allow_html=True)
 
@@ -33,37 +33,6 @@ def load_config() -> dict:
         with open("config.yaml", "r") as f:
             return yaml.safe_load(f) or {}
     return {}
-
-
-@st.cache_data(ttl=3)
-def load_state() -> dict:
-    try:
-        if os.path.exists("logs/dashboard_state.json"):
-            with open("logs/dashboard_state.json", "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-@st.cache_data(ttl=10)
-def load_journal() -> list:
-    """Load trades from encrypted journal (authoritative source of truth)."""
-    try:
-        # JOURNAL_ENCRYPTION_KEY must be set in .env — never hardcode
-        from src.monitoring.journal import TradingJournal
-        j = TradingJournal()
-        return j.trades or []
-    except Exception:
-        pass
-    # Fallback: plain JSON journal
-    try:
-        if os.path.exists("logs/trading_journal.json"):
-            with open("logs/trading_journal.json", "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return []
 
 
 @st.cache_data(ttl=30)
@@ -204,15 +173,15 @@ st.markdown("""
         <div class="subtext">1% DAILY TARGET TRACKER | MODEL ACCURACY | SYSTEM HEALTH</div>
     </div>
     <div style="text-align:right;">
-        <div class="subtext">AUTO-REFRESH: 10s</div>
+        <div class="subtext">Use sidebar &quot;Refresh data&quot; / main app auto-refresh</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# Load data
+# Load data (same sources as main desk — cached)
 config = load_config()
-state = load_state()
-journal = load_journal()
+state = load_dashboard_state()
+journal = load_journal_trades()
 fi_df = load_feature_importance()
 
 
@@ -228,6 +197,9 @@ daily_pnls = compute_daily_pnl_series(equity_curve)
 
 today_str = datetime.now().strftime("%Y-%m-%d")
 
+_portfolio = state.get("portfolio", {})
+today_pnl, _pnl_src_full = compute_today_pnl(_portfolio, journal, today_str)
+_pnl_source = _pnl_src_full
 # ── Today P&L — exchange-authoritative (device-independent) ──
 # Priority 1: today_pnl from state (= current_total_value - sod_balance, both from exchange)
 #             This is the same on every device sharing the same Binance account.
@@ -264,6 +236,7 @@ with col_gauge:
 with col_cards:
     sorted_dates = sorted(daily_pnls.keys())
     last_30 = sorted_dates[-30:] if len(sorted_dates) >= 30 else sorted_dates
+    _has_eq_history = len(last_30) > 0
     streak = 0
     for d in reversed(sorted_dates):
         if daily_pnls[d] >= daily_target:
@@ -271,24 +244,35 @@ with col_cards:
         else:
             break
     days_hit = sum(1 for d in last_30 if daily_pnls.get(d, 0) >= daily_target)
-    hit_rate = (days_hit / len(last_30) * 100) if last_30 else 0
-    avg_daily = np.mean([daily_pnls[d] for d in last_30]) if last_30 else 0
-    projected_monthly = avg_daily * 30
+    hit_rate = (days_hit / len(last_30) * 100) if last_30 else None
+    avg_daily = float(np.mean([daily_pnls[d] for d in last_30])) if last_30 else None
+    projected_monthly = (avg_daily * 30) if avg_daily is not None else None
 
     c1, c2 = st.columns(2)
     with c1:
         streak_class = "streak-hot" if streak >= 3 else "streak-cold"
-        st.markdown(f"""<div class="glass-card"><div class="metric-label">CONSECUTIVE DAYS AT TARGET</div><div class="metric-value">{streak} <span class="streak-badge {streak_class}">{'STREAK' if streak >= 3 else 'BUILDING'}</span></div></div>""", unsafe_allow_html=True)
+        _streak_disp = str(streak) if _has_eq_history else "—"
+        _streak_badge = f"<span class=\"streak-badge {streak_class}\">{'STREAK' if streak >= 3 else 'BUILDING'}</span>" if _has_eq_history else ""
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">CONSECUTIVE DAYS AT TARGET</div><div class="metric-value">{_streak_disp} {_streak_badge}</div></div>""", unsafe_allow_html=True)
     with c2:
-        color = "metric-value-green" if hit_rate >= 50 else "metric-value-red"
-        st.markdown(f"""<div class="glass-card"><div class="metric-label">TARGET HIT RATE (30D)</div><div class="metric-value {color}">{hit_rate:.0f}%</div></div>""", unsafe_allow_html=True)
+        if hit_rate is not None:
+            color = "metric-value-green" if hit_rate >= 50 else "metric-value-red"
+            st.markdown(f"""<div class="glass-card"><div class="metric-label">TARGET HIT RATE (30D)</div><div class="metric-value {color}">{hit_rate:.0f}%</div></div>""", unsafe_allow_html=True)
+        else:
+            st.markdown("""<div class="glass-card"><div class="metric-label">TARGET HIT RATE (30D)</div><div class="metric-value" style="color:#64748b">—</div></div>""", unsafe_allow_html=True)
     c3, c4 = st.columns(2)
     with c3:
-        color = "metric-value-green" if avg_daily > 0 else "metric-value-red"
-        st.markdown(f"""<div class="glass-card"><div class="metric-label">AVG DAILY P&L</div><div class="metric-value {color}">{"+" if avg_daily >= 0 else ""}${avg_daily:,.2f}</div></div>""", unsafe_allow_html=True)
+        if avg_daily is not None:
+            color = "metric-value-green" if avg_daily > 0 else "metric-value-red"
+            st.markdown(f"""<div class="glass-card"><div class="metric-label">AVG DAILY P&L (from equity)</div><div class="metric-value {color}">{"+" if avg_daily >= 0 else ""}${avg_daily:,.2f}</div></div>""", unsafe_allow_html=True)
+        else:
+            st.markdown("""<div class="glass-card"><div class="metric-label">AVG DAILY P&L (from equity)</div><div class="metric-value" style="color:#64748b">—</div></div>""", unsafe_allow_html=True)
     with c4:
-        color = "metric-value-green" if projected_monthly > 0 else "metric-value-red"
-        st.markdown(f"""<div class="glass-card"><div class="metric-label">PROJECTED MONTHLY</div><div class="metric-value {color}">${projected_monthly:,.0f}</div></div>""", unsafe_allow_html=True)
+        if projected_monthly is not None:
+            color = "metric-value-green" if projected_monthly > 0 else "metric-value-red"
+            st.markdown(f"""<div class="glass-card"><div class="metric-label">PROJECTED MONTHLY</div><div class="metric-value {color}">${projected_monthly:,.0f}</div></div>""", unsafe_allow_html=True)
+        else:
+            st.markdown("""<div class="glass-card"><div class="metric-label">PROJECTED MONTHLY</div><div class="metric-value" style="color:#64748b">—</div></div>""", unsafe_allow_html=True)
 
 # 30-Day Chart
 if last_30:
@@ -342,13 +326,21 @@ for row_start in range(0, 4, 2):
         acts = data.get("actuals", [])
 
         with col:
-            with st.expander(f"{name} | {accuracy:.1%} ({total} preds)", expanded=(total > 0)):
-                acc_color = "#22c55e" if accuracy > 0.55 else "#ffa500" if accuracy > 0.45 else "#ef4444"
-                st.markdown(f"""<div class="model-card">
-                    <div class="model-name">{name}</div>
-                    <div class="model-accuracy" style="color: {acc_color}">{accuracy:.1%}</div>
-                    <div class="metric-label">{total} total | {correct} correct</div>
-                </div>""", unsafe_allow_html=True)
+            _exp_title = f"{name} | {accuracy:.1%} ({total} preds)" if total > 0 else f"{name} | — (no predictions yet)"
+            with st.expander(_exp_title, expanded=(total > 0)):
+                if total > 0:
+                    acc_color = "#22c55e" if accuracy > 0.55 else "#ffa500" if accuracy > 0.45 else "#ef4444"
+                    st.markdown(f"""<div class="model-card">
+                        <div class="model-name">{name}</div>
+                        <div class="model-accuracy" style="color: {acc_color}">{accuracy:.1%}</div>
+                        <div class="metric-label">{total} total | {correct} correct</div>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""<div class="model-card">
+                        <div class="model-name">{name}</div>
+                        <div class="model-accuracy" style="color: #64748b">—</div>
+                        <div class="metric-label">Awaiting logged predictions from the trading system</div>
+                    </div>""", unsafe_allow_html=True)
 
                 # Leaderboard comparison
                 lb_data = GLOBAL_LEADERBOARD.get(metric_key, {})
@@ -379,10 +371,6 @@ for row_start in range(0, 4, 2):
                         fig_roll.update_layout(**plotly_layout(title="Rolling 50-Prediction Accuracy", height=220, yaxis=dict(tickformat=".0%")))
                         st.plotly_chart(fig_roll, width="stretch")
 
-                if total == 0:
-                    st.info(f"No predictions yet for {name}.")
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # SECTION 3: ENSEMBLE PERFORMANCE
 # ═══════════════════════════════════════════════════════════════════════
@@ -407,20 +395,46 @@ _journal_total_pnl = sum(t.get('pnl', 0) for t in _closed_journal)
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    color = "metric-value-green" if ensemble_acc > 0.55 else "metric-value-orange"
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">ENSEMBLE ACCURACY</div><div class="metric-value {color}">{ensemble_acc:.1%}</div></div>""", unsafe_allow_html=True)
+    if ensemble_total > 0:
+        color = "metric-value-green" if ensemble_acc > 0.55 else "metric-value-orange"
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">ENSEMBLE ACCURACY</div><div class="metric-value {color}">{ensemble_acc:.1%}</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""<div class="glass-card"><div class="metric-label">ENSEMBLE ACCURACY</div><div class="metric-value" style="color:#64748b">—</div></div>""", unsafe_allow_html=True)
 with c2:
-    win_rate = float(performance.get("win_rate") or _journal_win_rate)
-    color = "metric-value-green" if win_rate > 0.55 else "metric-value-orange"
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">TRADE WIN RATE</div><div class="metric-value {color}">{win_rate:.1%} ({len(_closed_journal)} closed)</div></div>""", unsafe_allow_html=True)
+    if performance.get("win_rate") is not None:
+        win_rate = float(performance["win_rate"])
+        _wr_n = len(_closed_journal) if _closed_journal else None
+        _wr_suffix = f" ({_wr_n} closed)" if _wr_n else ""
+    elif _closed_journal:
+        win_rate = _journal_win_rate
+        _wr_suffix = f" ({len(_closed_journal)} closed)"
+    else:
+        win_rate = None
+        _wr_suffix = ""
+    if win_rate is not None:
+        color = "metric-value-green" if win_rate > 0.55 else "metric-value-orange"
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">TRADE WIN RATE</div><div class="metric-value {color}">{win_rate:.1%}{_wr_suffix}</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""<div class="glass-card"><div class="metric-label">TRADE WIN RATE</div><div class="metric-value" style="color:#64748b">—</div></div>""", unsafe_allow_html=True)
 with c3:
-    sharpe = float(performance.get("sharpe_ratio", 0))
-    color = "metric-value-green" if sharpe > 1 else "metric-value-orange" if sharpe > 0 else "metric-value-red"
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">SHARPE RATIO</div><div class="metric-value {color}">{sharpe:.2f}</div></div>""", unsafe_allow_html=True)
+    if performance.get("sharpe_ratio") is not None:
+        sharpe = float(performance.get("sharpe_ratio", 0))
+        color = "metric-value-green" if sharpe > 1 else "metric-value-orange" if sharpe > 0 else "metric-value-red"
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">SHARPE RATIO</div><div class="metric-value {color}">{sharpe:.2f}</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""<div class="glass-card"><div class="metric-label">SHARPE RATIO</div><div class="metric-value" style="color:#64748b">—</div></div>""", unsafe_allow_html=True)
 with c4:
-    total_pnl = float(performance.get("total_pnl") or _journal_total_pnl)
-    color = "metric-value-green" if total_pnl > 0 else "metric-value-red"
-    st.markdown(f"""<div class="glass-card"><div class="metric-label">REALIZED P&L</div><div class="metric-value {color}">${total_pnl:,.2f}</div></div>""", unsafe_allow_html=True)
+    if performance.get("total_pnl") is not None:
+        total_pnl = float(performance["total_pnl"])
+    elif _closed_journal:
+        total_pnl = float(_journal_total_pnl)
+    else:
+        total_pnl = None
+    if total_pnl is not None:
+        color = "metric-value-green" if total_pnl > 0 else "metric-value-red"
+        st.markdown(f"""<div class="glass-card"><div class="metric-label">REALIZED P&L</div><div class="metric-value {color}">${total_pnl:,.2f}</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""<div class="glass-card"><div class="metric-label">REALIZED P&L</div><div class="metric-value" style="color:#64748b">—</div></div>""", unsafe_allow_html=True)
 
 # Equity Curve
 if equity_curve and len(equity_curve) > 10:
@@ -563,5 +577,3 @@ with c4:
 # Footer
 st.markdown(f'<div style="text-align:center; color:#555; font-size:0.7rem; margin-top:10px;">Last Update: {state.get("last_update","")}</div>', unsafe_allow_html=True)
 
-time.sleep(10)
-st.rerun()

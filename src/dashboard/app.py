@@ -5,6 +5,7 @@ Launch: streamlit run src/dashboard/app.py --server.port 8501
 """
 import sys
 import logging
+import asyncio
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -12,8 +13,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 logging.getLogger("tornado.application").setLevel(logging.CRITICAL)
 logging.getLogger("tornado.general").setLevel(logging.CRITICAL)
 
+
+def _suppress_websocket_closed_errors():
+    """Avoid noisy WebSocketClosedError / StreamClosedError when browser tab closes or refreshes."""
+    def _async_handler(loop, context):
+        exc = context.get("exception")
+        if exc is not None and type(exc).__name__ in ("WebSocketClosedError", "StreamClosedError"):
+            return
+        asyncio.default_exception_handler(context)
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.call_soon_threadsafe(lambda: loop.set_exception_handler(_async_handler))
+        else:
+            loop.set_exception_handler(_async_handler)
+    except Exception:
+        pass
+
+    class _WebSocketFilter(logging.Filter):
+        def filter(self, record):
+            msg = (record.msg % record.args) if record.args else str(record.msg)
+            if "Task exception was never retrieved" in msg or "WebSocketClosedError" in msg or "StreamClosedError" in msg:
+                return False
+            return True
+
+    logging.getLogger("asyncio").addFilter(_WebSocketFilter())
+    logging.getLogger("tornado.general").addFilter(_WebSocketFilter())
+    logging.getLogger("tornado.application").addFilter(_WebSocketFilter())
+
+
+_suppress_websocket_closed_errors()
+
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
+from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
 
 # Load .env so JOURNAL_ENCRYPTION_KEY and other secrets are available
 try:
@@ -47,6 +81,21 @@ from src.dashboard.data import (
 state = load_dashboard_state()
 journal = load_journal_trades()
 portfolio = state.get('portfolio', {})
+
+# Auto-refresh: periodic fragment runs must trigger a full rerun, but Streamlit also
+# invokes the fragment once synchronously during every full script run; st.rerun()
+# there would loop forever and the page never loads (stuck on "Connecting").
+if getattr(st, "fragment", None):
+    @st.fragment(run_every=timedelta(seconds=10))
+    def _auto_refresh():
+        ctx = get_script_run_ctx()
+        if ctx and ctx.fragment_ids_this_run:
+            st.rerun()
+else:
+    def _auto_refresh():
+        pass
+_auto_refresh()
+
 now = datetime.now()
 today_str = now.strftime('%Y-%m-%d')
 
@@ -66,6 +115,8 @@ pnl_color = GREEN if pnl >= 0 else RED
 
 # ── Trade stats (single-pass) ──
 stats = compute_trade_summary(journal, today_str)
+_today_wr = stats.get("today_win_rate")
+_today_wr_display = f"{_today_wr:.0%}" if _today_wr is not None else "—"
 
 # ── Account Balance ──
 _current_total = portfolio.get('current_total_value')
@@ -91,16 +142,16 @@ st.sidebar.markdown(f"""
 </div>
 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:12px">
     <div class="pj-card" style="padding:8px; text-align:center; margin:0">
-        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Trades</div>
+        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Trades (today)</div>
         <div style="font-size:0.9rem; font-weight:700; color:#e2e8f0">{stats['today_count']}</div>
     </div>
     <div class="pj-card" style="padding:8px; text-align:center; margin:0">
-        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Wins</div>
+        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Wins (today)</div>
         <div style="font-size:0.9rem; font-weight:700; color:{GREEN}">{stats['today_wins']}</div>
     </div>
     <div class="pj-card" style="padding:8px; text-align:center; margin:0">
-        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Win Rate</div>
-        <div style="font-size:0.9rem; font-weight:700; color:{GREEN if stats['win_rate'] > 0.5 else MUTED}">{stats['win_rate']:.0%}</div>
+        <div style="font-size:0.55rem; color:#64748b; text-transform:uppercase">Win rate (today)</div>
+        <div style="font-size:0.9rem; font-weight:700; color:{GREEN if (_today_wr or 0) > 0.5 else MUTED}">{_today_wr_display}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)

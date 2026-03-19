@@ -313,13 +313,30 @@ def run_app():
     """, unsafe_allow_html=True)
 
     # --- TOTALS (L9 Preview) ---
-    p_perf = state["portfolio"]
+    p_perf = state.get("portfolio") or {}
+    pnl_val = p_perf.get("pnl")
+    if pnl_val is None:
+        pnl_val = 0.0
+    else:
+        try:
+            pnl_val = float(pnl_val)
+        except (TypeError, ValueError):
+            pnl_val = 0.0
+    total_val = p_perf.get("total")
+    if total_val is None:
+        total_val = 0.0
+    else:
+        try:
+            total_val = float(total_val)
+        except (TypeError, ValueError):
+            total_val = 0.0
     perf_edge = state.get("performance_edge", {})
-    t1, t2, t3, t4 = st.columns(4)
-    with t1: st.markdown(metric_card("PORTFOLIO P&L", f"${p_perf['pnl']:,.2f}", "#00ff9d"), unsafe_allow_html=True)
-    with t2: st.markdown(metric_card("AGENT WINRATE", f"{perf_edge.get('agent_winrate', 0.5)*100:.1f}%", "#00eaff"), unsafe_allow_html=True)
-    with t3: st.markdown(metric_card("BASELINE UPLIFT", f"{perf_edge.get('uplift_pct', 0):+.2f}%", "#00ff9d"), unsafe_allow_html=True)
-    with t4: st.markdown(metric_card("ACTIVE LAYERS", "09 / 09", "#ffffff"), unsafe_allow_html=True)
+    t1, t2, t3, t4, t5 = st.columns(5)
+    with t1: st.markdown(metric_card("PORTFOLIO P&L", f"${pnl_val:+,.2f}", "#00ff9d" if pnl_val >= 0 else "#ff4d6d"), unsafe_allow_html=True)
+    with t2: st.markdown(metric_card("TOTAL", f"${total_val:,.2f}", "#ffffff"), unsafe_allow_html=True)
+    with t3: st.markdown(metric_card("AGENT WINRATE", f"{perf_edge.get('agent_winrate', 0.5)*100:.1f}%", "#00eaff"), unsafe_allow_html=True)
+    with t4: st.markdown(metric_card("BASELINE UPLIFT", f"{perf_edge.get('uplift_pct', 0):+.2f}%", "#00ff9d"), unsafe_allow_html=True)
+    with t5: st.markdown(metric_card("ACTIVE LAYERS", "09 / 09", "#ffffff"), unsafe_allow_html=True)
 
     # --- SENTIMENT HEATMAP ---
     st.markdown('<div class="layer-title">Sentiment Heatmap & Impact Analysis</div>', unsafe_allow_html=True)
