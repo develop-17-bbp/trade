@@ -9,14 +9,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import streamlit as st
-import time
 import json
 import plotly.graph_objects as go
 from html import escape as h
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from src.api.state import DashboardState
+from src.dashboard.data import (
+    load_dashboard_state,
+    load_journal_trades,
+    compute_today_pnl,
+)
 from src.dashboard.theme import (
     MARKETEDGE_CSS, metric_card, plotly_layout, radar_chart, calendar_heatmap_html,
     source_badge, GREEN, RED, BLUE, AMBER, CYAN, PURPLE, WHITE, MUTED,
@@ -29,13 +32,6 @@ def _html(html_str: str):
     """Render HTML without Markdown code-block interpretation from indentation."""
     import textwrap
     st.markdown(textwrap.dedent(html_str), unsafe_allow_html=True)
-
-
-state_manager = DashboardState()
-
-
-def _load_state():
-    return state_manager.get_full_state()
 
 
 def _parse_ts(ts) -> str:
@@ -112,39 +108,21 @@ def _compute_trade_stats(trades):
     }
 
 
-def _metrics_for_display(trade_stats: dict, portfolio: dict, today_str: str, daily_pnl: dict) -> dict:
-    """
-    Return metrics in the exact shape expected by the dashboard.
-    All numerics are float; risk_reward is str. Recomputed from latest data each call.
-    """
-    # Realized P&L: float (from closed trades)
+def _metrics_for_display(trade_stats: dict, portfolio: dict, today_str: str,
+                         journal_trades: list) -> dict:
+    """Metrics for cards; today's P&L uses same rules as sidebar (compute_today_pnl)."""
     realized_pnl = _safe_float(trade_stats.get('total_pnl'), 0.0)
-    # Win rate: float in [0, 1] for .1% display
-    wr = _safe_float(trade_stats.get('win_rate'), 0.0)
-    wr = max(0.0, min(1.0, wr))
-    # Profit factor: float or inf
+    wr = max(0.0, min(1.0, _safe_float(trade_stats.get('win_rate'), 0.0)))
     pf = trade_stats.get('profit_factor', 0.0)
     try:
         pf = float(pf) if pf != float('inf') else pf
     except (TypeError, ValueError):
         pf = 0.0
-    # Risk:Reward: string "1:x.xx" or "1:∞"
-    rr = trade_stats.get('risk_reward', '1:0.00')
-    rr = str(rr) if rr else '1:0.00'
-    # AI Accuracy: same as win rate (float 0-1)
+    rr = str(trade_stats.get('risk_reward', '1:0.00') or '1:0.00')
     acc = wr
-    # Today's P&L: float from equity curve or daily_pnl
-    eq = portfolio.get('equity_curve') or []
-    eq_today = [e for e in eq if str(e.get('t', ''))[:10] == today_str]
-    if len(eq_today) >= 2:
-        try:
-            today_pnl = _safe_float(eq_today[-1].get('v')) - _safe_float(eq_today[0].get('v'))
-        except Exception:
-            today_pnl = _safe_float(daily_pnl.get(today_str), 0.0)
-    else:
-        today_pnl = _safe_float(daily_pnl.get(today_str), 0.0)
+    today_pnl, _ = compute_today_pnl(portfolio, journal_trades, today_str)
     return {
-        'today_pnl': today_pnl,
+        'today_pnl': float(today_pnl),
         'realized_pnl': realized_pnl,
         'win_rate': wr,
         'profit_factor': pf,
@@ -175,41 +153,17 @@ def _compute_daily_pnl(trades):
 
 
 # ══════════════════════════════════════════════
-# JOURNAL LOADER — authoritative trade source
+# MAIN RENDER — cached loaders; journal is authoritative for realized stats
 # ══════════════════════════════════════════════
-def _load_journal_trades():
-    """Load all trades from encrypted journal (authoritative source of truth)."""
-    try:
-        import os
-        from src.monitoring.journal import TradingJournal
-        # JOURNAL_ENCRYPTION_KEY must be set in .env — never hardcode
-        j = TradingJournal()
-        return j.trades or []
-    except Exception:
-        return []
-
-
-# ══════════════════════════════════════════════
-# MAIN RENDER — state reloaded on every run (e.g. every 10s), so metrics use latest data
-# ══════════════════════════════════════════════
-state = _load_state()
+state = load_dashboard_state()
 portfolio = state.get('portfolio', {})
-# Trade history: prefer state (live-updated by executor) so metrics update in real time
-_journal_trades = _load_journal_trades()
-_state_trades = state.get('trade_history', [])
-# Use state trade_history when available so Realized P&L, Win Rate, etc. update during live trading
-trades = _state_trades if _state_trades else _journal_trades
+_journal_trades = load_journal_trades()
+_state_trades = state.get('trade_history', []) or []
+# Journal first (persistent closed trades); state fills gaps if journal empty this session
+trades = _journal_trades if _journal_trades else _state_trades
 open_positions = state.get('open_positions', {})
 trade_stats = _compute_trade_stats(trades)
-# Calendar: merge daily P&L from journal (full history) + state (recent) so past days show green/red
-_daily_j = _compute_daily_pnl(_journal_trades) if _journal_trades else {}
-_daily_s = _compute_daily_pnl(_state_trades) if _state_trades else {}
-_daily_merged = defaultdict(float)
-for d, v in _daily_j.items():
-    _daily_merged[d] += v
-for d, v in _daily_s.items():
-    _daily_merged[d] += v
-daily_pnl = dict(_daily_merged)
+daily_pnl = _compute_daily_pnl(trades)
 sources = state.get('sources', {})
 agent_overlay = state.get('agent_overlay', {})
 polymarket = state.get('polymarket', {})
@@ -234,26 +188,8 @@ today_trades = [
     t for t in trades
     if isinstance(t, dict) and _trade_date(t) == today_str
 ]
-# ── Today P&L — exchange-authoritative (device-independent) ──
-# Priority 1: portfolio.today_pnl from state (= current_total_value - sod_balance)
-#             Both values come from the Binance API → identical on every device
-#             sharing the same testnet account. Resets to 0 at 00:00 UTC.
-# Priority 2: equity-curve intraday diff (local, varies per device)
-# Priority 3: journal realized P&L for today (closed trades only)
-_sod_balance    = portfolio.get("sod_balance")
-_sod_date       = portfolio.get("sod_date", "")
-_state_today_pnl = portfolio.get("today_pnl")
-_eq_today = [e for e in portfolio.get('equity_curve', []) if str(e.get('t', ''))[:10] == today_str]
-
-if _sod_balance is not None and _sod_date == today_str and _state_today_pnl is not None:
-    today_pnl = _state_today_pnl
-    _today_pnl_label = f"Today's P&L ⚡ Exchange"
-elif len(_eq_today) >= 2:
-    today_pnl = float(_eq_today[-1]['v']) - float(_eq_today[0]['v'])
-    _today_pnl_label = "Today's P&L (Local)"
-else:
-    today_pnl = daily_pnl.get(today_str, 0)
-    _today_pnl_label = "Today's P&L (Realized)"
+today_pnl, _today_pnl_src = compute_today_pnl(portfolio, _journal_trades, today_str)
+_today_pnl_label = f"Today's P&L ({_today_pnl_src.split('(')[0].strip()})"
 
 # All-time closed trades and win count (use _safe_pnl so bad data doesn't break display)
 _all_closed = [t for t in trades if isinstance(t, dict) and (
@@ -312,24 +248,25 @@ tab_live, tab_agents, tab_overview = st.tabs(["Live Trading", "Agent Overlay", "
 # TAB: LIVE TRADING
 # ══════════════════════════════════════════════
 with tab_live:
-    # Reload state from disk on every run (e.g. every 10s auto-refresh) so metrics are from latest data
-    state = _load_state()
+    state = load_dashboard_state()
     portfolio = state.get('portfolio', {})
-    _state_trades = state.get('trade_history', [])
-    trades = _state_trades if _state_trades else _journal_trades
+    open_positions = state.get('open_positions', {})
+    _j = load_journal_trades()
+    _st = state.get('trade_history', []) or []
+    trades = _j if _j else _st
     trade_stats = _compute_trade_stats(trades)
     daily_pnl_live = _compute_daily_pnl(trades)
-    # Normalize all metrics to expected types (float for numbers, str for risk_reward)
-    m = _metrics_for_display(trade_stats, portfolio, today_str, daily_pnl_live)
+    m = _metrics_for_display(trade_stats, portfolio, today_str, _j if _j else trades)
 
     _closed_count = len([t for t in trades if isinstance(t, dict) and t.get('status') == 'CLOSED'])
     _total_count = len([t for t in trades if isinstance(t, dict)])
-    _wallet_total = _safe_float(portfolio.get('total'), 0.0)
+    _wtv = portfolio.get("current_total_value")
+    _wallet_display = f"${_safe_float(_wtv, 0.0):,.2f}" if _wtv is not None else "—"
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        st.markdown(metric_card("Wallet balance", f"${_wallet_total:,.2f}", "#e2e8f0",
-                                subtitle="Total portfolio value"), unsafe_allow_html=True)
+        st.markdown(metric_card("Wallet balance", _wallet_display, "#e2e8f0",
+                                subtitle="NAV from exchange (same as state)"), unsafe_allow_html=True)
     with c2:
         st.markdown(metric_card("Realized P&L", f"${m['realized_pnl']:+,.2f}",
                                 GREEN if m['realized_pnl'] >= 0 else RED,
@@ -381,7 +318,8 @@ with tab_live:
 
     with ch2:
         # Daily & Cumulative P&L Chart (dates = days with closed trades)
-        if daily_pnl:
+        if daily_pnl_live:
+            daily_pnl = daily_pnl_live
             sorted_days = sorted(daily_pnl.keys())
             pnl_vals = [daily_pnl[d] for d in sorted_days]
             cum_pnl = []
@@ -419,7 +357,7 @@ with tab_live:
     cal_month = st.selectbox("Month", list(range(1, 13)),
                              index=now.month - 1, format_func=lambda m: f"{now.year}-{m:02d}",
                              key="cal_month", label_visibility="collapsed")
-    st.markdown(calendar_heatmap_html(daily_pnl, now.year, cal_month), unsafe_allow_html=True)
+    st.markdown(calendar_heatmap_html(daily_pnl_live, now.year, cal_month), unsafe_allow_html=True)
 
     # ── Open Positions ──
     st.markdown('<div class="section-title">Open Positions</div>', unsafe_allow_html=True)
@@ -671,6 +609,3 @@ with tab_overview:
         </div>
         """)
 
-# ── Auto-refresh ──
-time.sleep(5)
-st.rerun()

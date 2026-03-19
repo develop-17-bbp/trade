@@ -25,11 +25,11 @@ _DEFAULT_STATE = {
         "pnl": 0.0,
         "return": 0.0,
         "equity_curve": [],
-        # Exchange-authoritative values — device-independent today P&L anchor
-        "sod_balance": None,        # USDT balance at 00:00 UTC (fetched from exchange)
+        # Exchange-authoritative — SOD must use same NAV basis as current_total_value
+        "sod_balance": None,        # Portfolio NAV (USDT) at anchor time (start of UTC day)
         "sod_date": "",             # ISO date the sod_balance was captured for
-        "current_total_value": 0.0, # live total portfolio value (USDT + holdings)
-        "today_pnl": 0.0,           # current_total_value - sod_balance (canonical)
+        "current_total_value": 0.0,  # live NAV: free USDT + free crypto × price (see executor)
+        "today_pnl": 0.0,           # current_total_value - sod_balance when SOD is valid NAV
     },
     "agentic_log": [],
     "memory_hits": [],
@@ -222,9 +222,9 @@ class DashboardState:
         Update portfolio state.
         - pnl / asset_return: legacy cumulative figures (kept for equity curve)
         - current_total_value: live USDT+holdings value from exchange (device-independent)
-        - sod_balance: exchange balance at 00:00 UTC today (set once per day)
+        - sod_balance: portfolio NAV at 00:00 UTC today (same formula as current_total_value)
         - sod_date: ISO date string the sod_balance belongs to (e.g. '2026-03-19')
-        today_pnl is automatically recomputed as current_total_value - sod_balance.
+        today_pnl is recomputed as current_total_value - sod_balance when both are set.
         """
         def _mod(s):
             p = s["portfolio"]
@@ -253,8 +253,8 @@ class DashboardState:
 
     def set_sod_balance(self, sod_balance: float, sod_date: str):
         """
-        Called once at 00:00 UTC by the daily reset scheduler.
-        Anchors today_pnl to the actual exchange balance at midnight.
+        Called at 00:00 UTC by the daily reset scheduler.
+        Anchors today_pnl to full portfolio NAV at midnight (same basis as current_total_value).
         """
         def _mod(s):
             p = s["portfolio"]
