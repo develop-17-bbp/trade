@@ -367,6 +367,19 @@ class TradingExecutor:
             self.robinhood = RobinhoodClient()
             self.robinhood.login(creds['username'], creds['password'])
 
+    def _nav_usd_dashboard(self, balance_info: dict, current_prices: dict) -> float:
+        """Same NAV as the live trading bar → matches portfolio.current_total_value in dashboard state."""
+        if not balance_info or 'error' in balance_info:
+            return 0.0
+        nav = float(balance_info.get('USDT', 0) or 0)
+        for a_name, a_price in current_prices.items():
+            if not a_price:
+                continue
+            held = balance_info.get(a_name, 0.0)
+            if isinstance(held, (int, float)) and held > 0:
+                nav += float(held) * float(a_price)
+        return round(nav, 4)
+
     def run(self):
         """Main entry point -- run the full system."""
         _safe_print("=" * 70)
@@ -415,25 +428,6 @@ class TradingExecutor:
                     self.risk_manager.current_capital = usdt_free
                     self.risk_manager.peak_capital = usdt_free
 
-                # ── SOD (Start-of-Day) Balance Anchor ──
-                # Fetch the canonical today-P&L anchor from the exchange.
-                # Using the live balance here means ALL devices with the same
-                # Binance testnet key see the same sod_balance → same today P&L.
-                try:
-                    from src.api.state import DashboardState
-                    _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    _ds = DashboardState()
-                    _existing_sod = _ds.get_full_state().get("portfolio", {}).get("sod_date", "")
-                    if _existing_sod != _today_str:
-                        # New day (or first run) — set SOD from live exchange balance
-                        _sod_val = usdt_free if usdt_free > 0 else self.initial_capital
-                        _ds.set_sod_balance(_sod_val, _today_str)
-                        _safe_print(f"  📅 SOD balance anchored: ${_sod_val:,.2f} USDT ({_today_str})")
-                    else:
-                        _safe_print(f"  📅 SOD already set for {_today_str}")
-                except Exception as _sod_err:
-                    logger.warning(f"[SOD] Failed to set SOD balance: {_sod_err}")
-
                 _safe_print(f"\n  💰 Reference Capital: ${self.initial_capital:,.2f} USDT")
             else:
                 is_invalid_creds = balance.get('invalid_credentials', False)
@@ -459,29 +453,57 @@ class TradingExecutor:
         # ── Fetch & Display Live Spot Prices ──
         _safe_print(f"\n  📈 LIVE SPOT PRICES")
         _safe_print("  " + "-" * 50)
-        total_portfolio_usd = 0.0
+        _startup_prices: dict = {}
         for asset in self.assets:
             symbol = f"{asset}/USDT"
             try:
                 price = self.price_source.fetch_latest_price(symbol)
                 _safe_print(f"  {symbol:<12} ${price:>12,.2f}")
-                # Calculate holdings value if we have balance
+                if price:
+                    _startup_prices[asset] = float(price)
+                # Show wallet total balance (informational) vs free balance used for NAV
                 if self.price_source.is_authenticated and 'error' not in balance:
-                    held = balance.get('total', {}).get(asset, 0.0)
-                    if held > 0:
-                        value = held * price
-                        total_portfolio_usd += value
-                        _safe_print(f"  {'':12}   ↳ Holding: {held:.8f} = ${value:,.2f}")
+                    held_total = balance.get('total', {}).get(asset, 0.0)
+                    if held_total > 0 and price:
+                        value = held_total * price
+                        _safe_print(f"  {'':12}   ↳ Holding: {held_total:.8f} = ${value:,.2f}")
             except Exception as e:
                 _safe_print(f"  {symbol:<12} (unavailable: {e})")
 
-        # Add USDT to total portfolio
+        _dashboard_nav = 0.0
         if self.price_source.is_authenticated and 'error' not in balance:
-            usdt_held = balance.get('total', {}).get('USDT', 0.0)
-            total_portfolio_usd += usdt_held
-            _safe_print(f"\n  🏦 TOTAL PORTFOLIO VALUE: ${total_portfolio_usd:,.2f} USD")
+            _dashboard_nav = self._nav_usd_dashboard(balance, _startup_prices)
+            _safe_print(f"\n  🏦 TOTAL PORTFOLIO VALUE (NAV, dashboard): ${_dashboard_nav:,.2f} USD")
 
         _safe_print("-" * 70)
+
+        # ── SOD anchor: same basis as current_total_value (free USDT + free crypto × price) ──
+        if self.price_source.is_authenticated and 'error' not in balance:
+            try:
+                from src.api.state import DashboardState
+                _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                _ds = DashboardState()
+                _fp = _ds.get_full_state().get("portfolio", {})
+                _existing_sod = _fp.get("sod_date", "")
+                _sod_amt = _fp.get("sod_balance")
+                _cur_amt = _fp.get("current_total_value")
+                _legacy_sod = False
+                try:
+                    if _sod_amt is not None and _cur_amt is not None:
+                        _legacy_sod = float(_sod_amt) > 0 and float(_cur_amt) > 0 and float(_sod_amt) < float(_cur_amt) * 0.35
+                except (TypeError, ValueError):
+                    pass
+                if _existing_sod != _today_str or _legacy_sod:
+                    _sod_val = _dashboard_nav if _dashboard_nav > 0 else (
+                        usdt_free if usdt_free > 0 else self.initial_capital
+                    )
+                    _ds.set_sod_balance(_sod_val, _today_str)
+                    _tag = " (repaired legacy USDT-only anchor)" if _legacy_sod and _existing_sod == _today_str else ""
+                    _safe_print(f"  📅 SOD portfolio NAV anchored: ${_sod_val:,.2f} ({_today_str}){_tag}")
+                else:
+                    _safe_print(f"  📅 SOD already set for {_today_str}")
+            except Exception as _sod_err:
+                logger.warning(f"[SOD] Failed to set SOD balance: {_sod_err}")
 
         # ── Layer Status ──
         _safe_print("\n  🧠 9-LAYER INTELLIGENCE STATUS")
@@ -946,7 +968,7 @@ class TradingExecutor:
 
             total_return_pct = ((total_portfolio_value - self.initial_capital) / self.initial_capital * 100) if self.initial_capital > 0 else 0
 
-            # Update Dashboard State
+            # Update Dashboard State (so PORTFOLIO P&L and TOTAL are visible in backend cards)
             try:
                 from src.api.state import DashboardState
                 pnl_abs = total_portfolio_value - self.initial_capital
@@ -959,8 +981,7 @@ class TradingExecutor:
                 )
             except: pass
 
-            _trades_today = getattr(self.strategy, 'risk_manager', None)
-            _trades_count = _trades_today.daily_trades if _trades_today else 0
+            _trades_count = getattr(self.risk_manager, 'daily_trades', 0)
             _open_positions = self.risk_manager.open_positions if hasattr(self.risk_manager, 'open_positions') else {}
             _open_count = len(_open_positions)
             _journal_total = len(self.journal.trades) if hasattr(self.journal, 'trades') else 0
@@ -2050,11 +2071,14 @@ class TradingExecutor:
                     'status': 'CLOSED',
                 })
                 
-                # Push updated benchmark metrics to dashboard
+                # Push updated benchmark metrics to dashboard (only CLOSED trades count)
                 all_trades = ds.get_full_state().get('trade_history', [])
-                closed_trades = [t for t in all_trades if 'pnl' in t]
+                closed_trades = [
+                    t for t in all_trades
+                    if isinstance(t, dict) and t.get('status') == 'CLOSED' and 'pnl' in t
+                ]
                 if closed_trades:
-                    wins = sum(1 for t in closed_trades if t['pnl'] > 0)
+                    wins = sum(1 for t in closed_trades if t.get('pnl', 0) > 0)
                     wr = wins / len(closed_trades)
                     rets = [t['return_pct'] / 100 for t in closed_trades if 'return_pct' in t]
                     sharpe = 0.0
@@ -2062,21 +2086,26 @@ class TradingExecutor:
                         import numpy as _np
                         arr = _np.array(rets)
                         sharpe = (float(_np.mean(arr)) / float(_np.std(arr))) * float(_np.sqrt(252)) if float(_np.std(arr)) > 0 else 0.0
-                    
+                    win_pnl = sum(t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) > 0)
+                    loss_pnl = abs(sum(t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) < 0))
+                    pf = (win_pnl / loss_pnl) if loss_pnl > 0 else (float('inf') if win_pnl > 0 else 0.0)
+                    rr = f"1:{win_pnl / loss_pnl:.2f}" if loss_pnl > 0 else "1:∞"
                     ds.update_benchmark_metrics({
                         'win_rate': wr,
+                        'accuracy': wr,
                         'sharpe_ratio': sharpe,
                         'total_trades': len(closed_trades),
-                        'total_pnl': sum(t['pnl'] for t in closed_trades),
+                        'total_pnl': sum(t.get('pnl', 0) for t in closed_trades),
+                        'profit_factor': pf,
+                        'risk_reward': rr,
                     })
-                    
                     # Also save to persistent benchmark history
                     self.benchmark.evaluate_all_from_executor(
                         trade_history=closed_trades,
                         returns=rets if len(rets) >= 2 else None,
                     )
-            except Exception:
-                pass
+            except Exception as _e:
+                _safe_print(f"  [DASHBOARD] Failed to update benchmark metrics: {_e}")
 
     def _fetch_data(self, symbol: str) -> Optional[Dict[str, List[float]]]:
         """Fetch and format OHLCV data for strategy ingestion."""

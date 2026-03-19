@@ -336,17 +336,24 @@ def main():
                         executor.strategy.risk_manager.reset_daily()
                     logger.info("[SCHEDULER] Daily P&L reset at 00:00 UTC")
 
-                    # ── Re-anchor SOD balance from exchange at midnight ──
-                    # This ensures today_pnl on ALL devices resets to 0 at the
-                    # same time using the same Binance account balance as the anchor.
+                    # ── Re-anchor SOD NAV at midnight (same basis as portfolio.current_total_value) ──
                     try:
                         from src.api.state import DashboardState
                         _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                         _bal = executor.price_source.get_balance() if hasattr(executor, 'price_source') else {}
-                        _usdt = _bal.get('free', {}).get('USDT', 0.0) if 'error' not in _bal else 0.0
-                        if _usdt > 0:
-                            DashboardState().set_sod_balance(_usdt, _today)
-                            logger.info(f"[SCHEDULER] SOD balance reset: ${_usdt:,.2f} USDT ({_today})")
+                        if 'error' not in _bal and hasattr(executor, '_nav_usd_dashboard'):
+                            _px = {}
+                            for _a in getattr(executor, 'assets', []):
+                                try:
+                                    _p = executor.price_source.fetch_latest_price(f"{_a}/USDT")
+                                    if _p:
+                                        _px[_a] = float(_p)
+                                except Exception:
+                                    pass
+                            _nav = executor._nav_usd_dashboard(_bal, _px)
+                            if _nav and _nav > 0:
+                                DashboardState().set_sod_balance(_nav, _today)
+                                logger.info(f"[SCHEDULER] SOD NAV reset: ${_nav:,.2f} ({_today})")
                     except Exception as _sod_e:
                         logger.warning(f"[SCHEDULER] SOD balance reset failed: {_sod_e}")
                     # Weekly reset on Mondays

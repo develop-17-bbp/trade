@@ -142,7 +142,7 @@ class HMMRegimeDetector:
             True if fitting succeeded
         """
         if not HAS_HMM:
-            logger.error("hmmlearn not installed — cannot fit HMM")
+            logger.warning("hmmlearn not installed — cannot fit HMM (optional)")
             return False
 
         obs = self._build_observations(returns, volatility, volume_changes)
