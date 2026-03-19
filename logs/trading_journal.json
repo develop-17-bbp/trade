@@ -28963,12 +28963,14 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null,
+    "status": "CLOSED",
+    "pnl": -182.40980563030217,
+    "exit_price": 44993.403,
+    "exit_time": "2026-03-20T00:18:26.407193",
     "prev_hash": "163614718e79335a4e9d913eca940ed60d302548e492b57fefd2c6dfd52ac5aa",
-    "entry_hash": "df0ca06441cf43ff02d92bc3fa4f482baad83760b0a5123061f054d9a9329c5d"
+    "entry_hash": "df0ca06441cf43ff02d92bc3fa4f482baad83760b0a5123061f054d9a9329c5d",
+    "reason": "time_exit",
+    "return_pct": -0.36481961126060436
   },
   {
     "timestamp": "2026-03-18T13:07:05.720137",
@@ -29001,12 +29003,14 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null,
+    "status": "CLOSED",
+    "pnl": 73.38074247537708,
+    "exit_price": 2497.4745,
+    "exit_time": "2026-03-20T00:05:48.891923",
     "prev_hash": "df0ca06441cf43ff02d92bc3fa4f482baad83760b0a5123061f054d9a9329c5d",
-    "entry_hash": "ff87172dedd022028eae94ba6db0c925f13099a8f77d743f3685dbb6744a8dad"
+    "entry_hash": "ff87172dedd022028eae94ba6db0c925f13099a8f77d743f3685dbb6744a8dad",
+    "reason": "stop_loss",
+    "return_pct": 0.14676148495075414
   },
   {
     "timestamp": "2026-03-18T13:07:08.402874",
@@ -29077,12 +29081,14 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null,
+    "status": "CLOSED",
+    "pnl": -182.1189477823295,
+    "exit_price": 45012.7962,
+    "exit_time": "2026-03-19T23:57:00.594940",
     "prev_hash": "cdbc54e727cbc475b8cf4127c26949d808e9759e78e141912c781e459c6d703b",
-    "entry_hash": "916cf1c7d033b56f1d84e905c5f2988d7bcb8f0e5fa86c65abfe9995bdda576b"
+    "entry_hash": "916cf1c7d033b56f1d84e905c5f2988d7bcb8f0e5fa86c65abfe9995bdda576b",
+    "reason": "time_exit",
+    "return_pct": -0.3642378955646591
   },
   {
     "timestamp": "2026-03-18T13:07:56.670663",
@@ -29115,12 +29121,14 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null,
+    "status": "CLOSED",
+    "pnl": 74.8016587535862,
+    "exit_price": 2496.3751,
+    "exit_time": "2026-03-19T23:12:12.886944",
     "prev_hash": "916cf1c7d033b56f1d84e905c5f2988d7bcb8f0e5fa86c65abfe9995bdda576b",
-    "entry_hash": "4d556bcbc11318809655dd162f6faf48da2654f99ac44c2a03ec4852dfa8b4b0"
+    "entry_hash": "4d556bcbc11318809655dd162f6faf48da2654f99ac44c2a03ec4852dfa8b4b0",
+    "reason": "stop_loss",
+    "return_pct": 0.1496033175071724
   },
   {
     "timestamp": "2026-03-18T13:08:04.930484",
@@ -29153,11 +29161,13 @@
       },
       "execution_mode": "SHADOW"
     },
-    "status": "OPEN",
-    "pnl": 0.0,
-    "exit_price": null,
-    "exit_time": null,
+    "status": "CLOSED",
+    "pnl": 10481.386665493887,
+    "exit_price": 2496.9477,
+    "exit_time": "2026-03-19T23:56:13.118764",
     "prev_hash": "4d556bcbc11318809655dd162f6faf48da2654f99ac44c2a03ec4852dfa8b4b0",
-    "entry_hash": "538e918f50cc2a5a8d13df934623908c48dc1c9866c215dad8569d6ca12c11d7"
+    "entry_hash": "538e918f50cc2a5a8d13df934623908c48dc1c9866c215dad8569d6ca12c11d7",
+    "reason": "time_exit",
+    "return_pct": 20.962773330987776
   }
 ]

@@ -1,0 +1,67 @@
+{
+  "data_integrity": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "market_structure": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "regime_intelligence": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "mean_reversion": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "trend_momentum": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "risk_guardian": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "sentiment_decoder": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "trade_timing": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "portfolio_optimizer": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "pattern_matcher": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "loss_prevention": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "polymarket_arb": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  },
+  "decision_auditor": {
+    "weight": 1.0,
+    "accuracy": 0.5,
+    "total_calls": 0
+  }
+}
