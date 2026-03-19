@@ -18,6 +18,7 @@ from src.agents.base_agent import (
     BaseAgent, AgentVote, DataIntegrityReport, AuditResult, EnhancedDecision
 )
 from src.agents.combiner import AgentCombiner
+from src.agents.debate_engine import DebateEngine
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,9 @@ class AgentOrchestrator:
         # Fix #9: Store last votes per asset for outcome-based weight updates
         self._last_votes: Dict[str, Dict[str, AgentVote]] = {}
 
-        # Initialize combiner
+        # Initialize combiner and debate engine
         self.combiner = AgentCombiner(agent_cfg)
+        self.debate_engine = DebateEngine(self.config)
 
         # Initialize all 12 agents
         self.agents: Dict[str, BaseAgent] = {}
@@ -258,19 +260,49 @@ class AgentOrchestrator:
         # Fix #9: Save votes for outcome-based weight update
         self._last_votes[asset] = dict(votes)
 
+        # ── STEP 2.5: ADVERSARIAL DEBATE ──
+        # Agents challenge each other's positions with specific metrics.
+        # Agents that survive cross-examination get conviction bonuses;
+        # agents that fail may flip direction or lose confidence.
+        debate_result = None
+        try:
+            debate_result = self.debate_engine.run_debate(
+                votes=votes,
+                quant_state=sanitized_state,
+                context=context,
+            )
+            # Use post-debate votes (with conviction adjustments) for combining
+            debate_votes = debate_result.post_debate_votes
+            logger.info(
+                f"[DEBATE] {asset}: {debate_result.debate_summary} "
+                f"| flipped={len(debate_result.flipped_agents)} "
+                f"| strengthened={len(debate_result.strengthened_agents)}"
+            )
+        except Exception as e:
+            logger.warning(f"[DEBATE] Debate failed, using raw votes: {e}")
+            debate_votes = votes
+
         # ── STEP 3: Combine votes via Bayesian weighted consensus ──
         regime = sanitized_state.get('hmm_regime', {}).get('regime', 'sideways') \
             if isinstance(sanitized_state.get('hmm_regime'), dict) \
             else sanitized_state.get('hmm_regime', 'sideways')
 
-        loss_vote = votes.get('loss_prevention')
+        loss_vote = debate_votes.get('loss_prevention')
         enhanced = self.combiner.combine(
-            votes=votes,
+            votes=debate_votes,
             agents=self.agents,
             regime=regime,
             loss_guardian_vote=loss_vote,
         )
         enhanced.data_quality = quality_score
+
+        # Attach debate metadata for dashboard visibility
+        if debate_result:
+            enhanced.risk_params['debate_summary'] = debate_result.debate_summary
+            enhanced.risk_params['debate_flipped'] = debate_result.flipped_agents
+            enhanced.risk_params['debate_strengthened'] = debate_result.strengthened_agents
+            enhanced.risk_params['debate_consensus_shift'] = debate_result.consensus_shift
+            enhanced.risk_params['debate_conviction'] = debate_result.conviction_multipliers
 
         # ── STEP 4: Decision Auditor (post-gate) ──
         auditor = self.agents['decision_auditor']
@@ -391,7 +423,8 @@ class AgentOrchestrator:
                 'accuracy': agent.get_accuracy(),
                 'total_calls': agent._total_calls,
             }
-        path = "/c/Users/convo/trade/memory/agent_weights.json"
+        # Use os.path for cross-platform compatibility (Windows + Unix)
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "memory", "agent_weights.json")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             with open(path, 'w') as f:
@@ -401,7 +434,8 @@ class AgentOrchestrator:
 
     def _load_all_states(self):
         """Load persisted agent weights."""
-        path = "/c/Users/convo/trade/memory/agent_weights.json"
+        # Use os.path for cross-platform compatibility (Windows + Unix)
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "memory", "agent_weights.json")
         if not os.path.exists(path):
             return
         try:

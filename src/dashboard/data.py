@@ -97,6 +97,7 @@ def filter_today(trades: List[Dict], date_str: Optional[str] = None) -> List[Dic
 
 # ═══════════════════════════════════════════════════════════════════
 # TODAY P&L — exchange NAV vs SOD when comparable; else journal / equity
+# TODAY P&L — journal-authoritative for true today-only realized P&L
 # ═══════════════════════════════════════════════════════════════════
 
 def _legacy_usdt_only_sod(portfolio: Dict) -> bool:
@@ -127,6 +128,10 @@ def compute_today_pnl(portfolio: Dict, journal_trades: List[Dict] = None,
          (full NAV anchor) and sod_date matches today.
       2. Equity curve intraday diff (v = session cumulative P&L — rough intraday).
       3. Journal closed trades realized today.
+    Three-tier P&L priority:
+      1. Journal realized P&L from trades closed today
+      2. Equity curve intraday diff (fallback only)
+      3. Exchange/state today_pnl (fallback only)
 
     Returns: (pnl_value, source_label)
     """
@@ -145,6 +150,12 @@ def compute_today_pnl(portfolio: Dict, journal_trades: List[Dict] = None,
     )
     if use_exchange:
         return float(state_today_pnl), f"Exchange (SOD NAV ${float(sod_balance):,.0f})"
+    # Priority 1: Journal realized P&L.
+    # If there are no closed trades today, the correct day P&L is 0.0.
+    if journal_trades is not None:
+        closed_today = filter_today(filter_closed(journal_trades), date_str)
+        realized = sum(float(t.get('pnl', 0) or 0) for t in closed_today)
+        return realized, "Journal (today realized)"
 
     equity_curve = portfolio.get('equity_curve', [])
     eq_today = [e for e in equity_curve if str(e.get('t', ''))[:10] == date_str]
@@ -156,6 +167,14 @@ def compute_today_pnl(portfolio: Dict, journal_trades: List[Dict] = None,
         closed_today = filter_today(filter_closed(journal_trades), date_str)
         realized = sum(float(t.get('pnl', 0) or 0) for t in closed_today)
         return realized, "Journal (realized today)"
+        return diff, "Equity Curve (fallback)"
+
+    # Priority 3: Exchange/state fallback
+    sod_balance = portfolio.get('sod_balance')
+    sod_date = portfolio.get('sod_date', '')
+    state_today_pnl = portfolio.get('today_pnl')
+    if sod_balance is not None and sod_date == date_str and state_today_pnl is not None:
+        return float(state_today_pnl), f"Exchange (fallback, SOD ${sod_balance:,.0f})"
 
     return float(portfolio.get('pnl', 0.0) or 0.0), "State (fallback)"
 

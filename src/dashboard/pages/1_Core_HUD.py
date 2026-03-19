@@ -20,6 +20,8 @@ from src.dashboard.data import (
     load_journal_trades,
     compute_today_pnl,
 )
+from src.api.state import DashboardState
+from src.dashboard.data import compute_today_pnl
 from src.dashboard.theme import (
     MARKETEDGE_CSS, metric_card, plotly_layout, radar_chart, calendar_heatmap_html,
     source_badge, GREEN, RED, BLUE, AMBER, CYAN, PURPLE, WHITE, MUTED,
@@ -192,6 +194,28 @@ today_pnl, _today_pnl_src = compute_today_pnl(portfolio, _journal_trades, today_
 _today_pnl_label = f"Today's P&L ({_today_pnl_src.split('(')[0].strip()})"
 
 # All-time closed trades and win count (use _safe_pnl so bad data doesn't break display)
+# ── Today P&L — exchange-authoritative (device-independent) ──
+# Priority 1: portfolio.today_pnl from state (= current_total_value - sod_balance)
+#             Both values come from the Binance API → identical on every device
+#             sharing the same testnet account. Resets to 0 at 00:00 UTC.
+# Priority 2: equity-curve intraday diff (local, varies per device)
+# Priority 3: journal realized P&L for today (closed trades only)
+_sod_balance    = portfolio.get("sod_balance")
+_sod_date       = portfolio.get("sod_date", "")
+_state_today_pnl = portfolio.get("today_pnl")
+_eq_today = [e for e in portfolio.get('equity_curve', []) if str(e.get('t', ''))[:10] == today_str]
+
+if _sod_balance is not None and _sod_date == today_str and _state_today_pnl is not None:
+    today_pnl = _state_today_pnl
+    _today_pnl_label = "Today's P&L (Exchange)"
+elif len(_eq_today) >= 2:
+    today_pnl = float(_eq_today[-1]['v']) - float(_eq_today[0]['v'])
+    _today_pnl_label = "Today's P&L (Local)"
+else:
+    today_pnl, _today_pnl_source = compute_today_pnl(portfolio, trades, today_str)
+    _today_pnl_label = f"Today's P&L ({_today_pnl_source})"
+
+# All-time realized P&L and win count (from journal, authoritative)
 _all_closed = [t for t in trades if isinstance(t, dict) and (
     t.get('status') == 'CLOSED' or ('exit_price' in t and t.get('status') != 'OPEN')
 )]
@@ -551,6 +575,60 @@ with tab_agents:
                         """)
         else:
             st.caption("No agent votes yet — waiting for first cycle")
+
+        # ── Debate Results ──
+        debate = ao.get('debate', {})
+        if debate and debate.get('debate_summary'):
+            st.markdown('<div class="section-title">Agent Debate</div>', unsafe_allow_html=True)
+            shift = debate.get('debate_consensus_shift', 'UNCHANGED')
+            shift_colors = {'STRENGTHENED': GREEN, 'WEAKENED': AMBER, 'REVERSED': RED, 'UNCHANGED': MUTED}
+            shift_c = shift_colors.get(shift, MUTED)
+
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                st.markdown(metric_card("Debate Outcome", shift, shift_c), unsafe_allow_html=True)
+            with d2:
+                flipped = debate.get('debate_flipped', [])
+                st.markdown(metric_card("Agents Flipped", str(len(flipped)), RED if flipped else GREEN), unsafe_allow_html=True)
+            with d3:
+                strengthened = debate.get('debate_strengthened', [])
+                st.markdown(metric_card("Agents Held", str(len(strengthened)), GREEN), unsafe_allow_html=True)
+
+            # Show conviction multipliers
+            convictions = debate.get('debate_conviction', {})
+            if convictions:
+                conv_items = sorted(convictions.items(), key=lambda x: x[1], reverse=True)
+                _html('<div style="margin-top:8px">')
+                for cname, cval in conv_items:
+                    bar_color = GREEN if cval > 1.0 else (RED if cval < 0.8 else MUTED)
+                    bar_w = max(2, min(100, cval * 60))
+                    label = h(cname.replace('_', ' '))
+                    _html(f"""
+                    <div style="display:flex; align-items:center; gap:8px; padding:3px 0; font-size:0.7rem">
+                        <div style="width:120px; color:#94a3b8">{label}</div>
+                        <div style="flex:1; background:#1e2330; border-radius:3px; height:5px; overflow:hidden">
+                            <div style="width:{bar_w}%; height:100%; background:{bar_color}; border-radius:3px"></div>
+                        </div>
+                        <div style="width:40px; text-align:right; color:{bar_color}; font-weight:600">{cval:.2f}x</div>
+                    </div>
+                    """)
+                _html('</div>')
+
+            # Show flipped agents detail
+            if flipped:
+                _html(f"""
+                <div style="margin-top:8px; padding:8px; background:rgba(239,68,68,0.08); border-radius:6px; border-left:3px solid {RED}">
+                    <div style="font-size:0.7rem; color:{RED}; font-weight:600">Flipped Under Debate</div>
+                    <div style="font-size:0.68rem; color:#94a3b8; margin-top:4px">{', '.join(f.replace('_',' ') for f in flipped)}</div>
+                </div>
+                """)
+
+            # Summary
+            _html(f"""
+            <div style="font-size:0.68rem; color:#475569; margin-top:6px; padding-top:6px; border-top:1px solid #1e2330">
+                {h(debate.get('debate_summary', ''))}
+            </div>
+            """)
 
 # ══════════════════════════════════════════════
 # TAB: OVERVIEW (TradingView + 9-Layer)
