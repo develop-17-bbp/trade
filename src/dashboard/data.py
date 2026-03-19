@@ -23,10 +23,21 @@ def load_journal_trades() -> List[Dict]:
     try:
         from src.monitoring.journal import TradingJournal
         j = TradingJournal()
-        return j.trades or []
+        out = j.trades or []
+        if out:
+            return out
     except Exception as e:
         logger.warning(f"[DASHBOARD] Journal load failed: {e}")
-        return []
+    try:
+        import json
+        p = os.path.join("logs", "trading_journal.json")
+        if os.path.isfile(p):
+            with open(p, "r") as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else data.get("trades", [])
+    except Exception:
+        pass
+    return []
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -85,44 +96,68 @@ def filter_today(trades: List[Dict], date_str: Optional[str] = None) -> List[Dic
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TODAY P&L — exchange-authoritative, device-independent
+# TODAY P&L — exchange NAV vs SOD when comparable; else journal / equity
 # ═══════════════════════════════════════════════════════════════════
+
+def _legacy_usdt_only_sod(portfolio: Dict) -> bool:
+    """
+    Detect old bug: sod_balance was USDT-only while current_total_value is full NAV.
+    In that case exchange today_pnl is meaningless — fall back to journal.
+    """
+    sod = portfolio.get('sod_balance')
+    cur = portfolio.get('current_total_value')
+    try:
+        if sod is None or cur is None:
+            return False
+        sod_f, cur_f = float(sod), float(cur)
+        if sod_f <= 0 or cur_f <= 0:
+            return False
+        if sod_f < cur_f * 0.35:
+            return True
+    except (TypeError, ValueError):
+        return False
+    return False
+
 
 def compute_today_pnl(portfolio: Dict, journal_trades: List[Dict] = None,
                       date_str: Optional[str] = None) -> Tuple[float, str]:
     """
-    Three-tier P&L priority:
-      1. Exchange SOD (today_pnl = current_total - sod_balance)
-      2. Equity curve intraday diff
-      3. Journal realized P&L (closed trades only)
+    Priority:
+      1. Exchange: today_pnl from state when SOD is same basis as current_total_value
+         (full NAV anchor) and sod_date matches today.
+      2. Equity curve intraday diff (v = session cumulative P&L — rough intraday).
+      3. Journal closed trades realized today.
 
     Returns: (pnl_value, source_label)
     """
     if date_str is None:
         date_str = datetime.now().strftime('%Y-%m-%d')
 
-    # Priority 1: Exchange-derived SOD balance
     sod_balance = portfolio.get('sod_balance')
     sod_date = portfolio.get('sod_date', '')
     state_today_pnl = portfolio.get('today_pnl')
 
-    if sod_balance is not None and sod_date == date_str and state_today_pnl is not None:
-        return float(state_today_pnl), f"Exchange (SOD ${sod_balance:,.0f})"
+    use_exchange = (
+        sod_balance is not None
+        and sod_date == date_str
+        and state_today_pnl is not None
+        and not _legacy_usdt_only_sod(portfolio)
+    )
+    if use_exchange:
+        return float(state_today_pnl), f"Exchange (SOD NAV ${float(sod_balance):,.0f})"
 
-    # Priority 2: Equity curve intraday diff
     equity_curve = portfolio.get('equity_curve', [])
     eq_today = [e for e in equity_curve if str(e.get('t', ''))[:10] == date_str]
     if len(eq_today) >= 2:
         diff = float(eq_today[-1].get('v', 0)) - float(eq_today[0].get('v', 0))
-        return diff, "Equity Curve (local)"
+        return diff, "Equity curve (session)"
 
-    # Priority 3: Journal realized P&L
     if journal_trades is not None:
         closed_today = filter_today(filter_closed(journal_trades), date_str)
-        realized = sum(t.get('pnl', 0) for t in closed_today)
-        return realized, "Journal (realized)"
+        realized = sum(float(t.get('pnl', 0) or 0) for t in closed_today)
+        return realized, "Journal (realized today)"
 
-    return float(portfolio.get('pnl', 0.0)), "Cumulative (fallback)"
+    return float(portfolio.get('pnl', 0.0) or 0.0), "State (fallback)"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -168,6 +203,8 @@ def compute_trade_summary(trades: List[Dict], date_str: Optional[str] = None) ->
     losses = [t for t in closed if (t.get('pnl') or 0) < 0]
     total_pnl = sum(t.get('pnl', 0) for t in closed)
     today_wins = sum(1 for t in today_closed if (t.get('pnl') or 0) > 0)
+    today_closed_n = len(today_closed)
+    today_win_rate = (today_wins / today_closed_n) if today_closed_n else None
 
     return {
         'total': total,
@@ -178,6 +215,7 @@ def compute_trade_summary(trades: List[Dict], date_str: Optional[str] = None) ->
         'win_rate': len(wins) / len(closed) if closed else 0.0,
         'total_pnl': total_pnl,
         'today_count': len(today_all),
-        'today_closed': len(today_closed),
+        'today_closed': today_closed_n,
         'today_wins': today_wins,
+        'today_win_rate': today_win_rate,
     }
