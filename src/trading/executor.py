@@ -923,6 +923,11 @@ class TradingExecutor:
             # --- LAYER 6: AGENTIC REVIEW ---
             if self.iteration_count == 1 or self.iteration_count % 6 == 0:
                 self._perform_agentic_review()
+
+            # --- LAYER 7: ADVANCED LEARNING (Meta-Learning) ---
+            # Run every 10 iterations to classify regimes and adapt strategy parameters
+            if self.iteration_count == 1 or self.iteration_count % 10 == 0:
+                self._run_live_advanced_learning()
             
             # --- PHASE 5: CONTINUOUS RISK MONITORING ---
             current_prices = {}
@@ -1612,16 +1617,26 @@ class TradingExecutor:
                     agent_score = enhanced_decision.direction * enhanced_decision.confidence
                     blended = (1 - blend_w) * existing_score + blend_w * agent_score
                     ensemble_confidence = float(min(1.0, abs(blended) * 1.5))
+                    # Apply debate conviction multiplier to position sizing
+                    _debate_conv_mult = 1.0
+                    _rp = enhanced_decision.risk_params or {}
+                    if 'debate_conviction' in _rp:
+                        _conv = _rp['debate_conviction']
+                        _debate_conv_mult = float(_conv.get('conviction_multiplier', 1.0)) if isinstance(_conv, dict) else 1.0
+                        _debate_conv_mult = max(0.3, min(1.5, _debate_conv_mult))  # Clamp safety bounds
+
                     agentic_enhanced_dict = {
                         'direction': enhanced_decision.direction,
                         'confidence': enhanced_decision.confidence,
-                        'position_scale': enhanced_decision.position_scale,
+                        'position_scale': enhanced_decision.position_scale * _debate_conv_mult,
                         'blend_weight': blend_w,
                         'consensus_level': enhanced_decision.consensus_level,
                         'data_quality': enhanced_decision.data_quality,
                         'veto': enhanced_decision.veto,
                     }
                     _safe_print(f"  [AGENTS] Blended score: {blended:+.3f} (existing={existing_score:.3f}, agent={agent_score:.3f})")
+                    if _debate_conv_mult != 1.0:
+                        _safe_print(f"  [DEBATE] Conviction multiplier: {_debate_conv_mult:.2f}x applied to position scale")
 
             # Force-trade mode for testnet: much tighter neutral band
             _force_trade = self.config.get('force_trade', False) and self.mode == 'testnet'
@@ -1787,7 +1802,13 @@ class TradingExecutor:
 
             side = "buy" if final_direction > 0 else "sell"
             pos_size_pct = allocation.position_size_pct
-            
+
+            # Apply L7 Advanced Learning position scale adjustment (regime-adaptive)
+            if hasattr(self, '_l7_position_scales') and asset in self._l7_position_scales:
+                _l7_scale = self._l7_position_scales[asset]
+                pos_size_pct *= _l7_scale
+                _safe_print(f"  [L7-META] Position size adjusted by {_l7_scale:.2f}x for {asset}")
+
             # 4. MICROSTRUCTURE & LIQUIDITY SMART ROUTING
             qty = (pos_size_pct * self.initial_capital) / current_price
             try:
@@ -2217,3 +2238,80 @@ class TradingExecutor:
         _safe_print(f"  [META] Advanced Learning Engine State: {status.get('active_strategies', 0)} Active Strategies.")
         engine.save_learned_models()
         return status
+
+    def _run_live_advanced_learning(self):
+        """Layer 7: Run Advanced Learning in live/testnet mode.
+
+        Classifies market regimes, detects anomalies, and adapts risk parameters
+        based on meta-learning insights. Feeds back into strategy layer.
+        """
+        try:
+            import pandas as pd
+            _safe_print("  [L7-META] Running Advanced Learning regime analysis...")
+
+            # Build multi-asset DataFrame from live OHLCV
+            multi_asset_data = {}
+            for asset in self.assets:
+                symbol = f"{asset}/USDT"
+                ohlcv = self._fetch_data(symbol)
+                if ohlcv and len(ohlcv.get('closes', [])) >= 50:
+                    multi_asset_data[asset] = pd.DataFrame({
+                        'close': ohlcv['closes'],
+                        'high': ohlcv['highs'],
+                        'low': ohlcv['lows'],
+                        'volume': ohlcv['volumes'],
+                    })
+
+            if not multi_asset_data:
+                return
+
+            # Run full L7 pipeline: patterns, correlations, regime classification, strategies
+            result = self.advanced_learning.process_market_data(multi_asset_data)
+
+            # ── Apply L7 regime insights to risk parameters ──
+            for asset, regime in result.get('regimes', {}).items():
+                if not hasattr(regime, 'regime_type'):
+                    continue
+
+                # Anomaly/crisis regime → tighten risk
+                if regime.regime_type in ('ANOMALY', 'VOLATILE'):
+                    self.risk_manager.risk_limits.stop_loss_atr_mult = max(1.0, self.bt_config.atr_stop_mult * 0.8)
+                    self.risk_manager.risk_limits.take_profit_atr_mult = self.bt_config.atr_tp_mult * 0.7
+                    _safe_print(f"  [L7-META] {asset}: {regime.regime_type} regime — tightened stops")
+                elif regime.regime_type == 'TRENDING_UP' and regime.confidence > 60:
+                    # Strong trend → widen TP to ride momentum
+                    self.risk_manager.risk_limits.take_profit_atr_mult = min(6.0, self.bt_config.atr_tp_mult * 1.2)
+                    _safe_print(f"  [L7-META] {asset}: Trending UP (conf={regime.confidence:.0f}%) — widened TP")
+                elif regime.regime_type == 'MEAN_REVERTING':
+                    # Mean reversion → tighter TP, normal stops
+                    self.risk_manager.risk_limits.take_profit_atr_mult = max(2.0, self.bt_config.atr_tp_mult * 0.6)
+                    _safe_print(f"  [L7-META] {asset}: Mean-reverting — tightened TP for quicker exits")
+
+            # ── Apply L7 generated strategy risk overrides ──
+            for asset, strategy in result.get('strategies', {}).items():
+                if hasattr(strategy, 'risk_params') and isinstance(strategy.risk_params, dict):
+                    rp = strategy.risk_params
+                    if 'position_size_mult' in rp:
+                        scale = max(0.3, min(1.5, float(rp['position_size_mult'])))
+                        # Store for per-asset scaling in trade execution
+                        if not hasattr(self, '_l7_position_scales'):
+                            self._l7_position_scales = {}
+                        self._l7_position_scales[asset] = scale
+
+            # Push to dashboard
+            try:
+                from src.api.state import DashboardState
+                DashboardState().update_advanced_learning({
+                    'regimes': {a: getattr(r, 'regime_type', str(r)) for a, r in result.get('regimes', {}).items()},
+                    'strategies': {a: getattr(s, 'name', str(s)) for a, s in result.get('strategies', {}).items()},
+                    'patterns': result.get('patterns', {}),
+                    'timestamp': result.get('timestamp'),
+                })
+            except Exception:
+                pass
+
+            _safe_print(f"  [L7-META] Processed {len(multi_asset_data)} assets, "
+                        f"{len(result.get('regimes', {}))} regimes classified")
+
+        except Exception as e:
+            _safe_print(f"  [L7-META] Advanced Learning error (non-fatal): {str(e)[:100]}")
