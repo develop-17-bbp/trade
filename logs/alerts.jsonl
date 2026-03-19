@@ -1,0 +1,2 @@
+{"timestamp": "2026-03-19T17:31:32.011552+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
+{"timestamp": "2026-03-19T17:32:00.929719+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
