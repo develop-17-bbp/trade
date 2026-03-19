@@ -36,15 +36,15 @@ The system uses a **9-layer cascading intelligence pipeline**. Each layer proces
 
 | Layer | Name | Function | Key Files |
 |:------|:-----|:---------|:----------|
-| **L1** | Quantitative Engine | 80+ feature extraction, LightGBM/PatchTST/RL ensemble | `models/lightgbm_classifier.py`, `ai/patchtst_model.py`, `ai/reinforcement_learning.py` |
-| **L2** | Sentiment Intelligence | FinBERT NLP + multi-source news aggregation | `ai/sentiment.py`, `ai/finbert_service.py`, `data/news_fetcher.py` |
-| **L3** | Risk Fortress | Position sizing, drawdown protection, VPIN toxicity guard | `risk/manager.py`, `risk/vpin_guard.py`, `risk/profit_protector.py` |
-| **L4** | Signal Fusion | Meta-controller combining L1-L3 with Bayesian weights | `trading/meta_controller.py`, `trading/signal_combiner.py` |
-| **L5** | Smart Execution | TWAP/VWAP order routing, slippage estimation | `execution/router.py`, `execution/bridge.py` |
-| **L6** | Agent Intelligence | 12-agent Bayesian consensus + LLM macro reasoning | `agents/orchestrator.py`, `agents/combiner.py`, `ai/agentic_strategist.py` |
-| **L7** | Advanced Learning | Regime detection, pattern recognition, adaptive tuning | `ai/advanced_learning.py`, `ai/math_injection.py` |
-| **L8** | Tactical Memory | Episodic trade memory for contextual pattern recall | `ai/memory_vault.py` |
-| **L9** | Evolution Portal | Model versioning, scheduled retraining, self-improvement | `models/scheduled_retrain.py`, `models/auto_retrain.py` |
+| **L1** | Quantitative Engine | 80+ feature extraction, LightGBM/PatchTST/RL ensemble | `src/models/lightgbm_classifier.py`, `src/ai/patchtst_model.py`, `src/ai/reinforcement_learning.py` |
+| **L2** | Sentiment Intelligence | FinBERT NLP + multi-source news aggregation | `src/ai/sentiment.py`, `src/ai/finbert_service.py`, `src/data/news_fetcher.py` |
+| **L3** | Risk Fortress | Position sizing, drawdown protection, VPIN toxicity guard | `src/risk/manager.py`, `src/risk/vpin_guard.py`, `src/risk/profit_protector.py` |
+| **L4** | Signal Fusion | Meta-controller combining L1-L3 with Bayesian weights | `src/trading/meta_controller.py`, `src/trading/signal_combiner.py` |
+| **L5** | Smart Execution | TWAP/VWAP order routing, slippage estimation | `src/execution/router.py`, `src/execution/bridge.py` |
+| **L6** | Agent Intelligence | 12-agent Bayesian consensus + LLM macro reasoning | `src/agents/orchestrator.py`, `src/agents/combiner.py`, `src/ai/agentic_strategist.py` |
+| **L7** | Advanced Learning | Regime detection, pattern recognition, adaptive tuning | `src/ai/advanced_learning.py`, `src/ai/math_injection.py` |
+| **L8** | Tactical Memory | Episodic trade memory for contextual pattern recall | `src/ai/memory_vault.py` |
+| **L9** | Evolution Portal | Model versioning, scheduled retraining, self-improvement | `src/models/scheduled_retrain.py`, `src/models/auto_retrain.py` |
 
 ```
                         BINANCE (CCXT)          NewsAPI / CryptoPanic / Reddit
@@ -456,9 +456,9 @@ l1.long_window:              [10, 50]
 
 | Layer | File | Function |
 |:------|:-----|:---------|
-| **L7** | `ai/advanced_learning.py`, `ai/math_injection.py` | HMM regime detection, Kalman filter, OU process analysis, GARCH volatility |
-| **L8** | `ai/memory_vault.py` | Episodic trade memory (ChromaDB vector store). Finds similar past scenarios to adjust confidence +/- 10-20% |
-| **L9** | `models/scheduled_retrain.py`, `models/auto_retrain.py` | Weekly model retraining with Optuna hyperparameter optimization, walk-forward validation, model versioning |
+| **L7** | `src/ai/advanced_learning.py`, `src/ai/math_injection.py` | HMM regime detection, Kalman filter, OU process analysis, GARCH volatility |
+| **L8** | `src/ai/memory_vault.py` | Episodic trade memory (ChromaDB vector store). Finds similar past scenarios to adjust confidence +/- 10-20% |
+| **L9** | `src/models/scheduled_retrain.py`, `src/models/auto_retrain.py` | Weekly model retraining with Optuna hyperparameter optimization, walk-forward validation, model versioning |
 
 ---
 
@@ -641,7 +641,7 @@ min_accuracy_improvement: 0.5%
 ## Project Structure
 
 ```
-trade/
+tradeai/
 ├── src/
 │   ├── main.py                          # Entry point (paper/testnet/live/retrain/dashboard)
 │   ├── ai/
@@ -724,7 +724,7 @@ trade/
 │   ├── dashboard_server.py             # Flask dashboard (port 5000)
 │   └── reporting/                      # Performance reports
 │
-├── models/                             # Trained model artifacts (~237 files)
+├── models/                             # Trained model artifacts
 │   ├── lgbm_{asset}.txt               # LightGBM models per asset
 │   ├── lgbm_{asset}_{tf}.txt          # Multi-timeframe models
 │   ├── lgbm_{asset}_{tf}_{year}.txt   # Year-specific models
@@ -733,12 +733,24 @@ trade/
 │   ├── checksums.json                 # Model integrity checksums
 │   └── feature_importance_*.csv       # Feature importance per model
 │
-├── tests/                              # Test suite (15 files)
+├── docs/
+│   ├── guides/                         # Setup guides and operational playbooks
+│   ├── status/                         # Status updates and implementation summaries
+│   ├── reports/                        # Historical reports and artifacts
+│   └── ROOT_REORGANIZATION.md          # Map of the repository cleanup
+├── scripts/
+│   ├── maintenance/                    # Utility scripts (verification/training helpers)
+│   └── windows/                        # Windows .bat helpers
+├── artifacts/
+│   └── logs/                           # Archived root-level text logs and outputs
+├── tests/                              # Test suite
 ├── config.yaml                         # System configuration
 ├── .env                                # API keys (never committed)
 ├── requirements.txt                    # Python dependencies
 └── logs/                               # Runtime logs + trade journal
 ```
+
+**Repository cleanup note:** Many legacy root files were moved into `docs/`, `scripts/`, and `artifacts/`. See `docs/ROOT_REORGANIZATION.md`.
 
 ---
 
@@ -783,7 +795,7 @@ CRYPTOPANIC_TOKEN=your_cryptopanic_token   # L2 crypto news
 ### 3. Verify API Keys
 
 ```bash
-python verify_api_keys.py
+python scripts/maintenance/verify_api_keys.py
 ```
 
 ### 4. Run the System
@@ -793,10 +805,10 @@ python verify_api_keys.py
 python -m src.main --mode paper
 
 # Testnet trading (real orders on sandbox exchange)
-python -m src.main
+python -m src.main --testnet
 
 # Testnet + dashboard
-python -m src.main --dashboard
+python -m src.main --testnet --dashboard
 
 # Retrain models
 python -m src.main --retrain
@@ -971,4 +983,4 @@ This system is for professional and educational use. Automated cryptocurrency tr
 - Consult a financial advisor before live deployment
 
 **System Version:** v6.5
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-19
