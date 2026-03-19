@@ -9,13 +9,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import streamlit as st
-import time
 import json
 import plotly.graph_objects as go
 from html import escape as h
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+from src.dashboard.data import (
+    load_dashboard_state,
+    load_journal_trades,
+    compute_today_pnl,
+)
 from src.api.state import DashboardState
 from src.dashboard.data import compute_today_pnl
 from src.dashboard.theme import (
@@ -32,13 +36,6 @@ def _html(html_str: str):
     st.markdown(textwrap.dedent(html_str), unsafe_allow_html=True)
 
 
-state_manager = DashboardState()
-
-
-def _load_state():
-    return state_manager.get_full_state()
-
-
 def _parse_ts(ts) -> str:
     """Normalize a timestamp to ISO date string. Handles both ISO strings and Unix floats."""
     if not ts:
@@ -53,9 +50,32 @@ def _parse_ts(ts) -> str:
     return ts_str
 
 
+def _safe_pnl(t: dict) -> float:
+    """Coerce trade pnl to float; return 0 on missing or invalid."""
+    try:
+        v = t.get('pnl')
+        if v is None:
+            return 0.0
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _safe_float(x, default: float = 0.0) -> float:
+    """Coerce to float for display; return default on invalid."""
+    if x is None:
+        return default
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return default
+
+
 def _compute_trade_stats(trades):
-    """Compute win rate, profit factor, risk:reward from trade history."""
-    # Include trades marked CLOSED, or any trade that has exit_price (backward compat)
+    """Compute win rate, profit factor, risk:reward from trade history (CLOSED trades only)."""
+    if not trades:
+        return {'win_rate': 0.0, 'profit_factor': 0.0, 'risk_reward': '1:0.00', 'total_pnl': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0}
+    # Only CLOSED trades count for these metrics
     closed = [
         t for t in trades
         if isinstance(t, dict) and (
@@ -64,63 +84,84 @@ def _compute_trade_stats(trades):
         )
     ]
     if not closed:
-        return {'win_rate': 0, 'profit_factor': 0, 'risk_reward': '0:0', 'total_pnl': 0}
+        return {'win_rate': 0.0, 'profit_factor': 0.0, 'risk_reward': '1:0.00', 'total_pnl': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0}
 
-    wins = [t for t in closed if t.get('pnl', 0) > 0]
-    losses = [t for t in closed if t.get('pnl', 0) < 0]
-    win_pnl = sum(t.get('pnl', 0) for t in wins)
-    loss_pnl = abs(sum(t.get('pnl', 0) for t in losses))
+    pnls = [_safe_pnl(t) for t in closed]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    win_pnl = sum(wins)
+    loss_pnl = abs(sum(losses))
+    total_pnl = sum(pnls)
+
+    if loss_pnl > 0:
+        pf = win_pnl / loss_pnl
+        rr = f"1:{pf:.2f}"
+    else:
+        pf = float('inf') if win_pnl > 0 else 0.0
+        rr = "1:∞" if win_pnl > 0 else "1:0.00"
 
     return {
-        'win_rate': len(wins) / len(closed) if closed else 0,
-        'profit_factor': win_pnl / loss_pnl if loss_pnl > 0 else float('inf') if win_pnl > 0 else 0,
-        'risk_reward': f"1:{win_pnl / loss_pnl:.2f}" if loss_pnl > 0 else "1:∞",
-        'total_pnl': sum(t.get('pnl', 0) for t in closed),
-        'avg_win': win_pnl / len(wins) if wins else 0,
-        'avg_loss': loss_pnl / len(losses) if losses else 0,
+        'win_rate': len(wins) / len(closed),
+        'profit_factor': pf,
+        'risk_reward': rr,
+        'total_pnl': total_pnl,
+        'avg_win': win_pnl / len(wins) if wins else 0.0,
+        'avg_loss': loss_pnl / len(losses) if losses else 0.0,
+    }
+
+
+def _metrics_for_display(trade_stats: dict, portfolio: dict, today_str: str,
+                         journal_trades: list) -> dict:
+    """Metrics for cards; today's P&L uses same rules as sidebar (compute_today_pnl)."""
+    realized_pnl = _safe_float(trade_stats.get('total_pnl'), 0.0)
+    wr = max(0.0, min(1.0, _safe_float(trade_stats.get('win_rate'), 0.0)))
+    pf = trade_stats.get('profit_factor', 0.0)
+    try:
+        pf = float(pf) if pf != float('inf') else pf
+    except (TypeError, ValueError):
+        pf = 0.0
+    rr = str(trade_stats.get('risk_reward', '1:0.00') or '1:0.00')
+    acc = wr
+    today_pnl, _ = compute_today_pnl(portfolio, journal_trades, today_str)
+    return {
+        'today_pnl': float(today_pnl),
+        'realized_pnl': realized_pnl,
+        'win_rate': wr,
+        'profit_factor': pf,
+        'ai_accuracy': acc,
+        'risk_reward': rr,
     }
 
 
 def _compute_daily_pnl(trades):
-    """Aggregate P&L by date for calendar and charts."""
+    """Aggregate P&L by date for calendar and charts. Only closed trades count."""
     daily = defaultdict(float)
     for t in trades:
         if not isinstance(t, dict):
+            continue
+        if t.get('status') != 'CLOSED' and not t.get('exit_price'):
             continue
         ts = t.get('exit_time') or t.get('timestamp', '')
         if not ts:
             continue
         iso = _parse_ts(ts)
-        day = iso[:10]  # Always "YYYY-MM-DD" after normalization
+        day = iso[:10] if len(iso) >= 10 else ''
         if day:
-            daily[day] += t.get('pnl', 0)
+            try:
+                daily[day] += float(t.get('pnl', 0) or 0)
+            except (TypeError, ValueError):
+                pass
     return dict(daily)
 
 
 # ══════════════════════════════════════════════
-# JOURNAL LOADER — authoritative trade source
+# MAIN RENDER — cached loaders; journal is authoritative for realized stats
 # ══════════════════════════════════════════════
-def _load_journal_trades():
-    """Load all trades from encrypted journal (authoritative source of truth)."""
-    try:
-        import os
-        from src.monitoring.journal import TradingJournal
-        # JOURNAL_ENCRYPTION_KEY must be set in .env — never hardcode
-        j = TradingJournal()
-        return j.trades or []
-    except Exception:
-        return []
-
-
-# ══════════════════════════════════════════════
-# MAIN RENDER
-# ══════════════════════════════════════════════
-state = _load_state()
+state = load_dashboard_state()
 portfolio = state.get('portfolio', {})
-# Trade history: merge dashboard_state (recent) with encrypted journal (all-time)
-_journal_trades = _load_journal_trades()
-_state_trades = state.get('trade_history', [])
-# Use journal trades as the authoritative source; fall back to state trades if journal empty
+_journal_trades = load_journal_trades()
+_state_trades = state.get('trade_history', []) or []
+# Journal first (persistent closed trades); state fills gaps if journal empty this session
 trades = _journal_trades if _journal_trades else _state_trades
 open_positions = state.get('open_positions', {})
 trade_stats = _compute_trade_stats(trades)
@@ -136,10 +177,23 @@ hour = now.hour
 greeting = "Good morning" if hour < 12 else ("Good afternoon" if hour < 17 else "Good evening")
 
 today_str = now.strftime('%Y-%m-%d')
+
+def _trade_date(t):
+    """Date of trade for 'today' filtering: use exit_time for closed, else timestamp."""
+    ts = t.get('exit_time') or t.get('timestamp') or ''
+    if not ts:
+        return ''
+    iso = _parse_ts(ts)
+    return iso[:10] if len(iso) >= 10 else ''
+
 today_trades = [
     t for t in trades
-    if isinstance(t, dict) and _parse_ts(t.get('timestamp', '')).startswith(today_str)
+    if isinstance(t, dict) and _trade_date(t) == today_str
 ]
+today_pnl, _today_pnl_src = compute_today_pnl(portfolio, _journal_trades, today_str)
+_today_pnl_label = f"Today's P&L ({_today_pnl_src.split('(')[0].strip()})"
+
+# All-time closed trades and win count (use _safe_pnl so bad data doesn't break display)
 # ── Today P&L — exchange-authoritative (device-independent) ──
 # Priority 1: portfolio.today_pnl from state (= current_total_value - sod_balance)
 #             Both values come from the Binance API → identical on every device
@@ -165,11 +219,10 @@ else:
 _all_closed = [t for t in trades if isinstance(t, dict) and (
     t.get('status') == 'CLOSED' or ('exit_price' in t and t.get('status') != 'OPEN')
 )]
-_total_realized = sum(t.get('pnl', 0) for t in _all_closed)
-_total_wins = sum(1 for t in _all_closed if t.get('pnl', 0) > 0)
-# Today wins: closed trades today with positive pnl
+_total_realized = sum(_safe_pnl(t) for t in _all_closed)
+_total_wins = sum(1 for t in _all_closed if _safe_pnl(t) > 0)
 today_wins = len([t for t in today_trades if isinstance(t, dict)
-                  and t.get('status') == 'CLOSED' and t.get('pnl', 0) > 0])
+                  and t.get('status') == 'CLOSED' and (float(t.get('pnl', 0) or 0) > 0)])
 
 g1, g2 = st.columns([3, 2])
 with g1:
@@ -188,15 +241,15 @@ with g2:
             <div style="font-size:1.1rem; font-weight:700; color:{GREEN if today_pnl >= 0 else RED}">${today_pnl:+,.2f}</div>
         </div>
         <div style="text-align:center">
-            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Realized P&L</div>
+            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Realized P&L (all)</div>
             <div style="font-size:1.1rem; font-weight:700; color:{GREEN if _total_realized >= 0 else RED}">${_total_realized:+,.2f}</div>
         </div>
         <div style="text-align:center">
-            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Trades</div>
-            <div style="font-size:1.1rem; font-weight:700; color:#e2e8f0">{len(today_trades)}</div>
+            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Today / Total</div>
+            <div style="font-size:1.1rem; font-weight:700; color:#e2e8f0">{len(today_trades)} / {len(trades)}</div>
         </div>
         <div style="text-align:center">
-            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Wins</div>
+            <div style="font-size:0.6rem; color:#64748b; text-transform:uppercase">Wins (all)</div>
             <div style="font-size:1.1rem; font-weight:700; color:{GREEN}">{_total_wins}</div>
         </div>
     </div>
@@ -219,47 +272,52 @@ tab_live, tab_agents, tab_overview = st.tabs(["Live Trading", "Agent Overlay", "
 # TAB: LIVE TRADING
 # ══════════════════════════════════════════════
 with tab_live:
-    # ── 5-Column Top Metrics ──
-    pnl_val = portfolio.get('pnl', 0)
-    wr = trade_stats['win_rate']
-    pf = trade_stats['profit_factor']
-    balance = portfolio.get('return', 0)
-    rr = trade_stats['risk_reward']
+    state = load_dashboard_state()
+    portfolio = state.get('portfolio', {})
+    open_positions = state.get('open_positions', {})
+    _j = load_journal_trades()
+    _st = state.get('trade_history', []) or []
+    trades = _j if _j else _st
+    trade_stats = _compute_trade_stats(trades)
+    daily_pnl_live = _compute_daily_pnl(trades)
+    m = _metrics_for_display(trade_stats, portfolio, today_str, _j if _j else trades)
 
-    _realized_pnl = trade_stats.get('total_pnl', 0)
     _closed_count = len([t for t in trades if isinstance(t, dict) and t.get('status') == 'CLOSED'])
     _total_count = len([t for t in trades if isinstance(t, dict)])
+    _wtv = portfolio.get("current_total_value")
+    _wallet_display = f"${_safe_float(_wtv, 0.0):,.2f}" if _wtv is not None else "—"
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        st.markdown(metric_card("Realized P&L", f"${_realized_pnl:+,.2f}",
-                                GREEN if _realized_pnl >= 0 else RED,
-                                subtitle=f"{_closed_count} closed / {_total_count} total"), unsafe_allow_html=True)
+        st.markdown(metric_card("Wallet balance", _wallet_display, "#e2e8f0",
+                                subtitle="NAV from exchange (same as state)"), unsafe_allow_html=True)
     with c2:
-        st.markdown(metric_card("Win Rate", f"{wr:.1%}", GREEN if wr > 0.5 else RED,
-                                subtitle=f"{_closed_count} closed trades"), unsafe_allow_html=True)
+        st.markdown(metric_card("Realized P&L", f"${m['realized_pnl']:+,.2f}",
+                                GREEN if m['realized_pnl'] >= 0 else RED,
+                                subtitle=f"{_closed_count} closed / {_total_count} total"), unsafe_allow_html=True)
     with c3:
-        pf_color = GREEN if pf > 1 else RED
-        pf_display = f"{pf:.2f}" if pf < 100 else "∞"
-        st.markdown(metric_card("Profit Factor", pf_display, pf_color,
-                                subtitle="BREAKEVEN" if pf == 0 else ""), unsafe_allow_html=True)
+        st.markdown(metric_card("Win Rate", f"{m['win_rate']:.1%}", GREEN if m['win_rate'] > 0.5 else RED,
+                                subtitle=f"{_closed_count} closed trades"), unsafe_allow_html=True)
     with c4:
-        perf = state.get('performance', {})
-        # Prefer live benchmark accuracy → trade win_rate → root accuracy field
-        acc = perf.get('accuracy') or perf.get('win_rate') or trade_stats.get('win_rate') or state.get('accuracy', 0.0)
-        st.markdown(metric_card("AI Accuracy", f"{float(acc):.1%}", BLUE,
-                                subtitle=f"Model v{state.get('model_version', '?')}"), unsafe_allow_html=True)
+        pf_val = m['profit_factor']
+        pf_color = GREEN if pf_val > 1 else RED
+        pf_display = f"{pf_val:.2f}" if pf_val < 100 else "∞"
+        st.markdown(metric_card("Profit Factor", pf_display, pf_color,
+                                subtitle="BREAKEVEN" if pf_val == 0 else ""), unsafe_allow_html=True)
     with c5:
-        st.markdown(metric_card("Risk:Reward", rr, AMBER), unsafe_allow_html=True)
+        st.markdown(metric_card("AI Accuracy", f"{m['ai_accuracy']:.1%}", BLUE,
+                                subtitle=f"Model {state.get('model_version', '?')}"), unsafe_allow_html=True)
+    with c6:
+        st.markdown(metric_card("Risk:Reward", m['risk_reward'], AMBER), unsafe_allow_html=True)
 
     # ── Charts Row ──
     ch1, ch2 = st.columns([1, 2])
 
     with ch1:
-        # AI Performance Radar
+        # AI Performance Radar (use normalized metrics)
         categories = ['Win %', 'Consistency', 'Profit Factor', 'Recovery', 'Max DD', 'Avg Win/Loss']
-        consistency = min(100, max(0, wr * 100))
-        pf_norm = min(100, pf * 30) if pf < 100 else 100
+        consistency = min(100, max(0, m['win_rate'] * 100))
+        pf_norm = min(100, m['profit_factor'] * 30) if m['profit_factor'] < 100 else 100
         max_dd = state.get('risk_metrics', {}).get('max_drawdown', 0)
         dd_score = max(0, 100 - abs(max_dd) * 10)
         # Recovery: based on how much of max drawdown has been recovered
@@ -269,7 +327,7 @@ with tab_live:
         if trade_stats.get('avg_loss', 0) > 0:
             avg_wl = min(100, (trade_stats.get('avg_win', 0) / trade_stats['avg_loss']) * 30)
 
-        vals = [wr * 100, consistency, pf_norm, recovery, dd_score, avg_wl]
+        vals = [m['win_rate'] * 100, consistency, pf_norm, recovery, dd_score, avg_wl]
         fig = radar_chart(categories, vals)
         st.plotly_chart(fig, width="stretch", key="radar")
 
@@ -283,8 +341,9 @@ with tab_live:
         """)
 
     with ch2:
-        # Daily & Cumulative P&L Chart
-        if daily_pnl:
+        # Daily & Cumulative P&L Chart (dates = days with closed trades)
+        if daily_pnl_live:
+            daily_pnl = daily_pnl_live
             sorted_days = sorted(daily_pnl.keys())
             pnl_vals = [daily_pnl[d] for d in sorted_days]
             cum_pnl = []
@@ -305,7 +364,7 @@ with tab_live:
                 line=dict(color=BLUE, width=2), yaxis='y2',
             ))
             fig2.update_layout(**plotly_layout(
-                title=dict(text='Daily & Cumulative P&L', font=dict(size=13)),
+                title=dict(text='Daily & Cumulative P&L (by close date)', font=dict(size=13)),
                 yaxis=dict(title='Daily ($)', gridcolor='rgba(255,255,255,0.04)'),
                 yaxis2=dict(title='Cumulative ($)', overlaying='y', side='right',
                             gridcolor='rgba(255,255,255,0.04)'),
@@ -313,6 +372,7 @@ with tab_live:
                 legend=dict(orientation='h', yanchor='bottom', y=1.02),
             ))
             st.plotly_chart(fig2, width="stretch", key="pnl_chart")
+            st.caption("Bars show realized P&L on the day each trade closed. Days with no closed trades have no bar.")
         else:
             st.info("No trade data yet for P&L chart")
 
@@ -321,7 +381,7 @@ with tab_live:
     cal_month = st.selectbox("Month", list(range(1, 13)),
                              index=now.month - 1, format_func=lambda m: f"{now.year}-{m:02d}",
                              key="cal_month", label_visibility="collapsed")
-    st.markdown(calendar_heatmap_html(daily_pnl, now.year, cal_month), unsafe_allow_html=True)
+    st.markdown(calendar_heatmap_html(daily_pnl_live, now.year, cal_month), unsafe_allow_html=True)
 
     # ── Open Positions ──
     st.markdown('<div class="section-title">Open Positions</div>', unsafe_allow_html=True)
@@ -370,19 +430,41 @@ with tab_live:
         # Show closed trades first (most informative), then recent open entries
         _closed = [t for t in trades if isinstance(t, dict) and t.get('status') == 'CLOSED']
         _open_entries = [t for t in trades if isinstance(t, dict) and t.get('status') != 'CLOSED']
-        _closed_sorted = sorted(_closed, key=lambda t: t.get('timestamp', ''), reverse=True)
-        _open_sorted = sorted(_open_entries, key=lambda t: t.get('timestamp', ''), reverse=True)
+
+        def _sort_key(t):
+            ts = t.get('timestamp') or t.get('exit_time') or ''
+            if ts is None:
+                return '0'
+            if isinstance(ts, (int, float)):
+                try:
+                    return datetime.fromtimestamp(float(ts)).isoformat()
+                except (ValueError, OSError):
+                    return str(ts)
+            return str(ts) if ts else '0'
+
+        try:
+            _closed_sorted = sorted(_closed, key=_sort_key, reverse=True)
+            _open_sorted = sorted(_open_entries, key=_sort_key, reverse=True)
+        except Exception:
+            _closed_sorted = _closed
+            _open_sorted = _open_entries
         recent = (_closed_sorted + _open_sorted)[:12]
         if recent:
             for t in recent:
-                pnl_v = t.get('pnl') or 0
+                try:
+                    pnl_v = float(t.get('pnl') or 0)
+                except (TypeError, ValueError):
+                    pnl_v = 0.0
                 status = t.get('status', 'OPEN')
                 cls = 'trade-win' if (status == 'CLOSED' and pnl_v > 0) else ('trade-loss' if (status == 'CLOSED' and pnl_v < 0) else '')
                 pnl_c = GREEN if pnl_v > 0 else (RED if pnl_v < 0 else MUTED)
                 asset = h(str(t.get('asset', '?')))
                 side = h(str(t.get('side', '?')).upper())
-                ts = _parse_ts(t.get('timestamp', ''))[:16]
-                conf = t.get('confidence', 0)
+                ts = _parse_ts(t.get('timestamp') or t.get('exit_time') or '')[:16]
+                try:
+                    conf = float(t.get('confidence', 0) or 0)
+                except (TypeError, ValueError):
+                    conf = 0
                 status_badge = f'<span style="font-size:0.65rem; color:{"#22c55e" if status=="CLOSED" else "#64748b"}; margin-left:6px">{status}</span>'
                 pnl_display = f'${pnl_v:+,.2f}' if status == 'CLOSED' else '(open)'
                 _html(f"""
@@ -605,6 +687,3 @@ with tab_overview:
         </div>
         """)
 
-# ── Auto-refresh ──
-time.sleep(5)
-st.rerun()
