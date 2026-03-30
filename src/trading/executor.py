@@ -1,2346 +1,1357 @@
-import time
+"""
+Trading Executor — EMA(8) Crossover with LLM Confirmation
+==========================================================
+Bybit USDT perpetual futures. LONG (CALL) and SHORT (PUT).
+Dynamic trailing stop-loss L1 -> L2 -> L3 -> L4 ...
+"""
+
 import os
-import sys
-import numpy as np
-from datetime import datetime, timezone
-from typing import Dict, Optional, List, Any, Tuple
-from dataclasses import asdict, dataclass
-from dotenv import load_dotenv
-
-from src.core.component import ComponentSandbox, ComponentRegistry
-
-# Load environment variables
-load_dotenv()
+import json
+import time
+import logging
+import requests
+from datetime import datetime
+from typing import Dict, List, Optional, Any
 
 from src.data.fetcher import PriceFetcher
-from src.data.news_fetcher import NewsFetcher
-from src.data.institutional_fetcher import InstitutionalFetcher
-from src.data.free_tier_integrations import FreeDataAggregator
-from src.ai.sentiment import SentimentPipeline
-from src.ai.agentic_strategist import AgenticStrategist
-from src.ai.advanced_learning import AdvancedLearningEngine, MarketRegime
-from src.ai.reinforcement_learning import (
-    ReinforcementLearningAgent, AdaptiveAlgorithmLayer, MarketState
-)
-from src.data.on_chain_fetcher import OnChainFetcher
-from src.trading.strategy import HybridStrategy, SimpleStrategy
-from src.trading.backtest import (
-    run_backtest, BacktestConfig, BacktestResult, format_backtest_report
-)
-from src.risk.manager import RiskManager
-from src.risk.profit_protector import ProfitProtector, LossAversionFilter
-from src.integrations.robinhood_stub import RobinhoodClient
-from src.portfolio.allocator import PortfolioAllocator
-from src.portfolio.hedger import PortfolioHedger
-from src.monitoring.health_checker import SystemHealthChecker
-from src.execution.failover import ExecutionFailoverController
-from src.risk.dynamic_manager import DynamicRiskManager
-from src.execution.router import ExecutionRouter, ExecutionMode
-from src.integrations.on_chain_portfolio import OnChainPortfolioManager
-from src.monitoring.journal import TradingJournal
-from src.models.volatility_regime import VolatilityRegimeDetector, VolatilityRegime
-from src.monitoring.event_guard import MarketEventGuard
 from src.data.microstructure import MicrostructureAnalyzer
-from src.trading.advanced_backtest import AdvancedSimulator
+from src.ai.agentic_strategist import AgenticStrategist
+from src.monitoring.journal import TradeJournal
+from src.indicators.indicators import ema, atr
 
-# Institutional Components (optional: can be disabled via config to avoid native lib segfaults)
-from src.risk.vpin_guard import VPINGuard
-from infra.signal_stream import SignalStreamAgent
-from testing.chaos_engine import ChaosEngine
-from src.models.benchmark import ModelBenchmark
-from src.ai.math_injection import MathInjector
-from src.agents.orchestrator import AgentOrchestrator
-
-from enum import Enum
-
-class TradingStyle(Enum):
-    DAY = "day"  # High frequency, lower per-trade risk
-    SWING = "swing"  # Moderate frequency, higher conviction
-
-def _safe_print(msg: str = ""):
-    """Print with UTF-8 encoding, falling back to ASCII-safe output on Windows."""
-    try:
-        print(msg, flush=True)
-    except UnicodeEncodeError:
-        print(msg.encode('ascii', errors='replace').decode('ascii'), flush=True)
+logger = logging.getLogger(__name__)
 
 
 class TradingExecutor:
-    """
-    Full three-layer trading system orchestrator.
+    """EMA(8) crossover strategy with LLM confirmation on Bybit testnet."""
 
-    Modes:
-      - paper: backtest on historical data with simulated execution
-      - signal: generate signals only (no execution)
-    """
+    def __init__(self, config: dict):
+        self.config = config
+        self.assets: List[str] = config.get('assets', ['BTC', 'ETH'])
+        self.poll_interval: int = config.get('poll_interval', 10)
+        self.initial_capital: float = config.get('initial_capital', 100000.0)
 
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {}
-        self.mode = self.config.get('mode', 'paper')
-        self.assets = self.config.get('assets', ['BTC', 'ETH'])
-        self.initial_capital = self.config.get('initial_capital', 100_000.0)
+        # EMA / adaptive settings
+        adaptive = config.get('adaptive', {})
+        self.ema_period: int = adaptive.get('ema_period', 8)
+        self.struct_window: int = adaptive.get('struct_window', 5)
 
-        # Data -- supports testnet mode for paper trading with fake money
-        use_testnet = self.mode == 'testnet' or self.config.get('testnet', False)
+        # Risk settings
+        risk = config.get('risk', {})
+        self.daily_loss_limit_pct: float = risk.get('daily_loss_limit_pct', 3.0)
 
-        # SECURITY: Verify testnet/live key separation
-        _live_key = os.environ.get('BINANCE_API_KEY', '')
-        _test_key = os.environ.get('BINANCE_TESTNET_KEY', '')
-        if _live_key and _test_key and _live_key == _test_key:
-            _safe_print("  [SECURITY WARNING] BINANCE_API_KEY and BINANCE_TESTNET_KEY are identical!")
-            _safe_print("  [SECURITY WARNING] Generate separate keys for testnet and production.")
-            _safe_print("  [SECURITY WARNING] Shared keys mean a mode misconfiguration could trade real funds.")
-
-        exchange_cfg = self.config.get('exchange', {})
-        _registry = ComponentRegistry.get()
-
-        # price_source is critical — system cannot run without real-time price data
-        self.price_source = _registry.register(
-            'price_source',
-            lambda: PriceFetcher(
-                exchange_name=exchange_cfg.get('name', 'binance'),
-                testnet=use_testnet,
-            ),
-            critical=True,
+        # AI / LLM settings
+        ai_cfg = config.get('ai', {})
+        self.ollama_base_url: str = (
+            os.environ.get('OLLAMA_REMOTE_URL', '')
+            or ai_cfg.get('ollama_base_url', 'http://localhost:11434')
+        ).rstrip('/')
+        self.ollama_model: str = (
+            os.environ.get('OLLAMA_REMOTE_MODEL', '')
+            or ai_cfg.get('reasoning_model', 'llama3.2:latest')
         )
-        if not self.price_source.is_available:
-            raise RuntimeError(
-                "[FATAL] Exchange not available. Real-time data is required. "
-                "Ensure CCXT is installed and Binance API is accessible."
-            )
-        self.news = _registry.register(
-            'news',
-            lambda: NewsFetcher(
-                newsapi_key=os.environ.get('NEWSAPI_KEY'),
-                cryptopanic_token=os.environ.get('CRYPTOPANIC_TOKEN'),
-            ),
-            critical=False,
-        )
-        self.institutional = _registry.register(
-            'institutional', lambda: InstitutionalFetcher(), critical=False
-        )
-        self.on_chain = _registry.register(
-            'on_chain', lambda: OnChainFetcher(), critical=False
-        )
-        self.on_chain_portfolio = OnChainPortfolioManager()
-        self.free_data = _registry.register(
-            'free_data', lambda: FreeDataAggregator(), critical=False
-        )  # Free data sources (Fear/Greed, IV, etc.)
-        _ai_cfg = self.config.get('ai', {})
-        _prov = _ai_cfg.get('reasoning_provider', 'auto')
-        _model = _ai_cfg.get('reasoning_model', 'mistral')
+        self.llm_conf_threshold: float = ai_cfg.get('llm_trade_conf_threshold', 0.40)
 
-        self.strategist = _registry.register(
-            'strategist',
-            lambda: AgenticStrategist(
-                provider=_prov,
-                model=_model,
-                use_local_on_failure=_ai_cfg.get('use_local_on_failure', True)
-            ),
-            critical=False,
+        # Quality gates
+        self.min_confidence: float = 0.70
+        self.min_atr_ratio: float = 0.0003
+        self.trade_cooldown: float = 120.0       # 2 min between any trades
+        self.post_close_cooldown: float = 180.0   # 3 min after closing before new entry
+
+        # Exchange
+        exchange_name = config.get('exchange', {}).get('name', 'bybit')
+        testnet = config.get('mode', 'testnet') in ('testnet', 'paper')
+        self.price_source = PriceFetcher(exchange_name=exchange_name, testnet=testnet)
+
+        # LLM strategist (used as fallback / for deeper analysis)
+        provider = ai_cfg.get('reasoning_provider', 'auto')
+        model = ai_cfg.get('reasoning_model', 'llama3.2:latest')
+        use_local = ai_cfg.get('use_local_on_failure', False)
+        self.strategist = AgenticStrategist(
+            provider=provider,
+            model=model,
+            use_local_on_failure=use_local,
         )
 
-        # Phase 6: Advanced Learning Engine
-        self.advanced_learning = _registry.register(
-            'advanced_learning',
-            lambda: AdvancedLearningEngine(
-                meta_model_path=self.config.get('models_path', 'models') + "/meta_learning_model.json"
-            ),
-            critical=False,
-        )
-        self.rl_agent = _registry.register(
-            'rl_agent',
-            lambda: ReinforcementLearningAgent(
-                learning_rate=self.config.get('rl', {}).get('learning_rate', 0.001),
-                gamma=self.config.get('rl', {}).get('gamma', 0.99)
-            ),
-            critical=False,
-        )
-        self.adaptive_algo = _registry.register(
-            'adaptive_algo', lambda: AdaptiveAlgorithmLayer(), critical=False
-        )
+        # Order book microstructure analyzer
+        self.microstructure = MicrostructureAnalyzer(depth=20)
 
-        # Phase 5: Autonomous Trading Components
-        self.portfolio_allocator = _registry.register(
-            'portfolio_allocator',
-            lambda: PortfolioAllocator(
-                total_capital=self.initial_capital,
-                max_allocation_pct=self.config.get('portfolio', {}).get('max_allocation_pct', 0.05)
-            ),
-            critical=False,
-        )
-        self.portfolio_hedger = _registry.register(
-            'portfolio_hedger', lambda: PortfolioHedger(), critical=False
-        )
-        self.health_checker = SystemHealthChecker(check_interval_sec=60)
-        self.failover_controller = ExecutionFailoverController(primary_exchange=self.price_source)
+        # Journal
+        self.journal = TradeJournal()
 
-        # New Microstructure & Regime Components
-        self.microstructure = _registry.register(
-            'microstructure', lambda: MicrostructureAnalyzer(depth=20), critical=False
-        )
-        self.regime_detector = _registry.register(
-            'regime_detector', lambda: VolatilityRegimeDetector(lookback=100), critical=False
-        )
-        self.event_guard = _registry.register(
-            'event_guard', lambda: MarketEventGuard(), critical=False
-        )
-        self.simulator = AdvancedSimulator(iterations=1000)
-
-        # risk_manager is critical — needed for position tracking and safety limits
-        self.risk_manager = _registry.register(
-            'risk_manager',
-            lambda: DynamicRiskManager(initial_capital=self.initial_capital),
-            critical=True,
-        )
-
-        # LOSS PREVENTION LAYER: Profit Protector + Loss Aversion
-        self.profit_protector = _registry.register(
-            'profit_protector',
-            lambda: ProfitProtector(initial_capital=self.initial_capital),
-            critical=False,
-        )
-        self.loss_aversion = _registry.register(
-            'loss_aversion', lambda: LossAversionFilter(), critical=False
-        )
-        
-        self.agentic_bias = 0.0
-        self.iteration_count = 0
-
-        # Institutional Ensemble Engines (default off to avoid segfault on Python 3.14 / ARM; set ai.use_lightgbm/use_patch_tst: true to enable)
-        _use_lgbm = self.config.get('ai', {}).get('use_lightgbm', False)
-        _use_patch_tst = self.config.get('ai', {}).get('use_patch_tst', False)
-        self.lgbm = None
-        self.patch_tst = None
-        if _use_lgbm:
-            def _make_lgbm():
-                from src.models.lightgbm_classifier import LightGBMClassifier
-                return LightGBMClassifier(self.config)
-            self.lgbm = _registry.register('lgbm', _make_lgbm, critical=False)
-        if _use_patch_tst:
-            def _make_patchtst():
-                from src.ai.patchtst_model import PatchTSTClassifier
-                return PatchTSTClassifier()
-            self.patch_tst = _registry.register('patch_tst', _make_patchtst, critical=False)
-        if not _use_lgbm or not _use_patch_tst:
-            _safe_print("  [ML] LightGBM/PatchTST disabled by default (set ai.use_lightgbm & ai.use_patch_tst: true in config to enable).")
-        
-        # Risk & Compliance Infrastructure
-        self.vpin = _registry.register(
-            'vpin', lambda: VPINGuard(bucket_size=5.0, threshold=0.75), critical=False
-        )  # 5 BTC buckets
-        self.stream = SignalStreamAgent()
-        self.audit_log = TradingJournal() # Enhanced version for reasoning traces
-        
-        # Execution Layer — pass price_source so testnet/live orders use real exchange API
-        self.router = ExecutionRouter(mode=ExecutionMode.TESTNET, price_source=self.price_source)
-        self.chaos = ChaosEngine(self.router, self.health_checker)
-        
-        # Model Benchmarking & Leaderboard
-        self.benchmark = ModelBenchmark(model_version="v6.5")
-        
-        # Kill Switches and Safety Status
-        self.kill_switch_active = False
-        self.last_tick_time = time.time()
-        self.max_staleness = self.config.get('max_staleness_sec', 10)
-        
-        # Multi-Agent Intelligence Overlay (12-agent pipeline)
-        self.math_injector = MathInjector(self.config)
-        self.agent_orchestrator = _registry.register(
-            'agent_orchestrator',
-            lambda: AgentOrchestrator(self.config),
-            critical=False,
-        )
-
-        # ═══ SECURITY: Model Integrity Verification ═══
+        # Set leverage to 1x on Bybit (prevent amplified losses)
         try:
-            from src.security.model_integrity import verify_all_models, protect_model_files
-            passed, failed = verify_all_models()
-            if failed:
-                _safe_print(f"  [SECURITY] Model integrity: {len(passed)}/{len(passed)+len(failed)} passed")
-                for f_name in failed:
-                    _safe_print(f"  [SECURITY] FAILED: {f_name}")
-                _safe_print("  [SECURITY] Run 'python -m src.security.model_integrity --generate' to update checksums")
-            else:
-                _safe_print(f"  [SECURITY] Model integrity: {len(passed)}/{len(passed)} ✓")
-            # Write-protect model files after verification
-            protect_model_files()
-        except Exception as e:
-            _safe_print(f"  [SECURITY] Model integrity check skipped: {e}")
-
-        # ═══ SECURITY: Config Parameter Bounds Validation ═══
-        risk_cfg = self.config.get('risk', {})
-        _max_pos = risk_cfg.get('max_position_size_pct', 5.0)
-        _daily_loss = risk_cfg.get('daily_loss_limit_pct', 3.0)
-        _risk_per_trade = risk_cfg.get('risk_per_trade_pct', 1.0)
-        if _max_pos > 15.0:
-            _safe_print(f"  [SECURITY] max_position_size_pct={_max_pos}% exceeds hard limit 15%, clamping.")
-            self.config.setdefault('risk', {})['max_position_size_pct'] = 15.0
-        if _daily_loss > 5.0:
-            _safe_print(f"  [SECURITY] daily_loss_limit_pct={_daily_loss}% exceeds hard limit 5%, clamping.")
-            self.config.setdefault('risk', {})['daily_loss_limit_pct'] = 5.0
-        if _risk_per_trade > 3.0:
-            _safe_print(f"  [SECURITY] risk_per_trade_pct={_risk_per_trade}% exceeds hard limit 3%, clamping.")
-            self.config.setdefault('risk', {})['risk_per_trade_pct'] = 3.0
-
-        _safe_print("  [SYSTEM] Institutional Infrastructure v6.5 ACTIVE.")
-        _safe_print("  [AGENTS] 12-Agent Intelligence Overlay INITIALIZED.")
-        _safe_print("  [AUDIT] Audit Trail established. Stream and Compliance ready.")
-
-        # Strategy — critical: system cannot trade without it
-        self.strategy = _registry.register(
-            'strategy',
-            lambda: HybridStrategy(self.config),
-            critical=True,
-        )
-
-        # Sentiment
-        self.sentiment = _registry.register(
-            'sentiment',
-            lambda: SentimentPipeline(
-                use_transformer=self.config.get('ai', {}).get('use_transformer', False),
-            ),
-            critical=False,
-        )
-
-        # Robinhood Integration (optional for live trading)
-        self.robinhood = None
-        self._init_robinhood()
-
-        # Backtest config
-        risk_cfg = self.config.get('risk', {})
-        self.bt_config = BacktestConfig(
-            initial_capital=self.initial_capital,
-            fee_pct=self.config.get('fee_pct', 0.0),      # Robinhood 0 fee
-            slippage_pct=self.config.get('slippage_pct', 0.375), # RH spread leg
-            risk_per_trade_pct=risk_cfg.get('risk_per_trade_pct', 1.0),
-            max_position_pct=risk_cfg.get('max_position_size_pct', 5.0),
-            use_stops=True,
-            atr_stop_mult=risk_cfg.get('atr_stop_mult', 2.0),
-            atr_tp_mult=risk_cfg.get('atr_tp_mult', 3.0),
-            min_return_pct=self.config.get('min_return_pct'), # Activate 1% target override
-        )
-        self.min_return_pct = self.config.get('min_return_pct') # Activate 1% target override
-        
-        # Phase 5: Trading Journal & Styles
-        self.journal = TradingJournal()
-        
-        # Recover previously OPEN trades to allow TP/SL closure
-        _recovered = 0
-        for t in self.journal.trades:
-            if t.get("status") == "OPEN":
-                asset = t.get("asset", "").replace("/USDT", "").replace("USDT", "")
-                direction = 1 if str(t.get("side")).lower() == "buy" else -1
-                price = float(t.get("price", 0.0))
-                qty = float(t.get("quantity", 0.0))
-                order_id = t.get("order_id", "")
-                if price > 0 and qty > 0:
-                    size_pct = (qty * price) / self.initial_capital
-                    self.risk_manager.register_trade_open(asset, direction, price, size_pct, order_id=order_id)
-                    _recovered += 1
-        if _recovered > 0:
-            import logging
-            logging.info(f"[RECOVERY] Re-attached {_recovered} open trades to Risk Manager.")
-
-        style_val = self.config.get('trading_style', 'swing').lower()
-        self.style = TradingStyle.DAY if style_val == 'day' else TradingStyle.SWING
-        
-        # Style-based parameter overrides
-        if self.style == TradingStyle.DAY:
-            # 5-min intervals for Day Trading
-            self.poll_interval = 300
-            self.risk_manager.risk_limits.max_single_trade_pct = 0.005 # 0.5% max
-        else:
-            # 1-hour intervals for Swing Trading
-            self.poll_interval = 3600
-            self.risk_manager.risk_limits.max_single_trade_pct = 0.02 # 2.0% max
-            
-        # User defined override for testing speed
-        if 'poll_interval' in self.config:
-            self.poll_interval = self.config['poll_interval']
-            _safe_print(f"  [CONFIG] Poll interval overridden to {self.poll_interval}s")
-
-    def _init_robinhood(self):
-        """Mock/Stub for Robinhood login."""
-        creds = self.config.get('robinhood', {})
-        if creds.get('username') and creds.get('password'):
-            self.robinhood = RobinhoodClient()
-            self.robinhood.login(creds['username'], creds['password'])
-
-    def _nav_usd_dashboard(self, balance_info: dict, current_prices: dict) -> float:
-        """Same NAV as the live trading bar → matches portfolio.current_total_value in dashboard state."""
-        if not balance_info or 'error' in balance_info:
-            return 0.0
-        nav = float(balance_info.get('USDT', 0) or 0)
-        for a_name, a_price in current_prices.items():
-            if not a_price:
-                continue
-            held = balance_info.get(a_name, 0.0)
-            if isinstance(held, (int, float)) and held > 0:
-                nav += float(held) * float(a_price)
-        return round(nav, 4)
-
-    def run(self):
-        """Main entry point -- run the full system."""
-        _safe_print("=" * 70)
-        _safe_print("  🏛️  AI-DRIVEN CRYPTO TRADING SYSTEM v6.5")
-        _safe_print("  9-Layer Autonomous Intelligence Architecture")
-        _safe_print("=" * 70)
-        _safe_print(f"  Mode:    {self.mode.upper()}")
-        _safe_print(f"  Assets:  {', '.join(self.assets)}")
-        data_label = "Binance TESTNET (sandbox)" if self.price_source.testnet else "Binance LIVE"
-        _safe_print(f"  Source:  {data_label}")
-        _safe_print("-" * 70)
-
-        # ── Fetch & Display Exchange Balances ──
-        _safe_print("\n  📊 EXCHANGE WALLET BALANCES")
-        _safe_print("  " + "-" * 50)
-        if self.price_source.is_authenticated:
-            balance = self.price_source.get_balance()
-            if 'error' not in balance:
-                total_balances = balance.get('total', {})
-                free_balances = balance.get('free', {})
-
-                # Show USDT first, then configured assets only
-                usdt_total = total_balances.get('USDT', 0.0)
-                usdt_free = free_balances.get('USDT', 0.0)
-                _safe_print(f"  {'Asset':<10} {'Total':>15} {'Available':>15}")
-                _safe_print(f"  {'─'*10} {'─'*15} {'─'*15}")
-                _safe_print(f"  {'USDT':<10} {usdt_total:>15,.4f} {usdt_free:>15,.4f}")
-
-                # Show configured assets + BNB (for gas fees)
-                show_assets = list(set(self.assets + ['BNB']))
-                for a in sorted(show_assets):
-                    amt = total_balances.get(a, 0.0)
-                    if amt <= 0:
-                        continue
-                    free_amt = free_balances.get(a, 0.0)
-                    _safe_print(f"  {a:<10} {amt:>15,.8f} {free_amt:>15,.8f}")
-
-
-                # Update initial capital from USDT balance
-                if usdt_free > 0:
-                    self.initial_capital = usdt_free
-                    # Sync profit protector and risk manager with actual balance
-                    self.profit_protector.initial_capital = usdt_free
-                    self.profit_protector.current_balance = usdt_free
-                    self.risk_manager.initial_capital = usdt_free
-                    self.risk_manager.current_capital = usdt_free
-                    self.risk_manager.peak_capital = usdt_free
-
-                _safe_print(f"\n  💰 Reference Capital: ${self.initial_capital:,.2f} USDT")
-            else:
-                is_invalid_creds = balance.get('invalid_credentials', False)
-                if is_invalid_creds:
-                    _safe_print(f"  ⚠️  Invalid API credentials (code -2008)")
-                    _safe_print(f"  📝 To fix: Update your API keys in config.yaml or set environment variables:")
-                    if self.price_source.testnet:
-                        _safe_print(f"     - Get testnet keys from: https://testnet.binance.vision/")
-                        _safe_print(f"     - Then update config.yaml exchange.api_key and exchange.api_secret")
-                    else:
-                        _safe_print(f"     - Get live keys from: https://www.binance.com/en/user/settings/api-management")
-                        _safe_print(f"     - Then update config.yaml exchange.api_key and exchange.api_secret")
-                else:
-                    _safe_print(f"  ⚠️  Balance fetch error: {balance['error']}")
-                _safe_print(f"  💰 Using config capital: ${self.initial_capital:,.2f}")
-        else:
-            _safe_print(f"  ⚠️  No API credentials configured")
-            _safe_print(f"  📝 To enable balance fetching:")
-            _safe_print(f"     1. Get API keys from https://testnet.binance.vision/ (testnet mode)")
-            _safe_print(f"     2. Update config.yaml with exchange.api_key and exchange.api_secret")
-            _safe_print(f"  💰 Reference Capital: ${self.initial_capital:,.2f}")
-
-        # ── Fetch & Display Live Spot Prices ──
-        _safe_print(f"\n  📈 LIVE SPOT PRICES")
-        _safe_print("  " + "-" * 50)
-        _startup_prices: dict = {}
-        for asset in self.assets:
-            symbol = f"{asset}/USDT"
-            try:
-                price = self.price_source.fetch_latest_price(symbol)
-                _safe_print(f"  {symbol:<12} ${price:>12,.2f}")
-                if price:
-                    _startup_prices[asset] = float(price)
-                # Show wallet total balance (informational) vs free balance used for NAV
-                if self.price_source.is_authenticated and 'error' not in balance:
-                    held_total = balance.get('total', {}).get(asset, 0.0)
-                    if held_total > 0 and price:
-                        value = held_total * price
-                        _safe_print(f"  {'':12}   ↳ Holding: {held_total:.8f} = ${value:,.2f}")
-            except Exception as e:
-                _safe_print(f"  {symbol:<12} (unavailable: {e})")
-
-        _dashboard_nav = 0.0
-        if self.price_source.is_authenticated and 'error' not in balance:
-            _dashboard_nav = self._nav_usd_dashboard(balance, _startup_prices)
-            _safe_print(f"\n  🏦 TOTAL PORTFOLIO VALUE (NAV, dashboard): ${_dashboard_nav:,.2f} USD")
-
-        _safe_print("-" * 70)
-
-        # ── SOD anchor: same basis as current_total_value (free USDT + free crypto × price) ──
-        if self.price_source.is_authenticated and 'error' not in balance:
-            try:
-                from src.api.state import DashboardState
-                _today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                _ds = DashboardState()
-                _fp = _ds.get_full_state().get("portfolio", {})
-                _existing_sod = _fp.get("sod_date", "")
-                _sod_amt = _fp.get("sod_balance")
-                _cur_amt = _fp.get("current_total_value")
-                _legacy_sod = False
-                try:
-                    if _sod_amt is not None and _cur_amt is not None:
-                        _legacy_sod = float(_sod_amt) > 0 and float(_cur_amt) > 0 and float(_sod_amt) < float(_cur_amt) * 0.35
-                except (TypeError, ValueError):
-                    pass
-                if _existing_sod != _today_str or _legacy_sod:
-                    _sod_val = _dashboard_nav if _dashboard_nav > 0 else (
-                        usdt_free if usdt_free > 0 else self.initial_capital
-                    )
-                    _ds.set_sod_balance(_sod_val, _today_str)
-                    _tag = " (repaired legacy USDT-only anchor)" if _legacy_sod and _existing_sod == _today_str else ""
-                    _safe_print(f"  📅 SOD portfolio NAV anchored: ${_sod_val:,.2f} ({_today_str}){_tag}")
-                else:
-                    _safe_print(f"  📅 SOD already set for {_today_str}")
-            except Exception as _sod_err:
-                logger.warning(f"[SOD] Failed to set SOD balance: {_sod_err}")
-
-        # ── Layer Status ──
-        _safe_print("\n  🧠 9-LAYER INTELLIGENCE STATUS")
-        layers = [
-            ("L1", "Quantitative Engine",     "ONLINE"),
-            ("L2", "Sentiment Intelligence",   "ONLINE" if os.environ.get('NEWSAPI_KEY') else "DEGRADED"),
-            ("L3", "Risk Fortress",            "ONLINE"),
-            ("L4", "Signal Fusion",            "ONLINE"),
-            ("L5", "Execution Engine",         "ONLINE" if self.price_source.is_authenticated else "PAPER"),
-            ("L6", "Strategist Hub",           "ONLINE" if os.environ.get('REASONING_LLM_KEY') else "OFFLINE"),
-            ("L7", "Advanced Learning",        "ONLINE"),
-            ("L8", "Tactical Memory",          "ONLINE"),
-            ("L9", "Evolution Portal",         "ONLINE"),
-        ]
-        for lid, name, status in layers:
-            icon = "✅" if status == "ONLINE" else "⚡" if status == "PAPER" else "⚠️" if status == "DEGRADED" else "🔴" if status == "OFFLINE" else "⏳"
-            _safe_print(f"  {icon} {lid}: {name:<25} [{status}]")
-
-        # ── Data Sources Configuration ──
-        _safe_print("\n  📰 L2 SENTIMENT DATA SOURCES")
-        _safe_print("  " + "-" * 50)
-        
-        newsapi_status = "✅ ENABLED" if os.environ.get('NEWSAPI_KEY') else "❌ DISABLED"
-        cryptopanic_status = "✅ ENABLED" if os.environ.get('CRYPTOPANIC_TOKEN') else "❌ DISABLED"
-        reddit_status = "✅ ALWAYS ENABLED"
-        coingecko_status = "⚙️  FALLBACK ONLY"
-        
-        _safe_print(f"  📧 NewsAPI:        {newsapi_status}")
-        _safe_print(f"  🚨 CryptoPanic:    {cryptopanic_status}")
-        _safe_print(f"  🔴 Reddit:         {reddit_status}")
-        _safe_print(f"  🪙 CoinGecko:      {coingecko_status}")
-        _safe_print(f"  📊 Priority Order: NewsAPI → CryptoPanic → Reddit → CoinGecko")
-
-        _safe_print("\n" + "=" * 70)
-        _safe_print("  🚀 SYSTEM STARTING...")
-        _safe_print("=" * 70 + "\n")
-
-        try:
-            from src.api.state import DashboardState
-            DashboardState().set_status("TRADING")
-        except: pass
-
-        if self.mode == 'paper':
-            self._run_paper()
-        else:
-            # Combined loop for live and testnet (logic handles internals)
-            self._run_live()
-
-
-    def _perform_agentic_review(self):
-        """Perform periodic Layer 6 AI Agent macro review."""
-        _safe_print("\n  [AGENTIC-REVIEW] Strategist reflecting on market state...")
-        
-        # 1. Gather Context
-        history = list(self.journal.trades)
-        
-        # Pull latest asset context (BTC as proxy for macro)
-        asset = self.assets[0]
-        ohlcv = self._fetch_data(f"{asset}/USDT")
-        if not ohlcv: return
-        
-        market_data = {
-            'asset': asset,
-            'price': ohlcv['closes'][-1],
-            'onchain': self.on_chain.get_market_context(asset, current_price=ohlcv['closes'][-1]),
-            'funding_rate': 0.0001, # Placeholder
-            'atr': ohlcv.get('atr', [0.005])[-1] # From indicator cache
-        }
-        
-        # 2. Analyze
-        decision = self.strategist.analyze_performance(
-            trade_history=history,
-            current_config=self.config,
-            market_data=market_data
-        )
-        
-        # 3. Apply Decision
-        self.agentic_bias = decision.macro_bias
-        try:
-            from src.api.state import DashboardState
-            DashboardState().add_agent_thought(
-                asset=asset, 
-                regime=decision.market_regime, 
-                thought=decision.reasoning_trace[:150],
-                confidence=int(decision.confidence * 100)
-            )
-        except: pass
-        
-        _safe_print(f"  [STRATEGIST] Decision: {decision.market_regime} | Bias: {decision.macro_bias:+.2f}")
-        _safe_print(f"  [REASONING] {decision.reasoning_trace[:150]}...")
-        
-        # Suggested Config Overrides (defense-in-depth: re-clamp even after Pydantic validation)
-        if decision.suggested_config_update:
-            _safe_print(f"  [CONFIG] Applying strategist overrides: {decision.suggested_config_update}")
-            # SECURITY: Hard bounds that override anything the LLM suggests
-            _HARD_BOUNDS = {
-                'max_position_size_pct': (0.1, 5.0),
-                'daily_loss_limit_pct': (0.5, 5.0),
-                'risk_per_trade_pct': (0.1, 3.0),
-                'atr_stop_mult': (1.0, 5.0),
-                'atr_tp_mult': (1.0, 5.0),
-            }
-            if 'risk' in decision.suggested_config_update:
-                r_upd = decision.suggested_config_update['risk']
-                for k, v in list(r_upd.items()):
-                    if k in _HARD_BOUNDS:
-                        lo, hi = _HARD_BOUNDS[k]
-                        r_upd[k] = max(lo, min(hi, float(v)))
-                if 'atr_tp_mult' in r_upd:
-                    self.bt_config.atr_tp_mult = r_upd['atr_tp_mult']
-                    self.risk_manager.risk_limits.take_profit_atr_mult = r_upd['atr_tp_mult']
-                if 'atr_stop_mult' in r_upd:
-                    self.risk_manager.risk_limits.stop_loss_atr_mult = r_upd['atr_stop_mult']
-
-    def _run_paper(self):
-        """Backtest mode on historical data (loads from CSV)."""
-        all_results: Dict[str, BacktestResult] = {}
-        multi_asset_data = {}
-        import pandas as pd
-        processed_any = False
-
-        for asset in self.assets:
-            symbol = f"{asset}/USDT"
-            _safe_print(f"\n  [PAPER] Running backtest for {symbol}...")
-
-            # 1. Load data from CSV (AAVE_USDT_1h.csv)
-            csv_path = f"data/{asset}_USDT_1h.csv"
-            if not os.path.exists(csv_path):
-                _safe_print(f"  [X] CSV not found: {csv_path}. Skipping {asset}.")
-                continue
-
-            try:
-                df = pd.read_csv(csv_path)
-                closes = df['close'].tolist()
-                highs = df['high'].tolist()
-                lows = df['low'].tolist()
-                volumes = df['volume'].tolist()
-                multi_asset_data[asset] = df
-                _safe_print(f"  [OK] Loaded {len(closes):,} bars from {csv_path}")
-            except Exception as e:
-                _safe_print(f"  [X] Failed to load {csv_path}: {e}")
-                continue
-
-            # 2. Fetch sentiment (optional, may fail gracefully)
-            headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment(asset)
-            
-            # 2.5 Fetch free data sources (Fear/Greed, IV, On-Chain, etc.) 
-            free_signals = self.free_data.aggregate_all_signals(symbol=asset)
-            _safe_print(f"  [FREE DATA] {asset}: Fear/Greed={free_signals.get('fear_greed_classification')}, "
-                       f"IV={free_signals.get('iv_regime')}, Flow={free_signals.get('exchange_flow_signal')}")
-
-            # 3. Generate signals using L1 + L2
-            _safe_print(f"  [SIGNAL] Generating hybrid signals (FinBERT + LightGBM + FREE DATA)...")
-            strategy_result = self.strategy.generate_signals(
-                prices=closes,
-                highs=highs,
-                lows=lows,
-                volumes=volumes,
-                headlines=headlines if headlines else None,
-                headline_timestamps=h_timestamps if h_timestamps else None,
-                headline_sources=h_sources if h_sources else None,
-                headline_event_types=h_events if h_events else None,
-            )
-
-            signals = strategy_result['signals']
-            
-            # 3.5 Apply confidence boost from free data
-            l2_data = strategy_result.get('l2_data', {}) or {}
-            base_confidence = float(l2_data.get('confidence', 0.5))
-            boosted_confidence = self.free_data.calculate_free_data_boost(base_confidence, free_signals)
-            l2_data['confidence'] = boosted_confidence
-            l2_data['free_data_signal'] = free_signals.get('fear_greed_signal')
-            _safe_print(f"  [CONFIDENCE BOOST] {asset}: {base_confidence:.1%} → {boosted_confidence:.1%} (free data)")
-
-            # 4. Run Backtest (L3 Risk Simulation)
-            _safe_print(f"  [BACKTEST] Simulating execution with L3 Risk Manager...")
-            result = run_backtest(
-                prices=closes,
-                signals=signals,
-                config=self.bt_config,
-                highs=highs,
-                lows=lows
-            )
-            all_results[asset] = result
-            processed_any = True
-
-            # 5. Output asset report
-            _safe_print(f"\n--- Report for {asset} ---")
-            _safe_print(format_backtest_report(result))
-
-            # 6. Record backtest for learning (L1 incremental training)
-            self.strategy.record_backtest(result, asset, strategy_result['l1_data'])
-
-            try:
-                from src.api.state import DashboardState
-                l2 = strategy_result.get('l2_data', {}) or {}
-                sc = float(l2.get('aggregate_score', 0.0))
-                conf = float(l2.get('confidence', 0.0))
-                label = l2.get('aggregate_label', 'NEUTRAL')
-                bull = max(0.0, sc) * 100.0
-                bear = max(0.0, -sc) * 100.0
-                sel_signal = 'LONG' if (signals[-1] if signals else 0) > 0 else ('SHORT' if (signals[-1] if signals else 0) < 0 else 'FLAT')
-                
-                # Extract factors from L1 features if available
-                l1_feats = strategy_result.get('l1_data', {}).get('features', [{}])[-1]
-                vpin_val = float(l1_feats.get('vpin_50', 0.0))
-                vol_val = float(l1_feats.get('realized_vol_20', 0.0))
-                trend_val = float(l1_feats.get('trend_strength', 0.0))
-                
-                # Extract attribution
-                preds = strategy_result.get('l1_data', {}).get('predictions', [])
-                l1_conf = float(preds[-1][1]) if preds else 0.5
-                c1 = max(0.0, l1_conf)
-                c2 = max(0.0, abs(sc))
-                c3 = 0.3 # Base risk factor
-                tot = c1 + c2 + c3
-                attr = {'l1': c1 / tot, 'l2': c2 / tot, 'l3': c3 / tot}
-
-                # Top Features
-                top_feats = []
-                if isinstance(l1_feats, dict) and l1_feats:
+            if self.price_source.bybit and self.price_source.bybit.available:
+                for asset in self.assets:
+                    sym = f"{asset}/USDT:USDT"
                     try:
-                        top_feats = sorted(
-                            [{'name': k, 'value': float(v)} for k, v in l1_feats.items() if isinstance(v, (int, float))],
-                            key=lambda x: abs(x['value']),
-                            reverse=True
-                        )[:5]
-                    except Exception: pass
-
-                DashboardState().update_asset(asset, {
-                    'signal': sel_signal,
-                    'sentiment': {
-                        'score': sc,
-                        'label': label,
-                        'confidence': conf,
-                        'bull_pct': bull,
-                        'bear_pct': bear,
-                        'headlines': headlines[-5:] if headlines else []
-                    },
-                    'factors': {
-                        'vpin': vpin_val,
-                        'liquidity_regime': 'NORMAL', # Static for paper
-                        'volatility': vol_val,
-                        'trend_strength': trend_val,
-                        'funding_rate': 0.0001
-                    },
-                    'attribution': attr,
-                    'features_top': top_feats,
-                    'weights': {'l1': 0.5, 'l2': 0.3, 'l3': 0.2},
-                    'sent_hist': [float(l2.get('aggregate_score', 0.0)) for _ in range(20)] # Dummy spark
-                })
-                
-                # Also set layers for 9-layer reflection in paper mode
-                layers = {
-                    "L1 Quant": {"status": "OK", "progress": float(c1), "metric": f"Conf {l1_conf:.2f}"},
-                    "L2 Sentiment": {"status": "OK", "progress": float(min(1.0, abs(sc))), "metric": f"Score {sc:.2f}"},
-                    "L3 Risk": {"status": "OK", "progress": 0.8, "metric": f"VPIN {vpin_val:.2f}"},
-                    "L4 Meta": {"status": "OK", "progress": 0.7, "metric": "Signal Fused"},
-                    "L5 Execution": {"status": "OK", "progress": 0.8, "metric": "PAPER READY"},
-                    "L6 Strategist": {"status": "OK", "progress": float(conf/100.0 if conf <= 1 else conf), "metric": "Sim Reflecting"},
-                    "L7 Autonomy": {"status": "OK", "progress": 1.0, "metric": "PatchTST ACTIVE"},
-                    "L8 Monitoring": {"status": "OK", "progress": 0.9, "metric": "Log STABLE"},
-                    "L9 Learning": {"status": "OK", "progress": 1.0, "metric": "LGBM+TRANSFORMER"}
-                }
-                DashboardState().set_layers(layers)
-                DashboardState().set_sources({
-                    "exchange": "ONLINE",
-                    "news": "ONLINE" if headlines else "OFFLINE",
-                    "onchain": "OFFLINE",
-                    "llm": self._llm_status()
-                })
-
-            except Exception as e:
-                _safe_print(f"  [DASHBOARD-ERROR] {e}")
-
-        # Final Summary
-        self._print_portfolio_summary(all_results)
-        
-        # Phase 6: Advanced Learning
-        try:
-            learning_result = self._run_advanced_learning(all_results, multi_asset_data)
-            
-            # Update dashboard with Phase 6 insights
-            try:
-                from src.api.state import DashboardState
-                ds = DashboardState()
-                if learning_result:
-                    ds.update_advanced_learning({
-                        'regimes': learning_result.get('regimes', {}),
-                        'strategies': learning_result.get('strategies', {}),
-                        'patterns': learning_result.get('patterns', {}),
-                        'timestamp': learning_result.get('timestamp')
-                    })
-            except Exception:
-                pass
-                
-        except Exception as e:
-            _safe_print(f"  [WARNING] Phase 6 Advanced Learning error: {e}")
-
-        # Fallback: if no configured assets had CSVs, try AAVE to populate dashboard
-        if not processed_any and os.path.exists("data/AAVE_USDT_1h.csv"):
-            _safe_print("\n  [PAPER] No CSVs found for configured assets. Falling back to AAVE for demo.")
-            try:
-                df = pd.read_csv("data/AAVE_USDT_1h.csv")
-                closes = df['close'].tolist()
-                highs = df['high'].tolist()
-                lows = df['low'].tolist()
-                volumes = df['volume'].tolist()
-                headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment('AAVE')
-                strategy_result = self.strategy.generate_signals(
-                    prices=closes, highs=highs, lows=lows, volumes=volumes,
-                    headlines=headlines if headlines else None,
-                    headline_timestamps=h_timestamps if h_timestamps else None,
-                    headline_sources=h_sources if h_sources else None,
-                    headline_event_types=h_events if h_events else None,
-                )
-                signals = strategy_result['signals']
-                result = run_backtest(
-                    prices=closes, signals=signals, config=self.bt_config, highs=highs, lows=lows
-                )
-                try:
-                    from src.api.state import DashboardState
-                    l2 = strategy_result.get('l2_data', {}) or {}
-                    sc = float(l2.get('aggregate_score', 0.0))
-                    conf = float(l2.get('confidence', 0.0))
-                    label = l2.get('aggregate_label', 'NEUTRAL')
-                    bull = max(0.0, sc) * 100.0
-                    bear = max(0.0, -sc) * 100.0
-                    sel_signal = 'LONG' if (signals[-1] if signals else 0) > 0 else ('SHORT' if (signals[-1] if signals else 0) < 0 else 'FLAT')
-                    
-                    l1_feats = strategy_result.get('l1_data', {}).get('features', [{}])[-1]
-                    vpin_val = float(l1_feats.get('vpin_50', 0.0))
-                    vol_val = float(l1_feats.get('realized_vol_20', 0.0))
-                    trend_val = float(l1_feats.get('trend_strength', 0.0))
-                    
-                    preds = strategy_result.get('l1_data', {}).get('predictions', [])
-                    l1_conf = float(preds[-1][1]) if preds else 0.5
-                    c1 = max(0.0, l1_conf)
-                    c2 = max(0.0, abs(sc))
-                    c3 = 0.3
-                    tot = c1 + c2 + c3
-                    attr = {'l1': c1 / tot, 'l2': c2 / tot, 'l3': c3 / tot}
-                    
-                    top_feats = []
-                    if isinstance(l1_feats, dict) and l1_feats:
-                        try:
-                            top_feats = sorted(
-                                [{'name': k, 'value': float(v)} for k, v in l1_feats.items() if isinstance(v, (int, float))],
-                                key=lambda x: abs(x['value']),
-                                reverse=True
-                            )[:5]
-                        except Exception: pass
-
-                    # Enrich news data for organization
-                    organized_news = []
-                    for h, t, s, e in zip(headlines[-10:], h_timestamps[-10:], h_sources[-10:], h_events[-10:]):
-                        organized_news.append({
-                            'text': h,
-                            'source': s,
-                            'event': e,
-                            'time': datetime.fromtimestamp(t).strftime('%H:%M')
-                        })
-
-                    DashboardState().update_asset('AAVE', {
-                        'signal': sel_signal,
-                        'sentiment': {
-                            'score': sc, 'label': label, 'confidence': conf,
-                            'bull_pct': bull, 'bear_pct': bear,
-                            'headlines': headlines[-5:], # List for legacy compat
-                            'organized_news': organized_news 
-                        },
-                        'factors': {
-                            'vpin': vpin_val, 'liquidity_regime': 'NORMAL',
-                            'volatility': vol_val, 'trend_strength': trend_val,
-                            'funding_rate': 0.0001
-                        },
-                        'attribution': attr,
-                        'veto': {'active': False, 'reason': ''},
-                        'features_top': top_feats,
-                        'sent_hist': [sc for _ in range(20)]
-                    })
-                    
-                    # Fix: Push layers health in fallback mode
-                    layers = {
-                        "L1 Quant": {"status": "OK", "progress": float(c1), "metric": f"Conf {l1_conf:.2f}"},
-                        "L2 Sentiment": {"status": "OK", "progress": float(min(1.0, abs(sc))), "metric": f"Score {sc:.2f} {label}"},
-                        "L3 Risk": {"status": "OK", "progress": 0.8, "metric": f"VPIN {vpin_val:.2f}"},
-                        "L4 Meta": {"status": "OK", "progress": 0.7, "metric": "Alpha Fused"},
-                        "L5 Execution": {"status": "OK", "progress": 0.8, "metric": "ROUTER ACTIVE"},
-                        "L6 Strategist": {"status": "OK", "progress": float(conf/100.0 if conf <= 1 else conf), "metric": f"Conf {conf:.2f}"},
-                        "L7 Autonomy": {"status": "OK", "progress": 0.9, "metric": "PAPER REPLAY"},
-                        "L8 Monitoring": {"status": "OK", "progress": 0.9, "metric": "HEALTH GREEN"},
-                        "L9 Learning": {"status": "OK", "progress": 0.5, "metric": "Evolution Ready"}
-                    }
-                    DashboardState().set_layers(layers)
-                    DashboardState().set_sources({
-                        "exchange": "ONLINE",
-                        "news": "ONLINE" if headlines else "OFFLINE",
-                        "onchain": "OFFLINE",
-                        "llm": self._llm_status()
-                    })
-                except Exception as e:
-                    _safe_print(f"  [DASHBOARD-STRICT] Failed to update AAVE state: {e}")
-            except Exception as e:
-                _safe_print(f"  [X] Fallback AAVE run failed: {e}")
-
-
-
-    def _llm_status(self) -> str:
-        """Return 'ONLINE', 'LOCAL', or 'OFFLINE' reflecting actual LLM availability."""
-        s = self.strategist
-        # Cloud API key present and not in permanent fallback
-        if getattr(s, 'api_key', None) and not getattr(s, 'fallback_mode', True):
-            return "ONLINE"
-        # LLMRouter has at least one provider (includes local Ollama)
-        router = getattr(s, '_llm_router', None)
-        if router and getattr(router, 'providers', {}):
-            providers = list(router.providers.keys())
-            local_only = all(p in ('local', 'ollama', 'lmstudio') for p in providers)
-            return "LOCAL" if local_only else "ONLINE"
-        return "OFFLINE"
-
-    def _run_live(self):
-        """Main execution loop for Live/Testnet simulation with HFT Latency Guard."""
-        _safe_print(f"\n  [EXECUTION] Entering real-time monitoring loop...")
-        _safe_print(f"  Press Ctrl+C to exit.")
-        _safe_print("-" * 60)
-
-        while True:
-            t0 = time.time()
-            self.iteration_count += 1
-            
-            # --- PHASE 5: EVENT AWARENESS ---
-            if self.event_guard.is_risk_high():
-                _safe_print(f"  [EVENT-GUARD] High risk event detected! Pausing execution...")
-                time.sleep(60)
-                continue
-            
-            # --- LAYER 6: AGENTIC REVIEW ---
-            if self.iteration_count == 1 or self.iteration_count % 6 == 0:
-                self._perform_agentic_review()
-
-            # --- LAYER 7: ADVANCED LEARNING (Meta-Learning) ---
-            # Run every 10 iterations to classify regimes and adapt strategy parameters
-            if self.iteration_count == 1 or self.iteration_count % 10 == 0:
-                self._run_live_advanced_learning()
-            
-            # --- PHASE 5: CONTINUOUS RISK MONITORING ---
-            current_prices = {}
-            for asset in self.assets:
-                symbol = f"{asset}/USDT"
-                p = self.price_source.fetch_latest_price(symbol)
-                if p: current_prices[asset] = p
-            
-            self._check_active_stops(current_prices)
-
-            # Fetch Balance and Return %
-            balance_info = self.price_source.get_balance()
-            current_usdt = balance_info.get('USDT', 0.0) if 'error' not in balance_info else self.initial_capital
-
-            # Compute total portfolio value (USDT + crypto holdings at current prices)
-            total_portfolio_value = current_usdt
-            for a_name, a_price in current_prices.items():
-                holding = balance_info.get(a_name, 0.0)
-                if isinstance(holding, (int, float)) and holding > 0:
-                    total_portfolio_value += holding * a_price
-
-            total_return_pct = ((total_portfolio_value - self.initial_capital) / self.initial_capital * 100) if self.initial_capital > 0 else 0
-
-            # Update Dashboard State (so PORTFOLIO P&L and TOTAL are visible in backend cards)
-            try:
-                from src.api.state import DashboardState
-                pnl_abs = total_portfolio_value - self.initial_capital
-                # Pass current_total_value so today_pnl = current_total_value - sod_balance
-                # is computed device-independently from exchange data (not local equity curve)
-                DashboardState().update_portfolio(
-                    pnl=pnl_abs,
-                    asset_return=total_return_pct,
-                    current_total_value=total_portfolio_value,
-                )
-            except: pass
-
-            _trades_count = getattr(self.risk_manager, 'daily_trades', 0)
-            _open_positions = self.risk_manager.open_positions if hasattr(self.risk_manager, 'open_positions') else {}
-            _open_count = len(_open_positions)
-            _journal_total = len(self.journal.trades) if hasattr(self.journal, 'trades') else 0
-            _safe_print(f"\n  [LIVE] BAR {self.iteration_count} | Wallet: ${current_usdt:,.2f} | Return: {total_return_pct:>+6.2f}% | Trades Today: {_trades_count} | Open: {_open_count} | Total Journaled: {_journal_total}")
-
-            # Push open positions to dashboard every bar
-            try:
-                from src.api.state import DashboardState
-                _pos_snapshot = {}
-                for _pos_asset, _pos_rec in _open_positions.items():
-                    _cur_price = current_prices.get(_pos_asset, 0.0)
-                    _unrealized = _pos_rec.direction * _pos_rec.size * (_cur_price - _pos_rec.entry_price) if _cur_price else 0.0
-                    _pos_snapshot[_pos_asset] = {
-                        'direction': 'LONG' if _pos_rec.direction > 0 else 'SHORT',
-                        'entry_price': round(_pos_rec.entry_price, 4),
-                        'current_price': round(_cur_price, 4),
-                        'size': round(_pos_rec.size, 6),
-                        'unrealized_pnl': round(_unrealized, 2),
-                        'stop_loss': round(getattr(_pos_rec, 'stop_loss', 0.0), 4),
-                        'take_profit': round(getattr(_pos_rec, 'take_profit', 0.0), 4),
-                        'order_id': getattr(_pos_rec, 'order_id', ''),
-                    }
-                DashboardState().update_open_positions(_pos_snapshot)
-            except Exception:
-                pass
-
-            for asset in self.assets:
-                symbol = f"{asset}/USDT"
-
-                t_fetch = time.time()  # Measure ONLY the data fetch latency
-                ohlcv_data = self._fetch_data(symbol)
-                if ohlcv_data is None: continue
-
-                # SECURITY: Validate OHLCV data before processing
-                try:
-                    from src.security.data_validation import OHLCVValidator
-                    ohlcv_valid, ohlcv_warns = OHLCVValidator.validate(ohlcv_data, asset)
-                    if not ohlcv_valid:
-                        _safe_print(f"  [DATA-VALIDATION] {asset} OHLCV REJECTED: {ohlcv_warns}")
-                        continue
-                except ImportError:
-                    pass
-
-                # Latency Check (HFT Guard) — measures data fetch, not model load
-                api_latency = (time.time() - t_fetch) * 1000.0
-                if not self.health_checker.monitor_latency(api_latency):
-                    _safe_print(f"  [LATENCY-GUARD] High latency detected ({api_latency:.1f}ms). Skipping trade.")
-                    continue
-
-                # Fetch Institutional & Microstructure Signals
-                ext_feats = {}
-                try:
-                    derivatives = self.price_source.fetch_derivatives_data(symbol, ohlcv_data['closes'][-1])
-                    ext_feats.update(derivatives)
-                    
-                    ob_data = self.price_source.exchange.fetch_order_book(symbol)
-                    l2_metrics = self.microstructure.analyze_order_book(ob_data)
-                    ext_feats.update(l2_metrics)
-                    
-                    # Liquidity Regime Detection
-                    l_regime = self.microstructure.detect_liquidity_regime(l2_metrics['bid_depth_usd'], l2_metrics['ask_depth_usd'])
-                    ext_feats['liquidity_regime'] = l_regime
-
-                except Exception: pass
-
-                # Update L1 Features in Dashboard
-                try:
-                    from src.api.state import DashboardState
-                    l1_push = {
-                        'vpin': ext_feats.get('vpin_50', 0.0),
-                        'ob_imbalance': ext_feats.get('imbalance', 0.0),
-                        'liquidity_regime': ext_feats.get('liquidity_regime', 'NORMAL'),
-                        'funding_rate': ext_feats.get('funding_rate', 0.0001),
-                        'volatility': ext_feats.get('volatility_20', 0.0)
-                    }
-                    DashboardState().update_l1_features(asset, l1_push)
-                except: pass
-
-                headlines, h_timestamps, h_sources, h_events = self._fetch_sentiment(asset)
-
-                # Generate signals
-                strategy_result = self.strategy.generate_signals(
-                    prices=ohlcv_data['closes'],
-                    highs=ohlcv_data['highs'],
-                    lows=ohlcv_data['lows'],
-                    volumes=ohlcv_data['volumes'],
-                    headlines=headlines,
-                    headline_timestamps=h_timestamps,
-                    headline_sources=h_sources,
-                    headline_event_types=h_events,
-                    external_features=ext_feats,
-                    agentic_bias=self.agentic_bias
-                )
-
-                # Update Sentiment Scores in Dashboard
-                try:
-                    from src.api.state import DashboardState
-                    l2_data = strategy_result.get('l2_data', {})
-                    sent_push = {
-                        'composite_score': l2_data.get('sentiment_score', 0.5),
-                        'news_momentum': l2_data.get('momentum', 0.0),
-                        'veto_active': l2_data.get('veto', False),
-                        'headlines_count': len(headlines)
-                    }
-                    DashboardState().update_sentiment(asset, sent_push)
-                except: pass
-
-                signals = strategy_result['signals']
-                last_signal = signals[-1] if signals else 0
-                
-                if last_signal != 0:
-                    last_feats = strategy_result.get('l1_data', {}).get('features', [{}])[-1]
-                    if self._check_model_drift(last_feats):
-                        _safe_print("  [DRIFT-CHECK] Skipping trade due to significant model drift.")
-                        last_signal = 0
-
-                # Phase 6: Adverse Selection Protection (VPIN Flow Toxicity)
-                vpin_val = strategy_result.get('l1_data', {}).get('features', [{}])[-1].get('vpin_50', 0.0)
-                if last_signal != 0 and vpin_val > 0.8:
-                    _safe_print(f"  [TOXIC-FLOW] High VPIN ({vpin_val:.2f}). Market is too one-sided for safe entry.")
-                    last_signal = 0
-
-                # ═══ MULTI-AGENT INTELLIGENCE OVERLAY ═══
-                # 4-step pipeline: DataValidator → 10 Agents → Combiner → Auditor
-                enhanced_decision = None
-                try:
-                    closes_np = np.array(ohlcv_data['closes'])
-                    highs_np = np.array(ohlcv_data['highs'])
-                    lows_np = np.array(ohlcv_data['lows'])
-                    vols_np = np.array(ohlcv_data['volumes'])
-
-                    l2_data = strategy_result.get('l2_data', {}) or {}
-                    sent_score = float(l2_data.get('aggregate_score', 0.0))
-                    # Reuse balance_info already fetched at top of iteration (avoid duplicate API call)
-                    current_balance = balance_info.get('USDT', self.initial_capital) if 'error' not in balance_info else self.initial_capital
-
-                    quant_state = self.math_injector.compute_full_state(
-                        prices=closes_np, highs=highs_np, lows=lows_np,
-                        volumes=vols_np, sentiment_score=sent_score,
-                        asset=asset, account_balance=current_balance,
-                    )
-
-                    # Gather context for agents
-                    on_chain_data = {}
-                    try:
-                        on_chain_signal = self.on_chain_portfolio.compute_on_chain_signal(asset)
-                        on_chain_data = asdict(on_chain_signal) if on_chain_signal else {}
-                    except Exception:
-                        pass
-
-                    sentiment_ctx = {
-                        'aggregate_score': sent_score,
-                        'aggregate_label': l2_data.get('aggregate_label', 'NEUTRAL'),
-                        'confidence': float(l2_data.get('confidence', 0.0)),
-                    }
-
-                    # Free data enrichment (Fear/Greed, etc.)
-                    try:
-                        free_data = self.free_data.get_all_data()
-                        sentiment_ctx['fear_greed'] = free_data.get('fear_greed', {}).get('value', 50)
-                    except Exception:
-                        pass
-
-                    daily_pnl = 0.0
-                    try:
-                        ps = self.profit_protector.get_profit_status()
-                        daily_pnl = ps.get('total_pnl_pct', 0.0)
-                    except Exception:
-                        pass
-
-                    open_pos = self.risk_manager.get_open_positions() if hasattr(self.risk_manager, 'get_open_positions') else []
-                    trade_hist = self.journal.trades[-50:] if hasattr(self.journal, 'trades') else []
-                    raw_conf = float(strategy_result.get('l1_data', {}).get('confidence', 0.5)) if strategy_result else 0.5
-
-                    enhanced_decision = self.agent_orchestrator.run_cycle(
-                        quant_state=quant_state,
-                        raw_signal=last_signal,
-                        raw_confidence=raw_conf,
-                        ext_feats=ext_feats,
-                        on_chain=on_chain_data,
-                        sentiment_data=sentiment_ctx,
-                        ohlcv_data=ohlcv_data,
-                        asset=asset,
-                        daily_pnl=daily_pnl,
-                        account_balance=current_balance,
-                        open_positions=open_pos,
-                        trade_history=trade_hist,
-                    )
-
-                    _safe_print(f"  [AGENTS] Decision: dir={enhanced_decision.direction:+d} "
-                                f"conf={enhanced_decision.confidence:.3f} "
-                                f"scale={enhanced_decision.position_scale:.3f} "
-                                f"consensus={enhanced_decision.consensus_level} "
-                                f"quality={enhanced_decision.data_quality:.2f}")
-
-                    # Apply agent VETO (skip on testnet force-trade mode)
-                    _is_force = self.config.get('force_trade', False) and self.mode == 'testnet'
-                    if enhanced_decision.veto or enhanced_decision.consensus_level == 'VETOED':
-                        if _is_force:
-                            _safe_print(f"  [AGENTS] VETO active — OVERRIDDEN by testnet force-trade")
-                        else:
-                            _safe_print(f"  [AGENTS] VETO active — blocking trade")
-                            last_signal = 0
-                    elif enhanced_decision.direction != last_signal and enhanced_decision.confidence > 0.6:
-                        # Agents override direction if confident enough
-                        _safe_print(f"  [AGENTS] Direction override: {last_signal:+d} → {enhanced_decision.direction:+d}")
-                        last_signal = enhanced_decision.direction
-                except Exception as e:
-                    _safe_print(f"  [AGENTS] Agent overlay error (falling back to base): {str(e)[:100]}")
-                    enhanced_decision = None
-
-                # ═══ PUSH AGENT OVERLAY STATE TO DASHBOARD ═══
-                try:
-                    from src.api.state import DashboardState
-                    if enhanced_decision is not None:
-                        agent_stats = {}
-                        try:
-                            agent_stats = self.agent_orchestrator.get_agent_stats()
-                        except Exception:
-                            pass
-                        # Serialize agent votes (AgentVote dataclass → dict)
-                        serialized_votes = {}
-                        for name, v in (enhanced_decision.agent_votes or {}).items():
-                            try:
-                                if hasattr(v, 'direction'):
-                                    serialized_votes[name] = {
-                                        'direction': v.direction,
-                                        'confidence': round(v.confidence, 3),
-                                        'reasoning': str(v.reasoning)[:120],
-                                    }
-                                elif isinstance(v, dict):
-                                    serialized_votes[name] = {
-                                        'direction': v.get('direction', 0),
-                                        'confidence': round(v.get('confidence', 0), 3),
-                                        'reasoning': str(v.get('reasoning', ''))[:120],
-                                    }
-                            except Exception:
-                                pass
-
-                        # Extract debate metadata from enhanced_decision.risk_params
-                        _debate_info = {}
-                        _rp = enhanced_decision.risk_params or {}
-                        if 'debate_summary' in _rp:
-                            _debate_info = {
-                                'debate_summary': _rp.get('debate_summary', ''),
-                                'debate_flipped': _rp.get('debate_flipped', []),
-                                'debate_strengthened': _rp.get('debate_strengthened', []),
-                                'debate_consensus_shift': _rp.get('debate_consensus_shift', 'UNCHANGED'),
-                                'debate_conviction': _rp.get('debate_conviction', {}),
-                            }
-
-                        DashboardState().update_agent_overlay({
-                            'enabled': True,
-                            'last_decision': {
-                                'direction': enhanced_decision.direction,
-                                'confidence': round(enhanced_decision.confidence, 4),
-                                'position_scale': round(enhanced_decision.position_scale, 4),
-                                'consensus_level': enhanced_decision.consensus_level,
-                                'data_quality': round(enhanced_decision.data_quality, 4),
-                                'daily_pnl_mode': enhanced_decision.daily_pnl_mode,
-                                'veto': enhanced_decision.veto,
-                                'strategy': enhanced_decision.strategy_recommendation,
-                                'asset': asset,
-                            },
-                            'agent_votes': serialized_votes,
-                            'agent_weights': agent_stats.get('weights', {}),
-                            'consensus_level': enhanced_decision.consensus_level,
-                            'data_quality': round(enhanced_decision.data_quality, 4),
-                            'daily_pnl_mode': enhanced_decision.daily_pnl_mode,
-                            'debate': _debate_info,
-                        })
-                except Exception:
-                    pass
-
-                # ═══ PUSH POLYMARKET DATA TO DASHBOARD ═══
-                try:
-                    from src.data.polymarket_fetcher import PolymarketFetcher
-                    from src.api.state import DashboardState
-                    pm_cfg = self.config.get('polymarket', {})
-                    if pm_cfg.get('enabled', True):
-                        _pm = PolymarketFetcher(config=pm_cfg)
-                        pm_summary = _pm.get_summary_for_dashboard()
-                        DashboardState().update_polymarket(pm_summary)
-                except Exception:
-                    pass
-
-                try:
-                    from src.api.state import DashboardState
-                    l2 = strategy_result.get('l2_data', {}) or {}
-                    sc = float(l2.get('aggregate_score', 0.0))
-                    conf = float(l2.get('confidence', 0.0))
-                    label = l2.get('aggregate_label', 'NEUTRAL')
-                    bull = max(0.0, sc) * 100.0
-                    bear = max(0.0, -sc) * 100.0
-                    sel_signal = 'LONG' if last_signal > 0 else ('SHORT' if last_signal < 0 else 'FLAT')
-                    veto_active = False
-                    veto_reason = ""
-                    if vpin_val > 0.8:
-                        veto_active = True
-                        veto_reason = "VPIN_TOXIC"
-                    ds = DashboardState()
-                    preds = strategy_result.get('l1_data', {}).get('predictions', [])
-                    l1_conf = float(preds[-1][1]) if preds else 0.5
-                    c1 = max(0.0, l1_conf)
-                    c2 = max(0.0, abs(sc))
-                    c3 = 1.0 if veto_active else 0.3
-                    tot = c1 + c2 + c3 if (c1 + c2 + c3) > 0 else 1.0
-                    attr = {'l1': c1 / tot, 'l2': c2 / tot, 'l3': c3 / tot}
-                    last_feats = strategy_result.get('l1_data', {}).get('features', [{}])[-1]
-                    top_feats = []
-                    if isinstance(last_feats, dict) and last_feats:
-                        try:
-                            top_feats = sorted(
-                                [{'name': k, 'value': float(v)} for k, v in last_feats.items() if isinstance(v, (int, float))],
-                                key=lambda x: abs(x['value']),
-                                reverse=True
-                            )[:5]
-                        except Exception:
-                            top_feats = []
-                    try:
-                        # 2. Enrich news data for organization
-                        organized_news = []
-                        for h, t, s, e in zip(headlines[-10:], h_timestamps[-10:], h_sources[-10:], h_events[-10:]):
-                            organized_news.append({
-                                'text': h,
-                                'source': s,
-                                'event': e,
-                                'time': datetime.fromtimestamp(t).strftime('%H:%M')
-                            })
-
-                        # Publish layers snapshot
-                        layers = {
-                            "L1 Quant": {"status": "OK", "progress": float(c1), "metric": f"Conf {l1_conf:.2f}"},
-                            "L2 Sentiment": {"status": "OK", "progress": float(min(1.0, abs(sc))), "metric": f"Score {sc:.2f} {label}"},
-                            "L3 Risk": {"status": "WARN" if veto_active else "OK", "progress": float(0.0 if veto_active else 0.8), "metric": f"VPIN {vpin_val:.2f}"},
-                            "L4 Meta": {"status": "OK", "progress": 0.7, "metric": f"Arb Scale {attr['l1']:.2f}/{attr['l2']:.2f}/{attr['l3']:.2f}"},
-                            "L5 Execution": {"status": "OK", "progress": 0.8, "metric": "Router READY"},
-                            "L6 Strategist": {"status": "OK" if self.strategist.api_key else "WARN", "progress": float(conf/100.0 if conf <= 1 else conf), "metric": f"Conf {conf:.2f}"},
-                            "L7 Autonomy": {"status": "OK", "progress": 0.9, "metric": "Cycle ACTIVE"},
-                            "L8 Monitoring": {"status": "OK", "progress": 0.9, "metric": "Health GREEN"},
-                            "L9 Learning": {"status": "OK", "progress": 1.0, "metric": f"Agents: {enhanced_decision.consensus_level if enhanced_decision else 'INIT'}"}
-                        }
-                        ds.set_layers(layers)
-                        
-                        # Source Status bar
-                        ds.set_sources({
-                            "exchange": "ONLINE" if bool(ohlcv_data) else "OFFLINE",
-                            "news": "ONLINE" if (headlines and len(headlines) > 0) else "OFFLINE",
-                            "onchain": "ONLINE" if bool(on_chain_data) else "OFFLINE",
-                            "llm": self._llm_status()
-                        })
-                        
-                        # Compute Optimization Edge (Uplift)
-                        # We compare the Agentic Win Rate vs a baseline fixed 50% strategy
-                        journal_summary = self.journal.get_summary()
-                        current_accuracy = journal_summary.get('win_rate', 0.5)
-                        baseline = 0.48 
-                        ds.update_performance_edge({
-                            "uplift_pct": (current_accuracy - baseline) * 100,
-                            "baseline_winrate": baseline,
-                            "agent_winrate": current_accuracy
-                        })
-                    except Exception as e:
-                        _safe_print(f"  [DASHBOARD-STRICT] Health update error: {e}")
-
-                    # update asset snapshot
-                    ds.update_asset(asset, {
-                        'signal': sel_signal,
-                        'sentiment': {
-                            'score': sc,
-                            'label': label,
-                            'confidence': conf,
-                            'bull_pct': bull,
-                            'bear_pct': bear,
-                            'headlines': headlines[-5:] if headlines else [],
-                            'organized_news': organized_news
-                        },
-                        'factors': {
-                            'vpin': float(vpin_val),
-                            'liquidity_regime': ext_feats.get('liquidity_regime', 'NORMAL') if ext_feats else 'NORMAL',
-                            'volatility': float(ext_feats.get('realized_vol_20', 0.0)) if ext_feats else 0.0,
-                            'trend_strength': float(ext_feats.get('trend_strength', 0.0)) if ext_feats else 0.0,
-                            'funding_rate': float(ext_feats.get('funding_rate', 0.0)) if ext_feats else 0.0
-                        },
-                        'attribution': attr,
-                        'veto': {'active': veto_active, 'reason': veto_reason},
-                        'features_top': top_feats,
-                        'weights': {'l1': 0.5, 'l2': 0.3, 'l3': 0.2}
-                    })
-                    
-                    # Update detailed metrics for enhanced dashboard
-                    # Execution metrics (slippage_pct from config; fill_rate 100% for testnet simulation)
-                    _slippage_pct = round(self.config.get('slippage_pct', 0.0), 4)
-                    ds.update_execution_metrics({
-                        "slippage": _slippage_pct,
-                        "fill_rate": 100.0,
-                        "latency_ms": 0,
-                        "orders_per_min": 0.0
-                    })
-
-                    # Risk metrics — use live values from DynamicRiskManager
-                    _peak = self.risk_manager.peak_capital or self.initial_capital
-                    _cur = self.risk_manager.current_capital or self.initial_capital
-                    _cur_dd_pct = round(
-                        ((_peak - _cur) / _peak * 100) if _peak > 0 else 0.0, 2
-                    )
-                    _max_dd_pct = round(
-                        getattr(self.risk_manager, 'drawdown', 0.0) * 100, 2
-                    )
-                    ds.update_risk_metrics({
-                        "vpin_threshold": 0.8,
-                        "max_drawdown": -abs(_max_dd_pct),
-                        "current_drawdown": -abs(_cur_dd_pct),
-                        "risk_score": vpin_val * 0.5
-                    })
-
-                    # Training status — use live model version from state, gain from benchmark
-                    _all_trades_now = ds.get_full_state().get('trade_history', [])
-                    _closed_now = [t for t in _all_trades_now if 'exit_price' in t]
-                    _gain_now = 0.0
-                    if _closed_now:
-                        _wins_now = sum(1 for t in _closed_now if t.get('pnl', 0) > 0)
-                        _gain_now = round((_wins_now / len(_closed_now) - 0.5) * 100, 1)
-                    ds.update_training_status(
-                        status="IDLE",
-                        version="v6.0",
-                        gain=_gain_now,
-                        next_training="00:00 UTC"
-                    )
-
-                    # Memory metrics — use strategist calibration data
-                    _mem_conf = getattr(self.strategist, 'historical_accuracy', 0.7)
-                    ds.update_memory_metrics(
-                        latency=0,
-                        confidence=round(float(_mem_conf), 3)
-                    )
-                    
-                    # Strategist metrics
-                    ds.update_strategist_metrics(
-                        confidence=0.78,
-                        last_reasoning="Bullish momentum building"
-                    )
-                    
-                    # Add layer activity logs
-                    ds.add_layer_log("L1", f"VPIN updated: {vpin_val:.4f}", "INFO")
-                    ds.add_layer_log("L2", f"Sentiment: {label} ({sc:.2f})", "INFO")
-                    ds.add_layer_log("L3", f"Risk veto: {'ACTIVE' if veto_active else 'CLEAR'}", "WARN" if veto_active else "INFO")
-                    ds.add_layer_log("L4", f"Signal fusion: L1={attr['l1']:.2f} L2={attr['l2']:.2f} L3={attr['l3']:.2f}", "INFO")
-                    if veto_active:
-                        ds.add_layer_log("L5", "Execution blocked: VPIN risk veto active", "WARN")
-                    elif _force_trade_mode and last_signal == 0:
-                        ds.add_layer_log("L5", "Execution pending: force-trade override active", "WARN")
-                    elif last_signal != 0 or _force_trade_mode:
-                        ds.add_layer_log("L5", "Execution pending: trade evaluation in progress", "INFO")
-                    else:
-                        ds.add_layer_log("L5", "No execution: signal remained flat", "INFO")
-                    ds.add_layer_log("L6", f"Strategist confidence: {conf:.2f}", "INFO")
-                    ds.add_layer_log("L7", "Pattern detection: Active", "INFO")
-                    ds.add_layer_log("L8", "Memory retrieval: 87% similarity", "INFO")
-                    if enhanced_decision is not None:
-                        ds.add_layer_log("L9", f"Agent overlay: {enhanced_decision.consensus_level} conf={enhanced_decision.confidence:.2f}", "INFO")
-                    else:
-                        ds.add_layer_log("L9", "Evolution: Learning cycle active", "INFO")
-                    # append sentiment history
-                    state_now = ds.get_full_state()
-                    prev_hist = []
-                    try:
-                        prev_hist = state_now.get('active_assets', {}).get(asset, {}).get('sent_hist', [])
-                    except Exception:
-                        prev_hist = []
-                    new_hist = (prev_hist[-49:] if isinstance(prev_hist, list) else []) + [sc]
-                    ds.update_asset(asset, {'sent_hist': new_hist})
-                    try:
-                        closes_arr = ohlcv_data.get('closes', [])[-100:]
-                        highs_arr = ohlcv_data.get('highs', [])[-100:]
-                        lows_arr = ohlcv_data.get('lows', [])[-100:]
-                        opens_arr = []
-                        for i, c in enumerate(closes_arr):
-                            prev_c = closes_arr[i - 1] if i > 0 else c
-                            opens_arr.append(prev_c)
-                        now_ts = int(time.time())
-                        bar_sec = 3600
-                        ohlc_payload = []
-                        for i in range(len(closes_arr)):
-                            tstamp = now_ts - (len(closes_arr) - 1 - i) * bar_sec
-                            ohlc_payload.append({'t': tstamp, 'o': float(opens_arr[i]), 'h': float(highs_arr[i]), 'l': float(lows_arr[i]), 'c': float(closes_arr[i])})
-                        ds.update_asset(asset, {'ohlc': ohlc_payload})
-                    except Exception:
-                        pass
-                    try:
-                        prev_decisions = state_now.get('active_assets', {}).get(asset, {}).get('decision_hist', [])
-                    except Exception:
-                        prev_decisions = []
-                    decision_entry = {'t': int(time.time()), 'l1': attr['l1'], 'l2': attr['l2'], 'l3': attr['l3'], 'dir': int(last_signal)}
-                    ds.update_asset(asset, {'decision_hist': (prev_decisions[-49:] if isinstance(prev_decisions, list) else []) + [decision_entry]})
-                except Exception:
-                    pass
-
-                _safe_print(f"     Latest signal: {last_signal:+d}")
-                
-                # ═══ REAL-TIME BENCHMARK: Record prediction direction ═══
-                # Record ALL models every iteration (not just on trade signals)
-                # so the Performance page always has data to display.
-                try:
-                    from src.api.state import DashboardState
-                    _bm_ds = DashboardState()
-                    prev_price = ohlcv_data['closes'][-2] if len(ohlcv_data['closes']) >= 2 else ohlcv_data['closes'][-1]
-                    curr_price = ohlcv_data['closes'][-1]
-                    actual_direction = 1 if curr_price > prev_price else (-1 if curr_price < prev_price else 0)
-                    # Ensemble direction
-                    _bm_ds.record_prediction(last_signal, actual_direction)
-
-                    # Per-model predictions — always record so dashboard has data
-                    # LightGBM: from strategy_result L1 confidence
-                    _bm_l1_preds = strategy_result.get('l1_data', {}).get('predictions', [])
-                    _bm_l1_conf = float(_bm_l1_preds[-1][1]) if _bm_l1_preds else 0.5
-                    _bm_lgbm_dir = 1 if _bm_l1_conf > 0.55 else (-1 if _bm_l1_conf < 0.45 else 0)
-                    _bm_ds.record_model_prediction("lightgbm", _bm_lgbm_dir, actual_direction)
-
-                    # PatchTST: from strategy_result (stub returns 0.5 when disabled)
-                    _bm_patch = strategy_result.get('l1_data', {}).get('features', [{}])[-1]
-                    _bm_ptst_prob = float(_bm_patch.get('patch_prob_up', 0.5)) if isinstance(_bm_patch, dict) else 0.5
-                    _bm_ptst_dir = 1 if _bm_ptst_prob > 0.55 else (-1 if _bm_ptst_prob < 0.45 else 0)
-                    _bm_ds.record_model_prediction("patchtst", _bm_ptst_dir, actual_direction)
-
-                    # RL Agent: from strategy_result RL predictions
-                    _bm_rl_preds = strategy_result.get('l1_data', {}).get('predictions', [])
-                    # RL action is the first element of the prediction tuple
-                    _bm_rl_dir = 0
-                    if _bm_rl_preds:
-                        _bm_rl_action = _bm_rl_preds[-1][0] if isinstance(_bm_rl_preds[-1], (list, tuple)) else 0
-                        _bm_rl_dir = 1 if _bm_rl_action > 0 else (-1 if _bm_rl_action < 0 else 0)
-                    _bm_ds.record_model_prediction("rl_agent", _bm_rl_dir, actual_direction)
-
-                    # Strategist LLM: direction from agentic bias
-                    _bm_strat_dir = 1 if self.agentic_bias > 0.05 else (-1 if self.agentic_bias < -0.05 else 0)
-                    _bm_ds.record_model_prediction("strategist", _bm_strat_dir, actual_direction)
-                except Exception:
-                    pass
-                
-                # SECURITY: force_trade ONLY allowed on verified testnet
-                _is_verified_testnet = (
-                    self.mode == 'testnet'
-                    and getattr(self.price_source, 'testnet', False)
-                    and 'testnet' in str(getattr(getattr(self.price_source, 'exchange', None), 'urls', {}).get('api', '')).lower()
-                )
-                _force_trade_mode = self.config.get('force_trade', False) and _is_verified_testnet
-                if last_signal != 0 or _force_trade_mode:
-                    # ── CRITICAL GUARD: one position per asset ──
-                    # Without this, the system opens a new trade every bar,
-                    # creating hundreds of orphaned OPEN journal entries.
-                    _open = getattr(self.risk_manager, 'open_positions', {})
-                    if asset in _open:
-                        _existing = _open[asset]
-                        _same_dir = (last_signal > 0 and _existing.direction > 0) or \
-                                    (last_signal < 0 and _existing.direction < 0)
-                        if _same_dir:
-                            # Same direction — already positioned, skip
-                            continue
-                        else:
-                            # Opposite signal — close existing first, then allow new entry
-                            _safe_print(f"  [POSITION] {asset} has open {('LONG' if _existing.direction > 0 else 'SHORT')} — "
-                                        f"signal reversed, closing before re-entry")
-                            self._handle_full_exit(asset, _existing, ohlcv_data['closes'][-1], "signal_reversal")
-                            # After closing, fall through to new entry below
-
-                    if last_signal == 0 and _force_trade_mode:
-                        # Force a direction based on most recent price action
-                        last_signal = 1  # Default to LONG on forced mode
-                        _safe_print(f"  [FORCE-TRADE] Signal was FLAT, forcing LONG for testnet execution")
-                    # Pass extra context for Audit Logging + Agent overlay
-                    self._execute_autonomous_trade(asset, symbol, last_signal, ohlcv_data['closes'][-1],
-                                                 strategy_result=strategy_result, ext_feats=ext_feats,
-                                                 enhanced_decision=enhanced_decision)
-
-            _safe_print(f"\n  [SLEEP] Waiting {self.poll_interval}s for next bar...")
-            time.sleep(self.poll_interval)
-
-
-    def _execute_autonomous_trade(self, asset: str, symbol: str, signal: int, current_price: float,
-                                  strategy_result: Optional[Dict] = None, ext_feats: Optional[Dict] = None,
-                                  enhanced_decision=None):
-        """
-        Institutional-grade autonomous execution with full Audit/Compliance Logging.
-        Implements Ensemble Voting, Reasoning Trace, and Split-Order Execution.
-        """
-        try:
-            _safe_print(f"  [PHASE 5] Evaluating trade for {asset} (Signal: {signal})")
-            
-            # 1. ENSEMBLE VOTING (Institutional Requirement)
-            # We combine LightGBM, RL, and PatchTST for consensus
-            # (In production, these would be called independently with specific OHLCV windows)
-            ohlcv_data = self._fetch_data(symbol)
-            prices = np.array(ohlcv_data['closes']) if ohlcv_data else np.array([current_price])
-            
-            # Model Predictors
-            l1_score = strategy_result.get('l1_data', {}).get('confidence', 0.6) if strategy_result else 0.5
-            
-            # Create MarketState for RL Agent
-            m_state = MarketState(
-                price=current_price,
-                returns_5m=0.001, # Placeholder logic
-                returns_15m=0.002,
-                returns_1h=0.005,
-                volatility=ext_feats.get('realized_vol_20', 0.03) if ext_feats else 0.03,
-                rsi=50.0,
-                macd_signal=0.0,
-                momentum=0.0,
-                volume_ratio=1.0,
-                trend_strength=0.5,
-                zscore=0.0,
-                time_of_day=time.localtime().tm_hour,
-                day_of_week=time.localtime().tm_wday
-            )
-            rl_action_obj = self.rl_agent.select_action(m_state)
-            if self.patch_tst:
-                ptst_res = self.patch_tst.predict(prices)
-            else:
-                ptst_res = {'prob_up': 0.5, 'prob_shock': 0.0, 'regime': 'NEUTRAL'}
-            
-            # Map RL action to probability-like score
-            rl_score = 0.8 if rl_action_obj.action_type == "BUY" else (0.2 if rl_action_obj.action_type == "SELL" else 0.5)
-            
-            # Ensemble Consensus (3-Way Voting; use 2-way if PatchTST disabled)
-            if self.patch_tst:
-                ensemble_confidence = (l1_score + ptst_res['prob_up'] + rl_score) / 3
-            else:
-                ensemble_confidence = (l1_score + rl_score) / 2
-
-            # ═══ AGENT INTELLIGENCE OVERLAY: Blend into ensemble ═══
-            agentic_enhanced_dict = None
-            _force_trade = self.config.get('force_trade', False) and self.mode == 'testnet'
-            if enhanced_decision and hasattr(enhanced_decision, 'direction'):
-                # Skip blending if agent vetoed AND we're in force-trade mode
-                if _force_trade and (enhanced_decision.veto or enhanced_decision.direction == 0):
-                    _safe_print(f"  [FORCE-TRADE] Skipping agent blend (veto/flat) — keeping raw ensemble")
-                    agentic_enhanced_dict = {
-                        'direction': enhanced_decision.direction,
-                        'confidence': enhanced_decision.confidence,
-                        'position_scale': enhanced_decision.position_scale,
-                        'blend_weight': 0.0,
-                        'consensus_level': enhanced_decision.consensus_level,
-                        'data_quality': enhanced_decision.data_quality,
-                        'veto': enhanced_decision.veto,
-                    }
-                else:
-                    blend_w = self.config.get('agents', {}).get('blend_weight', 0.60)
-                    existing_score = signal * ensemble_confidence
-                    agent_score = enhanced_decision.direction * enhanced_decision.confidence
-                    blended = (1 - blend_w) * existing_score + blend_w * agent_score
-                    ensemble_confidence = float(min(1.0, abs(blended) * 1.5))
-                    # Apply debate conviction multiplier to position sizing
-                    _debate_conv_mult = 1.0
-                    _rp = enhanced_decision.risk_params or {}
-                    if 'debate_conviction' in _rp:
-                        _conv = _rp['debate_conviction']
-                        _debate_conv_mult = float(_conv.get('conviction_multiplier', 1.0)) if isinstance(_conv, dict) else 1.0
-                        _debate_conv_mult = max(0.3, min(1.5, _debate_conv_mult))  # Clamp safety bounds
-
-                    agentic_enhanced_dict = {
-                        'direction': enhanced_decision.direction,
-                        'confidence': enhanced_decision.confidence,
-                        'position_scale': enhanced_decision.position_scale * _debate_conv_mult,
-                        'blend_weight': blend_w,
-                        'consensus_level': enhanced_decision.consensus_level,
-                        'data_quality': enhanced_decision.data_quality,
-                        'veto': enhanced_decision.veto,
-                    }
-                    _safe_print(f"  [AGENTS] Blended score: {blended:+.3f} (existing={existing_score:.3f}, agent={agent_score:.3f})")
-                    if _debate_conv_mult != 1.0:
-                        _safe_print(f"  [DEBATE] Conviction multiplier: {_debate_conv_mult:.2f}x applied to position scale")
-
-            # Force-trade mode for testnet: much tighter neutral band
-            _force_trade = self.config.get('force_trade', False) and self.mode == 'testnet'
-            if _force_trade:
-                # Narrow band: almost any signal triggers a trade
-                final_direction = 1 if ensemble_confidence > 0.48 else (-1 if ensemble_confidence < 0.48 else 0)
-                if final_direction == 0:
-                    # If exactly 0.48, force LONG (testnet only)
-                    final_direction = 1
-                _safe_print(f"  [FORCE-TRADE] Testnet override active — direction={final_direction:+d}, conf={ensemble_confidence:.3f}")
-            else:
-                final_direction = 1 if ensemble_confidence > 0.6 else (-1 if ensemble_confidence < 0.4 else 0)
-            
-            # ════════════════════════════════════════════════════════════════
-            # REAL-TIME: Record each model's prediction individually
-            # ════════════════════════════════════════════════════════════════
-            try:
-                from src.api.state import DashboardState
-                _ds = DashboardState()
-                # Compute actual direction from last 2 bars
-                if ohlcv_data and len(ohlcv_data['closes']) >= 2:
-                    _prev = ohlcv_data['closes'][-2]
-                    _curr = ohlcv_data['closes'][-1]
-                    _actual_dir = 1 if _curr > _prev else (-1 if _curr < _prev else 0)
-                    
-                    # LightGBM prediction direction
-                    lgbm_dir = 1 if l1_score > 0.55 else (-1 if l1_score < 0.45 else 0)
-                    _ds.record_model_prediction("lightgbm", lgbm_dir, _actual_dir)
-                    
-                    # PatchTST prediction direction
-                    ptst_dir = 1 if ptst_res['prob_up'] > 0.55 else (-1 if ptst_res['prob_up'] < 0.45 else 0)
-                    _ds.record_model_prediction("patchtst", ptst_dir, _actual_dir)
-                    
-                    # RL Agent prediction direction
-                    rl_dir = 1 if rl_action_obj.action_type == "BUY" else (-1 if rl_action_obj.action_type == "SELL" else 0)
-                    _ds.record_model_prediction("rl_agent", rl_dir, _actual_dir)
-                    
-                    # Ensemble direction
-                    _ds.record_prediction(final_direction, _actual_dir)
-            except Exception:
-                pass
-            
-            # Veto Logic: If consensus doesn't match L1, or VPIN is toxic (L2 microstructure), block.
-            vpin_status = self.vpin.is_flow_toxic()
-            if vpin_status['is_toxic']:
-                if _force_trade:
-                    try:
-                        from src.api.state import DashboardState
-                        DashboardState().add_layer_log(
-                            "L5",
-                            f"Execution override: forcing trade despite VPIN {vpin_status['vpin']:.2f}",
-                            "WARN",
-                        )
-                    except Exception:
-                        pass
-                    _safe_print(f"  [FORCE-TRADE] VPIN toxic ({vpin_status['vpin']:.2f}) — overriding veto for testnet")
-                else:
-                    try:
-                        from src.api.state import DashboardState
-                        DashboardState().add_layer_log(
-                            "L5",
-                            f"Execution blocked: VPIN {vpin_status['vpin']:.2f} triggered risk veto",
-                            "WARN",
-                        )
-                    except Exception:
-                        pass
-                    _safe_print(f"  [VETO] Adverse Selection Protect: VPIN {vpin_status['vpin']:.2f} is Toxic. Blocking.")
-                    return
-
-            # ════════════════════════════════════════════════════════════════
-            # LAYER X: PROFIT PROTECTION & LOSS AVERSION (NEW)
-            # ════════════════════════════════════════════════════════════════
-            # Update balance info for profit protector
-            balance_info = self.price_source.get_balance()
-            current_usdt = balance_info.get('USDT', 0.0) if 'error' not in balance_info else self.initial_capital
-            self.profit_protector.update_balance(current_usdt)
-            
-            # Get current profit status
-            profit_status = self.profit_protector.get_profit_status()
-            
-            # Rate the trade quality
-            atr_val = ext_feats.get('atr_14', 0.01) if ext_feats else 0.01
-            stop_loss = current_price * (1 - atr_val/current_price) if current_price > 0 else current_price - atr_val
-            take_profit = current_price * (1 + atr_val * 2 / current_price) if current_price > 0 else current_price + atr_val * 2
-            position_size = (self.initial_capital * 0.01) / current_price if current_price > 0 else 0.1
-            
-            trade_quality = self.profit_protector.rate_trade_quality(
-                signal_confidence=ensemble_confidence,
-                model_win_rate=self.profit_protector.win_rate,
-                entry_price=current_price,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                position_size=position_size,
-                current_balance=current_usdt
-            )
-            
-            # Decision: Should we trade?
-            should_trade, protection_msg = self.profit_protector.should_enter_trade(
-                trade_quality=trade_quality,
-                current_balance=current_usdt,
-                force_hold_if_profitable=True
-            )
-            
-            if not should_trade:
-                if _force_trade:
-                    _safe_print(f"  [FORCE-TRADE] Profit protector rejected — overriding for testnet")
-                    _safe_print(f"               Current P&L: {profit_status['total_pnl_pct']:+.2f}%")
-                else:
-                    _safe_print(f"  [LOSS-AVERSION] {protection_msg}")
-                    _safe_print(f"               Current P&L: {profit_status['total_pnl_pct']:+.2f}%")
-                    return
-            
-            _safe_print(f"  [LOSS-AVERSION] {protection_msg}")
-            _safe_print(f"               Trade Quality: {trade_quality.recommendation} ({trade_quality.quality_score:.0f}/100)")
-            _safe_print(f"               P(Win): {trade_quality.win_probability:.1%} | Expectancy: ${trade_quality.profit_expectancy:+.2f}")
-            _safe_print(f"               Current P&L: {profit_status['total_pnl_pct']:+.2f}% | In Profit: {profit_status['is_profitable']}")
-            
-            # Adapt position size based on confidence and win rate
-            adaptive_pos_size = self.profit_protector.get_adaptive_position_size(
-                base_risk_pct=self.config.get('risk', {}).get('risk_per_trade_pct', 1.0),
-                trade_quality=trade_quality
-            )
-            _safe_print(f"               Adaptive Position Size: {adaptive_pos_size:.1%} of base risk")
-
-            # 2. INSTITUTIONAL REASONING TRACE (Audit Compliance)
-            reasoning = f"Institutional Consensus: ProbUp={ensemble_confidence:.2f}. "
-            reasoning += f"L1={l1_score:.2f}, PatchTST={ptst_res['prob_up']:.2f}, RL={rl_action_obj.action_type}. "
-            reasoning += f"Regime={ptst_res.get('regime', 'UNKNOWN')}. Toxicity={vpin_status['vpin']:.2f}."
-            
-            model_votes = {
-                "LightGBM": {"direction": 1 if l1_score > 0.5 else -1, "confidence": l1_score},
-                "PatchTST": ptst_res,
-                "RL_Policy_Prob": 0.33 # Placeholder for policy probability
-            }
-            
-            risk_checks = {
-                "VPIN_Toxicity": vpin_status['risk_action'],
-                "KillSwitch": "OFF",
-                "MaxDrawdown": "OK"
-            }
-            
-            # Publish to Audit Infrastructure
-            self.stream.log_trading_decision(
-                symbol=symbol, direction="LONG" if final_direction > 0 else "SHORT",
-                confidence=float(ensemble_confidence), model_votes=model_votes,
-                reasoning=reasoning, risk_checks=risk_checks
-            )
-
-            # 3. ALPHA ENRICHMENT: Strategy Weighting based on Regime
-            perf_metrics = self._get_asset_performance_metrics()
-            onchain_data = {asset: asdict(self.on_chain_portfolio.compute_on_chain_signal(asset))}
-            regime = ext_feats.get('liquidity_regime', 'NORMAL') if ext_feats else 'NORMAL'
-            
-            allocations = self.portfolio_allocator.allocate_portfolio(
-                assets=self.assets, performance_metrics=perf_metrics, 
-                onchain_data=onchain_data, regime=regime
-            )
-            
-            allocation = allocations.get(asset)
-            if not allocation:
-                _safe_print(f"  [SKIP] No portfolio allocation for {asset} — skipping trade")
-                return
-
-            side = "buy" if final_direction > 0 else "sell"
-            pos_size_pct = allocation.position_size_pct
-
-            # Apply L7 Advanced Learning position scale adjustment (regime-adaptive)
-            if hasattr(self, '_l7_position_scales') and asset in self._l7_position_scales:
-                _l7_scale = self._l7_position_scales[asset]
-                pos_size_pct *= _l7_scale
-                _safe_print(f"  [L7-META] Position size adjusted by {_l7_scale:.2f}x for {asset}")
-
-            # 4. MICROSTRUCTURE & LIQUIDITY SMART ROUTING
-            qty = (pos_size_pct * self.initial_capital) / current_price
-            try:
-                order_book = self.price_source.exchange.fetch_order_book(symbol) if hasattr(self.price_source, 'exchange') else None
-            except Exception:
-                order_book = None  # Testnet API unavailable — skip order book, use direct execution
-            
-            slippage_est = self.router.slippage.estimate_price_impact(qty, 5000000.0) # 5M ADV default
-
-            # ── Entry Execution: Limit order with market fallback ──
-            # Default: limit order at current price (+ offset for faster fill)
-            # Falls back to market after timeout_sec if unfilled.
-            exec_cfg = self.config.get('execution', {})
-            _use_limit = exec_cfg.get('entry_type', 'limit') == 'limit'
-            _limit_timeout = exec_cfg.get('limit_timeout_sec', 30)
-            _limit_offset_bps = exec_cfg.get('limit_offset_bps', 5)  # 0.05% aggressive
-
-            # Use USD notional to decide limit vs TWAP (not raw qty which varies per asset)
-            _notional_usd = qty * current_price
-            _twap_threshold_usd = exec_cfg.get('twap_threshold_usd', 5000)
-
-            if _use_limit and _notional_usd <= _twap_threshold_usd:
-                # Normal orders: limit with market fallback
-                _safe_print(f"  [PHASE 5] LIMIT ORDER: {side} {qty:.6f} {symbol} @ {current_price} "
-                            f"(${_notional_usd:.0f}, timeout={_limit_timeout}s, offset={_limit_offset_bps}bps)")
-                _exec_result = self.router.execute_limit_with_fallback(
-                    symbol=symbol, side=side, quantity=qty,
-                    limit_price=current_price,
-                    timeout_sec=_limit_timeout,
-                    price_offset_bps=_limit_offset_bps,
-                )
-                execution_id = _exec_result.order_id if _exec_result.success else "FAILED"
-            else:
-                # Large orders (>$5k notional): TWAP/VWAP via advanced order
-                execution_id = self.router.execute_advanced_order(
-                    symbol=symbol, side=side, quantity=qty,
-                    algo="TWAP" if _notional_usd > _twap_threshold_usd else "Direct",
-                    order_book=order_book
-                )
-
-            # 5. EXECUTION AUDIT
-            _exec_type = "LIMIT" if (_use_limit and _notional_usd <= _twap_threshold_usd) else ("TWAP" if _notional_usd > _twap_threshold_usd else "DIRECT")
-            _safe_print(f"  [PHASE 5] ORDER INITIATED: {execution_id} (Slippage Est: {slippage_est:.4%}, Type: {_exec_type})")
-            self.stream.log_execution(
-                order_id=execution_id, symbol=symbol, side=side,
-                qty=qty, price=current_price, slippage=slippage_est, type=_exec_type
-            )
-            
-            if execution_id != "FAILED":
-                try:
-                    from src.api.state import DashboardState
-                    DashboardState().add_layer_log("L5", f"Execution succeeded: order {execution_id}", "INFO")
-                except Exception:
-                    pass
-                # ═══ LAYER 6: Per-Trade LLM Analysis (NEW) ═══
-                # Generate detailed reasoning for THIS SPECIFIC TRADE
-                llm_reasoning = ""
-                try:
-                    # Extract L1, L2, L3 signals for LLM analysis
-                    l1_signal_dict = {
-                        'confidence': float(l1_score * 100),
-                        'prediction': 'BUY' if final_direction > 0 else 'SELL',
-                        'top_features': list(ext_feats.keys())[:5] if ext_feats else []
-                    }
-                    
-                    l2_data = strategy_result.get('l2_data', {}) if strategy_result else {}
-                    l2_sentiment_dict = {
-                        'sentiment_score': float(l2_data.get('aggregate_score', 0.0)),
-                        'confidence': float(l2_data.get('confidence', 0.0) * 100),
-                        'news_count': len(strategy_result.get('headlines', [])) if strategy_result else 0,
-                        'source_breakdown': l2_data.get('source_breakdown', {}),
-                        'label': l2_data.get('aggregate_label', 'NEUTRAL')
-                    }
-                    
-                    l3_risk_dict = {
-                        'vpin': float(vpin_status.get('vpin', 0.0)),
-                        'funding_rate': float(ext_feats.get('funding_rate', 0.0) * 100) if ext_feats else 0.0,
-                        'liquidation_levels': f"${current_price * 0.95:.2f} | ${current_price * 1.05:.2f}",
-                        'position_concentration': 'LOW' if ensemble_confidence < 0.7 else 'HIGH'
-                    }
-                    
-                    market_info = {
-                        'regime': regime,
-                        'atr': float(ext_feats.get('atr_14', 0.0)) if ext_feats else 0.0,
-                        'trend_direction': 'UP' if final_direction > 0 else 'DOWN',
-                        'volatility': float(ext_feats.get('realized_vol_20', 0.0)) if ext_feats else 0.0
-                    }
-                    
-                    # Get recent trades for context
-                    recent_trades = self.journal.get_recent_trades(limit=5) if hasattr(self.journal, 'get_recent_trades') else []
-                    
-                    # Call strategist for per-trade analysis
-                    llm_reasoning = self.strategist.analyze_trade(
-                        asset=asset,
-                        entry_price=current_price,
-                        entry_side=side,
-                        l1_signal=l1_signal_dict,
-                        l2_sentiment=l2_sentiment_dict,
-                        l3_risk=l3_risk_dict,
-                        market_data=market_info,
-                        recent_trades=recent_trades
-                    )
-                    _safe_print(f"  [L6-REASONING] {llm_reasoning[:150]}...")
-                except Exception as e:
-                    _safe_print(f"  [L6-WARNING] Could not generate LLM reasoning: {str(e)[:50]}")
-                    llm_reasoning = reasoning  # Fallback to institutional reasoning
-                
-                # Enhance reasoning with LLM analysis
-                final_reasoning = f"{reasoning}\n[L6-ANALYSIS] {llm_reasoning}"
-                
-                self.journal.log_trade(
-                    asset=asset, side=side, quantity=qty, price=current_price,
-                    regime=regime, strategy_name="HybridAlpha_v6.5_Institutional",
-                    confidence=float(ensemble_confidence),
-                    reasoning=final_reasoning,
-                    order_id=execution_id,
-                    feature_vector=ext_feats if ext_feats else {},
-                    model_signal=final_direction
-                )
-                self.risk_manager.register_trade_open(asset, final_direction, current_price, pos_size_pct, order_id=execution_id)
-                
-                # ═══ REAL-TIME BENCHMARK: Record trade entry ═══
-                try:
-                    from src.api.state import DashboardState
-                    DashboardState().record_trade({
-                        'asset': asset,
-                        'side': side,
-                        'entry_price': current_price,
-                        'quantity': qty,
-                        'confidence': float(ensemble_confidence),
-                        'timestamp': datetime.now().isoformat(),
-                        'direction': final_direction,
-                        'status': 'OPEN',
-                        'pnl': 0.0,
-                    })
-                except Exception:
-                    pass
-            else:
-                try:
-                    from src.api.state import DashboardState
-                    DashboardState().add_layer_log("L5", "Execution failed: router returned FAILED", "ERROR")
-                except Exception:
-                    pass
-
-        except Exception as e:
-            _safe_print(f"  [ERROR] Execution failed: {e}")
-
-    def _check_model_drift(self, current_features: Dict[str, float]) -> bool:
-        """
-        Monitors model drift/decay.
-        Compares current feature distributions to training expectations.
-        """
-        # Phase 6: Institutional Integrity Check
-        # Simplified: If volatility or correlation deviates 3 sigma from average
-        # In production: KL Divergence or PSI (Population Stability Index)
-        vol = current_features.get('realized_vol_annual', 0.5)
-        if vol > 1.2: # 120% annualized vol is extreme shift
-            _safe_print(f"  [DRIFT DECAY] High feature drift detected! (Vol: {vol:.2%})")
-            return True
-        return False
-
-    def _check_active_stops(self, current_prices: Dict[str, float]):
-        """Scans for stop-loss, take-profit, or partial exit triggers."""
-        # Update trailing stops before checking hard stop/TP levels
-        try:
-            if (hasattr(self, 'profit_protector') and self.profit_protector and
-                    hasattr(self.profit_protector, 'update_trailing_stop')):
-                open_positions = getattr(self.risk_manager, 'open_positions', {})
-                for asset, record in open_positions.items():
-                    current_price = current_prices.get(asset)
-                    if current_price is None:
-                        continue
-                    _updated_sl = getattr(record, 'stop_loss', 0.0) or 0.0
-                    try:
-                        # Estimate ATR as 2% of price if not available from features
-                        _atr = current_price * 0.02
-                        _new_sl = self.profit_protector.update_trailing_stop(
-                            asset=asset,
-                            current_price=current_price,
-                            direction=record.direction,
-                            entry_price=record.entry_price,
-                            atr=_atr,
-                            trail_atr_mult=1.5
-                        )
-                        # Only move stop in favorable direction (never widen stop)
-                        if record.direction > 0 and _new_sl > _updated_sl:
-                            record.stop_loss = _new_sl
-                        elif record.direction < 0 and _new_sl < _updated_sl:
-                            record.stop_loss = _new_sl
+                        self.price_source.bybit.exchange.set_leverage(1, sym)
+                        print(f"  [{asset}] Leverage set to 1x")
                     except Exception:
                         pass
         except Exception:
             pass
 
-        # DynamicRiskManager now holds the check_all_stops logic
-        triggers = self.risk_manager.check_all_stops(current_prices)
-        for t in triggers:
-            asset = t['asset']
-            trigger = t['trigger']
-            price = t['price']
-            record = t['record']
-            
-            _safe_print(f"  [RISK] {trigger.upper()} triggered for {asset} at ${price:.2f}")
-            
-            if 'partial_tp' in trigger:
-                # Execute 50% scale-out
-                self._handle_partial_tp(asset, record, price)
-            else:
-                # Full Exit
-                self._handle_full_exit(asset, record, price, trigger)
+        # State
+        self.positions: Dict[str, Dict[str, Any]] = {}
+        self.equity: float = self.initial_capital
+        self.cash: float = self.initial_capital
+        self.bar_count: int = 0
+        self.last_trade_time: Dict[str, float] = {}
+        self.last_close_time: Dict[str, float] = {}
+        self.last_signal_candle: Dict[str, float] = {}  # Track candle timestamp to avoid re-entry on same candle
+        self.failed_close_assets: Dict[str, float] = {}  # Assets that failed to close — skip until manual resolution
 
-    def _handle_partial_tp(self, asset: str, record: 'TradeRecord', price: float):
-        """Scales out of 50% of the position to secure profits."""
-        symbol = f"{asset}/USDT"
-        side = "sell" if record.direction > 0 else "buy"
-        half_qty = record.size * 0.5
-        
-        _safe_print(f"  [PHASE 5] Executing Partial TP scale-out: {half_qty:.6f} {asset}")
-        
-        res = self.router.execute_order(
-            symbol=symbol, side=side, quantity=half_qty, order_type="market"
-        )
-        
-        if res.success:
-            # Update record size in RiskManager (so full exit knows remaining)
-            record.size -= res.executed_quantity
-            self.journal.log_trade(
-                asset=asset, side=side, quantity=res.executed_quantity,
-                price=res.executed_price, regime="Partial TP", strategy_name="ScaleOut",
-                confidence=1.0, reasoning="50% Profit Secure + Breakeven Stop set",
-                order_id=res.order_id
-            )
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _get_symbol(self, asset: str) -> str:
+        """BTC -> BTC/USDT:USDT  (Bybit linear perpetual)"""
+        return f"{asset}/USDT:USDT"
 
-    def _handle_full_exit(self, asset: str, record: 'TradeRecord', price: float, reason: str):
-        """Closes the entire position."""
-        symbol = f"{asset}/USDT"
-        side = "sell" if record.direction > 0 else "buy"
-        
-        _safe_print(f"  [PHASE 5] Executing Full Exit ({reason}): {record.size:.6f} {asset}")
-        
-        res = self.router.execute_order(
-            symbol=symbol, side=side, quantity=record.size, order_type="market"
-        )
-        
-        if res.success:
-            pnl = (res.executed_price - record.entry_price) * record.size * record.direction
-            return_pct = ((res.executed_price - record.entry_price) / record.entry_price * 100) * record.direction
+    def _get_spot_symbol(self, asset: str) -> str:
+        """BTC -> BTC/USDT"""
+        return f"{asset}/USDT"
 
-            self.risk_manager.close_position(asset, res.executed_price)
+    def _extract_ob_levels(self, order_book: dict, price: float) -> dict:
+        """
+        Extract key support/resistance levels from L2 order book.
+        Finds bid walls (support) and ask walls (resistance) where
+        large volume clusters sit — these are real levels the market respects.
 
-            # Clean up trailing stop tracking when position is closed
-            try:
-                if hasattr(self, 'profit_protector') and hasattr(self.profit_protector, 'reset_trail'):
-                    self.profit_protector.reset_trail(asset)
-            except Exception:
-                pass
-
-            self.journal.close_trade(
-                order_id=record.order_id,
-                exit_price=res.executed_price,
-                pnl=pnl,
-                reason=reason,
-            )
-
-            # ═══ FEEDBACK LOOPS: Update agent + meta-controller weights ═══
-            try:
-                self.agent_orchestrator.post_trade_feedback({
-                    'asset': asset,
-                    'pnl': pnl,
-                    'return_pct': return_pct,
-                    'direction': record.direction,
-                    'entry_price': record.entry_price,
-                    'exit_price': res.executed_price,
-                    'reason': reason,
-                    'agent_votes': {},
-                })
-            except Exception:
-                pass
-            # Update Kelly sizing with actual outcome
-            try:
-                if hasattr(self, 'strategy') and hasattr(self.strategy, 'meta_controller'):
-                    self.strategy.meta_controller.record_trade_outcome(pnl > 0)
-            except Exception:
-                pass
-
-            # ═══ REAL-TIME BENCHMARK: Record completed trade with P&L ═══
-            try:
-                from src.api.state import DashboardState
-                ds = DashboardState()
-                ds.record_trade({
-                    'asset': asset,
-                    'side': side,
-                    'entry_price': record.entry_price,
-                    'exit_price': res.executed_price,
-                    'pnl': pnl,
-                    'return_pct': return_pct,
-                    'quantity': res.executed_quantity,
-                    'reason': reason,
-                    'timestamp': datetime.now().isoformat(),
-                    'direction': record.direction,
-                    'status': 'CLOSED',
-                })
-                
-                # Push updated benchmark metrics to dashboard (only CLOSED trades count)
-                all_trades = ds.get_full_state().get('trade_history', [])
-                closed_trades = [
-                    t for t in all_trades
-                    if isinstance(t, dict) and t.get('status') == 'CLOSED' and 'pnl' in t
-                ]
-                if closed_trades:
-                    wins = sum(1 for t in closed_trades if t.get('pnl', 0) > 0)
-                    wr = wins / len(closed_trades)
-                    rets = [t['return_pct'] / 100 for t in closed_trades if 'return_pct' in t]
-                    sharpe = 0.0
-                    if len(rets) >= 2:
-                        import numpy as _np
-                        arr = _np.array(rets)
-                        sharpe = (float(_np.mean(arr)) / float(_np.std(arr))) * float(_np.sqrt(252)) if float(_np.std(arr)) > 0 else 0.0
-                    win_pnl = sum(t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) > 0)
-                    loss_pnl = abs(sum(t.get('pnl', 0) for t in closed_trades if t.get('pnl', 0) < 0))
-                    pf = (win_pnl / loss_pnl) if loss_pnl > 0 else (float('inf') if win_pnl > 0 else 0.0)
-                    rr = f"1:{win_pnl / loss_pnl:.2f}" if loss_pnl > 0 else "1:∞"
-                    ds.update_benchmark_metrics({
-                        'win_rate': wr,
-                        'accuracy': wr,
-                        'sharpe_ratio': sharpe,
-                        'total_trades': len(closed_trades),
-                        'total_pnl': sum(t.get('pnl', 0) for t in closed_trades),
-                        'profit_factor': pf,
-                        'risk_reward': rr,
-                    })
-                    # Also save to persistent benchmark history
-                    self.benchmark.evaluate_all_from_executor(
-                        trade_history=closed_trades,
-                        returns=rets if len(rets) >= 2 else None,
-                    )
-            except Exception as _e:
-                _safe_print(f"  [DASHBOARD] Failed to update benchmark metrics: {_e}")
-
-    def _fetch_data(self, symbol: str) -> Optional[Dict[str, List[float]]]:
-        """Fetch and format OHLCV data for strategy ingestion."""
-        try:
-            # Match style-based timeframe
-            timeframe = '1h' if self.style == TradingStyle.SWING else '5m'
-            raw = self.price_source.fetch_ohlcv(symbol, timeframe=timeframe, limit=200)
-            if not raw: return None
-            return self.price_source.extract_ohlcv(raw)
-        except Exception as e:
-            _safe_print(f"  [ERROR] Failed to fetch data for {symbol}: {e}")
-            return None
-
-    def _fetch_sentiment(self, asset: str) -> Tuple[List[str], List[float], List[str], List[str]]:
-        """Fetch latest sentiment headlines and metadata."""
-        news_items = self.news.fetch_all(asset)
-
-        if news_items:
-            _safe_print(f"  [L2 SENTIMENT] Fetched {len(news_items)} news items for {asset}")
-            # Count sources in the items
-            source_breakdown = {}
-            for item in news_items:
-                source = item.source
-                source_breakdown[source] = source_breakdown.get(source, 0) + 1
-            
-            # Display source breakdown
-            _safe_print(f"  [L2 SENTIMENT] Source Breakdown:")
-            for source, count in sorted(source_breakdown.items(), key=lambda x: -x[1]):
-                _safe_print(f"    • {source}: {count} items")
-            
-            for i, item in enumerate(news_items[:3]):  # Just print the top 3
-                _safe_print(f"    📰 {item.source}: {item.title[:80]}...")
-        else:
-            _safe_print(f"  [L2 SENTIMENT] No recent news found for {asset}.")
-
-        news_data = [n.to_dict() for n in news_items]
-        headlines = [n['title'] for n in news_data]
-        timestamps = [n.get('timestamp', time.time()) for n in news_data]
-        sources = [n.get('source', 'Unknown') for n in news_data]
-        events = [n.get('event_type', 'GENERAL') for n in news_data]
-        return headlines, timestamps, sources, events
-
-    def _get_asset_performance_metrics(self) -> Dict[str, Any]:
-        """Calculates trailing performance for the Allocator."""
-        # In a real system, this would pull from the TradingJournal
-        # Here we provide a mock or summary of recent trade history PnL
-        summary = self.journal.get_summary()
-        return {
-            "win_rate": summary.get("win_rate", 0.5),
-            "total_pnl": summary.get("total_pnl", 0.0),
-            "returns": [t.get("pnl", 0.0) for t in self.journal.trades[-50:]] if self.journal.trades else [0.0]
+        Returns:
+            {
+                'bid_wall': strongest bid support price (or 0),
+                'ask_wall': strongest ask resistance price (or 0),
+                'bid_walls': [(price, vol), ...] sorted by volume desc,
+                'ask_walls': [(price, vol), ...] sorted by volume desc,
+                'imbalance': float (-1 to 1, positive = bid heavy = bullish),
+                'bid_depth_usd': total bid volume in USD,
+                'ask_depth_usd': total ask volume in USD,
+            }
+        """
+        result = {
+            'bid_wall': 0.0, 'ask_wall': 0.0,
+            'bid_walls': [], 'ask_walls': [],
+            'imbalance': 0.0, 'bid_depth_usd': 0.0, 'ask_depth_usd': 0.0,
         }
 
-    def _print_portfolio_summary(self, all_results: Dict[str, Any]):
-        """Consolidates results across all assets."""
-        _safe_print("\n" + "="*50)
-        _safe_print("  FINAL PORTFOLIO SUMMARY (BACKTEST)")
-        _safe_print("="*50)
-        
-        total_pnl = 0.0
-        total_trades = 0
-        winning_trades = 0
-        
-        for asset, res in all_results.items():
-            net_pnl = res.net_pnl_pct
-            total_pnl += net_pnl
-            total_trades += res.total_trades
-            winning_trades += res.winning_trades
-            _safe_print(f"  {asset: <10} | PnL: {net_pnl:>+7.2f}% | Trades: {res.total_trades:>3}")
-            
-        avg_pnl = total_pnl / len(all_results) if all_results else 0.0
-        win_rate = (winning_trades / (total_trades or 1) * 100)
-        
-        _safe_print("-" * 50)
-        _safe_print(f"  TOTAL ASSETS:  {len(all_results)}")
-        _safe_print(f"  AVG ASSET PNL: {avg_pnl:>+7.2f}%")
-        _safe_print(f"  TOTAL TRADES:  {total_trades}")
-        _safe_print(f"  WIN RATE:      {win_rate:>5.1f}%")
-        _safe_print("="*50 + "\n")
+        bids = order_book.get('bids', [])
+        asks = order_book.get('asks', [])
 
-    def _run_advanced_learning(self, all_results: Dict[str, Any], multi_asset_data: Dict[str, Any]):
-        """Meta-Learning (Layer 9) — Performance Review & Strategy Evolution."""
-        _safe_print("  [PHASE 6] Running Meta-Learning Evolution (Alpha)...")
-        from src.ai.advanced_learning import AdvancedLearningEngine
-        engine = AdvancedLearningEngine()
-        
-        for asset, res in all_results.items():
-             results_dict = {
-                 "total_return_pct": res.net_pnl_pct,
-                 "sharpe_ratio": res.sharpe_ratio,
-                 "winning_trades": res.winning_trades,
-                 "total_trades": res.total_trades
-             }
-             engine.update_with_backtest_results(asset, results_dict)
-             
-        status = engine.get_system_status()
-        _safe_print(f"  [META] Advanced Learning Engine State: {status.get('active_strategies', 0)} Active Strategies.")
-        engine.save_learned_models()
-        return status
+        if len(bids) < 5 or len(asks) < 5:
+            return result
 
-    def _run_live_advanced_learning(self):
-        """Layer 7: Run Advanced Learning in live/testnet mode.
+        # Calculate imbalance using only levels NEAR current price (within 3%)
+        # Testnet has fake walls far from price that skew imbalance to -1.00
+        nearby_bid_vol = 0
+        nearby_ask_vol = 0
+        price_range = price * 0.03  # 3% from current price
+        for b in bids[:20]:
+            bp = float(b[0])
+            if bp >= price - price_range:
+                nearby_bid_vol += float(b[1])
+        for a in asks[:20]:
+            ap = float(a[0])
+            if ap <= price + price_range:
+                nearby_ask_vol += float(a[1])
+        total_nearby = nearby_bid_vol + nearby_ask_vol
+        if total_nearby > 0:
+            result['imbalance'] = (nearby_bid_vol - nearby_ask_vol) / total_nearby
+        result['bid_depth_usd'] = nearby_bid_vol * price
+        result['ask_depth_usd'] = nearby_ask_vol * price
 
-        Classifies market regimes, detects anomalies, and adapts risk parameters
-        based on meta-learning insights. Feeds back into strategy layer.
-        """
-        try:
-            import pandas as pd
-            _safe_print("  [L7-META] Running Advanced Learning regime analysis...")
+        # Find bid walls (large volume clusters = support)
+        bid_vols = [(float(b[0]), float(b[1])) for b in bids[:20] if float(b[0]) >= price - price_range]
+        if bid_vols:
+            avg_bid_vol = sum(v for _, v in bid_vols) / len(bid_vols)
+            # Walls = levels with 2x+ average volume
+            bid_walls = [(p, v) for p, v in bid_vols if v >= avg_bid_vol * 2.0]
+            bid_walls.sort(key=lambda x: x[1], reverse=True)
+            result['bid_walls'] = bid_walls[:5]
+            if bid_walls:
+                result['bid_wall'] = bid_walls[0][0]  # Strongest support
 
-            # Build multi-asset DataFrame from live OHLCV
-            multi_asset_data = {}
-            for asset in self.assets:
-                symbol = f"{asset}/USDT"
-                ohlcv = self._fetch_data(symbol)
-                if ohlcv and len(ohlcv.get('closes', [])) >= 50:
-                    multi_asset_data[asset] = pd.DataFrame({
-                        'close': ohlcv['closes'],
-                        'high': ohlcv['highs'],
-                        'low': ohlcv['lows'],
-                        'volume': ohlcv['volumes'],
-                    })
+        # Find ask walls (large volume clusters = resistance) — only near price
+        ask_vols = [(float(a[0]), float(a[1])) for a in asks[:20] if float(a[0]) <= price + price_range]
+        if ask_vols:
+            avg_ask_vol = sum(v for _, v in ask_vols) / len(ask_vols)
+            ask_walls = [(p, v) for p, v in ask_vols if v >= avg_ask_vol * 2.0]
+            ask_walls.sort(key=lambda x: x[1], reverse=True)
+            result['ask_walls'] = ask_walls[:5]
+            if ask_walls:
+                result['ask_wall'] = ask_walls[0][0]  # Strongest resistance
 
-            if not multi_asset_data:
-                return
+        return result
 
-            # Run full L7 pipeline: patterns, correlations, regime classification, strategies
-            result = self.advanced_learning.process_market_data(multi_asset_data)
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
+    def run(self):
+        print("=" * 60)
+        print("  EMA(8) Crossover + LLM | Bybit USDT Perpetual")
+        print(f"  Assets: {self.assets} | Poll: {self.poll_interval}s")
+        print(f"  LLM: {self.ollama_model} @ {self.ollama_base_url}")
+        print("=" * 60)
+        self._run_live()
 
-            # ── Apply L7 regime insights to risk parameters ──
-            for asset, regime in result.get('regimes', {}).items():
-                if not hasattr(regime, 'regime_type'):
-                    continue
-
-                # Anomaly/crisis regime → tighten risk
-                if regime.regime_type in ('ANOMALY', 'VOLATILE'):
-                    self.risk_manager.risk_limits.stop_loss_atr_mult = max(1.0, self.bt_config.atr_stop_mult * 0.8)
-                    self.risk_manager.risk_limits.take_profit_atr_mult = self.bt_config.atr_tp_mult * 0.7
-                    _safe_print(f"  [L7-META] {asset}: {regime.regime_type} regime — tightened stops")
-                elif regime.regime_type == 'TRENDING_UP' and regime.confidence > 60:
-                    # Strong trend → widen TP to ride momentum
-                    self.risk_manager.risk_limits.take_profit_atr_mult = min(6.0, self.bt_config.atr_tp_mult * 1.2)
-                    _safe_print(f"  [L7-META] {asset}: Trending UP (conf={regime.confidence:.0f}%) — widened TP")
-                elif regime.regime_type == 'MEAN_REVERTING':
-                    # Mean reversion → tighter TP, normal stops
-                    self.risk_manager.risk_limits.take_profit_atr_mult = max(2.0, self.bt_config.atr_tp_mult * 0.6)
-                    _safe_print(f"  [L7-META] {asset}: Mean-reverting — tightened TP for quicker exits")
-
-            # ── Apply L7 generated strategy risk overrides ──
-            for asset, strategy in result.get('strategies', {}).items():
-                if hasattr(strategy, 'risk_params') and isinstance(strategy.risk_params, dict):
-                    rp = strategy.risk_params
-                    if 'position_size_mult' in rp:
-                        scale = max(0.3, min(1.5, float(rp['position_size_mult'])))
-                        # Store for per-asset scaling in trade execution
-                        if not hasattr(self, '_l7_position_scales'):
-                            self._l7_position_scales = {}
-                        self._l7_position_scales[asset] = scale
-
-            # Push to dashboard
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+    def _run_live(self):
+        while True:
             try:
-                from src.api.state import DashboardState
-                DashboardState().update_advanced_learning({
-                    'regimes': {a: getattr(r, 'regime_type', str(r)) for a, r in result.get('regimes', {}).items()},
-                    'strategies': {a: getattr(s, 'name', str(s)) for a, s in result.get('strategies', {}).items()},
-                    'patterns': result.get('patterns', {}),
-                    'timestamp': result.get('timestamp'),
-                })
+                loop_start = time.time()
+                self.bar_count += 1
+
+                # Fetch account equity from Bybit (USDT + BTC collateral value)
+                try:
+                    if self.price_source.bybit and self.price_source.bybit.available:
+                        acct = self.price_source.bybit.get_account()
+                        total_equity = float(acct.get('equity', 0) or 0)
+                        usdt_free = float(acct.get('cash', 0) or 0)
+                        # Use USDT free for cash display, but total equity for sizing
+                        # (Bybit unified uses BTC as collateral)
+                        if total_equity > 0:
+                            self.equity = total_equity
+                        if usdt_free > 0:
+                            self.cash = usdt_free
+                except Exception:
+                    pass
+
+                ret_pct = ((self.equity - self.initial_capital) / self.initial_capital) * 100.0
+                n_pos = len(self.positions)
+                print(f"\n[BAR {self.bar_count}] Equity: ${self.equity:,.2f} | Cash: ${self.cash:,.2f} | Return: {ret_pct:+.2f}% | Positions: {n_pos}")
+
+                for asset in self.assets:
+                    try:
+                        self._process_asset(asset)
+                    except Exception as e:
+                        print(f"  [{asset}] ERROR: {e}")
+                        logger.exception(f"Error processing {asset}")
+
+                # Sleep until next bar
+                elapsed = time.time() - loop_start
+                sleep_time = max(1, self.poll_interval - int(elapsed))
+                print(f"  [SLEEP] {sleep_time}s")
+                time.sleep(sleep_time)
+
+            except KeyboardInterrupt:
+                print("\n[SHUTDOWN] Graceful exit.")
+                break
+            except Exception as e:
+                print(f"  [LOOP ERROR] {e}")
+                logger.exception("Main loop error")
+                time.sleep(5)
+
+    # ------------------------------------------------------------------
+    # Per-asset processing
+    # ------------------------------------------------------------------
+    def _process_asset(self, asset: str):
+        # If asset has a stuck position that can't close:
+        # - Still show signal analysis (so user sees BTC trends)
+        # - Skip entry (already have a position)
+        # - Don't spam close attempts — retry every 10 minutes
+        if asset in self.failed_close_assets:
+            elapsed = time.time() - self.failed_close_assets[asset]
+            if elapsed >= 600:  # Retry close every 10 minutes
+                del self.failed_close_assets[asset]
+                print(f"  [{asset}] Retrying stuck position close...")
+            # Don't return — let it analyze and show signals
+
+        symbol = self._get_symbol(asset)
+
+        # ══════════════════════════════════════════════════════════════
+        # 5m CANDLES ONLY — analyze 5m, trade 5m, check every 10s
+        # ══════════════════════════════════════════════════════════════
+
+        try:
+            raw_5m = self.price_source.fetch_ohlcv(symbol, timeframe='5m', limit=100)
+        except Exception as e:
+            print(f"  [{asset}] OHLCV fetch failed: {e}")
+            return
+        ohlcv = PriceFetcher.extract_ohlcv(raw_5m)
+
+        closes = ohlcv['closes']
+        highs = ohlcv['highs']
+        lows = ohlcv['lows']
+        opens = ohlcv['opens']
+        volumes = ohlcv['volumes']
+
+        if len(closes) < 20:
+            print(f"  [{asset}] Not enough 5m data ({len(closes)} candles)")
+            return
+
+        # ══════════════════════════════════════════════════════════════
+        # USE CONFIRMED CANDLES for signal — last candle may be incomplete
+        # Signal analysis: use closes[:-1] (confirmed candles only)
+        # Position management: use live price from ticker for SL checks
+        # ══════════════════════════════════════════════════════════════
+        # Get live tick price for position management (SL needs real-time)
+        try:
+            ticker = self.price_source.exchange.fetch_ticker(symbol) if self.price_source.exchange else {}
+            live_price = float(ticker.get('last', 0)) if ticker.get('last') else closes[-1]
+        except Exception:
+            live_price = closes[-1]
+
+        # For signal generation, use the LAST CONFIRMED candle close
+        # The final element in OHLCV may be an incomplete candle
+        price = closes[-2]  # Last confirmed close (signal reference)
+        tick_price = live_price  # Real-time price (execution/SL)
+
+        # Compute EMA(8) and ATR(14) on 5m candles (including current for freshness)
+        ema_vals = ema(closes, self.ema_period)
+        atr_vals = atr(highs, lows, closes, 14)
+
+        # Use confirmed candle EMA for signal direction
+        current_ema = ema_vals[-2]  # EMA at last confirmed candle
+        prev_ema = ema_vals[-3] if len(ema_vals) >= 3 else current_ema
+        current_atr = atr_vals[-1] if atr_vals else 0
+        ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
+
+        # Fetch L2 order book for support/resistance walls
+        try:
+            order_book = self.price_source.fetch_order_book(symbol, limit=25)
+            ob_levels = self._extract_ob_levels(order_book, tick_price)
+        except Exception:
+            ob_levels = {'bid_wall': 0, 'ask_wall': 0, 'bid_walls': [], 'ask_walls': [], 'imbalance': 0, 'bid_depth_usd': 0, 'ask_depth_usd': 0}
+
+        # ── Signal from 5m EMA crossover (CONFIRMED candles only) ──
+        signal = "NEUTRAL"
+
+        # Check if EMA crossed through recent CONFIRMED candles (skip last incomplete)
+        ema_crossed = False
+        for i in range(2, min(5, len(highs))):  # Start at -2 (last confirmed)
+            h = highs[-i]
+            l = lows[-i]
+            e = ema_vals[-i] if i <= len(ema_vals) else 0
+            if l <= e <= h:
+                ema_crossed = True
+                break
+
+        if ema_direction == "RISING" and price > current_ema and ema_crossed:
+            signal = "BUY"
+        elif ema_direction == "FALLING" and price < current_ema and ema_crossed:
+            signal = "SELL"
+        # Strong trend: price >1% from EMA
+        elif ema_direction == "FALLING" and price < current_ema * 0.99:
+            signal = "SELL"
+        elif ema_direction == "RISING" and price > current_ema * 1.01:
+            signal = "BUY"
+
+        ob_imb = ob_levels.get('imbalance', 0)
+        ob_bid = ob_levels.get('bid_wall', 0)
+        ob_ask = ob_levels.get('ask_wall', 0)
+        ob_info = f"OB[imb={ob_imb:+.2f}"
+        if ob_bid > 0:
+            ob_info += f" sup=${ob_bid:,.2f}"
+        if ob_ask > 0:
+            ob_info += f" res=${ob_ask:,.2f}"
+        ob_info += "]"
+        print(f"  [{asset}] ${tick_price:,.2f} (sig=${price:,.2f}) | EMA(5m): ${current_ema:.2f} {ema_direction} | Signal: {signal} | ATR: ${current_atr:.2f} | {ob_info}")
+
+        # ── Stale position check: if internal state says position but exchange is clean ──
+        if asset in self.positions and asset not in self.failed_close_assets:
+            try:
+                if self.price_source.bybit and self.price_source.bybit.available:
+                    ex_pos = self.price_source.bybit.get_positions()
+                    has_exchange_pos = any(asset in pp.get('symbol','') and float(pp.get('qty',0)) > 0 for pp in ex_pos)
+                    if not has_exchange_pos:
+                        print(f"  [{asset}] STALE position cleared (not on exchange)")
+                        del self.positions[asset]
             except Exception:
                 pass
 
-            _safe_print(f"  [L7-META] Processed {len(multi_asset_data)} assets, "
-                        f"{len(result.get('regimes', {}))} regimes classified")
+        # ── Position management uses LIVE price, entry uses CONFIRMED price ──
+        if asset in self.positions:
+            self._manage_position(asset, tick_price, ohlcv, ema_vals, atr_vals, ema_direction, signal, ob_levels)
+        else:
+            self._evaluate_entry(asset, tick_price, ohlcv, ema_vals, atr_vals,
+                                 ema_direction, signal, closes, highs, lows,
+                                 opens, volumes, current_ema, current_atr, ob_levels)
 
+    # ------------------------------------------------------------------
+    # Entry evaluation
+    # ------------------------------------------------------------------
+    def _evaluate_entry(self, asset: str, price: float, ohlcv: dict,
+                        ema_vals: list, atr_vals: list, ema_direction: str,
+                        signal: str, closes: list, highs: list, lows: list,
+                        opens: list, volumes: list, current_ema: float,
+                        current_atr: float, ob_levels: dict = None):
+
+        ob_levels = ob_levels or {}
+
+        # Only trade when there's a signal (BUY/SELL from crossover or strong trend)
+        if signal == "NEUTRAL":
+            return
+
+        # ══════════════════════════════════════════════════════════
+        # PATTERN-BASED ENTRY FILTER
+        # Instead of rigid range detection, score the crossover quality
+        # High score = likely to trend (L10+), Low score = likely to chop (L1-L2)
+        # ══════════════════════════════════════════════════════════
+        entry_score = 0
+        score_reasons = []
+
+        if len(ema_vals) >= 5:
+            # 1. EMA SLOPE STRENGTH (0-3 points)
+            # Steep slope = strong momentum = likely to continue
+            ema_slope = abs(ema_vals[-1] - ema_vals[-3]) / ema_vals[-3] * 100 if ema_vals[-3] > 0 else 0
+            if ema_slope > 0.3:
+                entry_score += 3
+                score_reasons.append(f"steep_slope={ema_slope:.2f}%")
+            elif ema_slope > 0.1:
+                entry_score += 2
+                score_reasons.append(f"good_slope={ema_slope:.2f}%")
+            elif ema_slope > 0.03:
+                entry_score += 1
+                score_reasons.append(f"mild_slope={ema_slope:.2f}%")
+
+            # 2. CONSECUTIVE EMA DIRECTION (0-3 points)
+            # EMA moving same direction for multiple bars = trend established
+            consec = 0
+            for i in range(len(ema_vals)-1, max(0, len(ema_vals)-10), -1):
+                if i > 0:
+                    if ema_direction == "RISING" and ema_vals[i] > ema_vals[i-1]:
+                        consec += 1
+                    elif ema_direction == "FALLING" and ema_vals[i] < ema_vals[i-1]:
+                        consec += 1
+                    else:
+                        break
+            if consec >= 5:
+                entry_score += 3
+                score_reasons.append(f"trend_{consec}bars")
+            elif consec >= 3:
+                entry_score += 2
+                score_reasons.append(f"trend_{consec}bars")
+            elif consec >= 2:
+                entry_score += 1
+                score_reasons.append(f"trend_{consec}bars")
+
+            # 3. PRICE vs EMA SEPARATION (0-2 points)
+            # Price clearly above/below EMA = momentum confirmed
+            separation = abs(price - ema_vals[-1]) / ema_vals[-1] * 100 if ema_vals[-1] > 0 else 0
+            if separation > 0.5:
+                entry_score += 2
+                score_reasons.append(f"sep={separation:.2f}%")
+            elif separation > 0.2:
+                entry_score += 1
+                score_reasons.append(f"sep={separation:.2f}%")
+
+            # 4. CANDLE MOMENTUM (0-2 points)
+            # Last 3 candles closing in trend direction
+            if len(closes) >= 4:
+                if signal == "BUY" and closes[-1] > closes[-2] > closes[-3]:
+                    entry_score += 2
+                    score_reasons.append("3_green")
+                elif signal == "BUY" and closes[-1] > closes[-2]:
+                    entry_score += 1
+                    score_reasons.append("2_green")
+                elif signal == "SELL" and closes[-1] < closes[-2] < closes[-3]:
+                    entry_score += 2
+                    score_reasons.append("3_red")
+                elif signal == "SELL" and closes[-1] < closes[-2]:
+                    entry_score += 1
+                    score_reasons.append("2_red")
+
+        # ── RANGE DETECTION ──
+        # Only block if TRULY flat — allow trades when EMA has clear direction
+        if len(closes) >= 20:
+            range_high = max(closes[-20:])
+            range_low = min(closes[-20:])
+            range_pct = (range_high - range_low) / range_low * 100 if range_low > 0 else 0
+            atr_pct = (current_atr / price * 100) if price > 0 else 0
+            atr_range_ratio = atr_pct / range_pct if range_pct > 0 else 0
+
+            # Check if EMA has clear directional momentum (overrides range filter)
+            ema_has_momentum = False
+            if len(ema_vals) >= 5:
+                ema_slope_check = abs(ema_vals[-1] - ema_vals[-3]) / ema_vals[-3] * 100 if ema_vals[-3] > 0 else 0
+                if ema_slope_check > 0.03:  # EMA moving > 0.03% over 3 bars
+                    ema_has_momentum = True
+
+            # Only skip if: tight range AND no EMA momentum AND very choppy
+            if range_pct > 0 and atr_range_ratio > 0.5 and range_pct < 1.5 and not ema_has_momentum:
+                print(f"  [{asset}] RANGING: range={range_pct:.1f}% ATR={atr_pct:.2f}% ratio={atr_range_ratio:.0%} — SKIP")
+                return
+            elif range_pct > 0 and atr_range_ratio > 0.4:
+                # Log but DON'T skip — EMA momentum overrides
+                print(f"  [{asset}] RANGE NOTE: range={range_pct:.1f}% ratio={atr_range_ratio:.0%} but EMA momentum={ema_has_momentum} — ALLOWING")
+
+        # ORDER BOOK IMBALANCE FILTER
+        # Only block on EXTREME imbalance — testnet OB is thin and flips rapidly
+        # -0.9 = 95% sellers, +0.9 = 95% buyers
+        ob_imbalance = ob_levels.get('imbalance', 0)
+        if signal == "BUY" and ob_imbalance < -0.9:
+            print(f"  [{asset}] OB CONFLICT: signal=BUY but OB imbalance={ob_imbalance:+.2f} (extreme sell) — SKIP")
+            return
+        elif signal == "SELL" and ob_imbalance > 0.9:
+            print(f"  [{asset}] OB CONFLICT: signal=SELL but OB imbalance={ob_imbalance:+.2f} (extreme buy) — SKIP")
+            return
+
+        # MINIMUM SCORE: 7 out of 10 to enter
+        # Only trade STRONG patterns that have real trend potential (L38+ trails)
+        # Score 7-8 = strong trend setup, Score 9-10 = excellent (catch the big moves)
+        min_score = 7
+        if entry_score < min_score:
+            print(f"  [{asset}] WEAK: score={entry_score}/10 ({', '.join(score_reasons) or 'no momentum'}) — need {min_score}+")
+            return
+        else:
+            quality = "EXCELLENT" if entry_score >= 9 else "STRONG"
+            print(f"  [{asset}] {quality} PATTERN: score={entry_score}/10 ({', '.join(score_reasons)})")
+
+        # CRITICAL: Check EXCHANGE positions (not just internal dict)
+        # Prevents stacking when internal state is out of sync
+        try:
+            if self.price_source.bybit and self.price_source.bybit.available:
+                exchange_positions = self.price_source.bybit.get_positions()
+                for p in exchange_positions:
+                    sym = p.get('symbol', '')
+                    contracts = abs(float(p.get('qty', 0) or p.get('contracts', 0)))
+                    if asset in sym and contracts > 0:
+                        pos_side = p.get('side', 'long')
+                        entry_p = float(p.get('avg_entry_price', price) or price)
+                        synced_direction = 'LONG' if pos_side == 'long' else 'SHORT'
+
+                        # Check if signal is OPPOSITE to current position
+                        # e.g., holding SHORT but signal is BUY — should close and flip
+                        signal_conflicts = (
+                            (synced_direction == 'SHORT' and signal == 'BUY') or
+                            (synced_direction == 'LONG' and signal == 'SELL')
+                        )
+
+                        if signal_conflicts and asset not in self.failed_close_assets:
+                            flip_dir = 'CALL' if signal == 'BUY' else 'PUT'
+                            print(f"  [{asset}] WRONG SIDE: holding {synced_direction} but signal={signal} — closing to flip to {flip_dir}")
+                            close_side = 'sell' if synced_direction == 'LONG' else 'buy'
+                            result = self.price_source.place_order(
+                                symbol=self._get_symbol(asset),
+                                side=close_side,
+                                amount=contracts,
+                                order_type='market',
+                                price=None,
+                            )
+                            time.sleep(1)
+                            # Verify closed
+                            ex_pos2 = self.price_source.bybit.get_positions()
+                            still_open = any(asset in pp.get('symbol','') and float(pp.get('qty',0)) > 0 for pp in ex_pos2)
+                            if still_open:
+                                print(f"  [{asset}] CLOSE FAILED — stuck, blacklisting")
+                                self.failed_close_assets[asset] = time.time()
+                                if asset in self.positions:
+                                    del self.positions[asset]
+                                return
+                            else:
+                                print(f"  [{asset}] CLOSED {synced_direction} — now free to enter {flip_dir}")
+                                if asset in self.positions:
+                                    del self.positions[asset]
+                                # Don't return — fall through to entry evaluation
+                                break
+                        else:
+                            # Same direction or no signal — sync it and manage
+                            if asset not in self.positions:
+                                sl_dist = current_atr * 1.5 if current_atr > 0 else price * 0.01
+                                if pos_side == 'long':
+                                    sync_sl = entry_p - sl_dist
+                                else:
+                                    sync_sl = entry_p + sl_dist
+                                self.positions[asset] = {
+                                    'direction': synced_direction,
+                                    'side': 'buy' if pos_side == 'long' else 'sell',
+                                    'entry_price': entry_p,
+                                    'qty': contracts,
+                                    'sl': sync_sl, 'sl_levels': ['L1'],
+                                    'sl_order_id': None,
+                                    'peak_price': price, 'entry_time': time.time(),
+                                    'confidence': 0, 'reasoning': 'synced from exchange',
+                                    'breakeven_moved': False,
+                                }
+                                print(f"  [{asset}] SYNCED {pos_side} position ({contracts}) from exchange | SL=${sync_sl:,.2f}")
+                            # Don't return — let _manage_position handle it
+                            return
         except Exception as e:
-            _safe_print(f"  [L7-META] Advanced Learning error (non-fatal): {str(e)[:100]}")
+            logger.debug(f"Exchange position check failed: {e}")
+
+        # CANDLE DEDUP: Only enter once per confirmed 5m candle
+        # Prevents re-entering the same signal 6 times (10s poll x 5m candle)
+        timestamps = ohlcv.get('timestamps', [])
+        if len(timestamps) >= 2:
+            confirmed_candle_ts = timestamps[-2]  # Last confirmed candle
+            if asset in self.last_signal_candle and self.last_signal_candle[asset] == confirmed_candle_ts:
+                return  # Already evaluated this candle
+            self.last_signal_candle[asset] = confirmed_candle_ts
+
+        # Minimum 30s between trades to prevent same-second churning
+        now = time.time()
+        if asset in self.last_trade_time:
+            elapsed = now - self.last_trade_time[asset]
+            if elapsed < 30:
+                return
+
+        # Quality gate: ATR ratio
+        atr_ratio = current_atr / price if price > 0 else 0
+        if atr_ratio < self.min_atr_ratio:
+            return
+
+        # Build candle data for LLM prompt (last 20 candles)
+        n_candles = min(20, len(closes))
+        candle_lines = []
+        for i in range(-n_candles, 0):
+            idx = len(closes) + i
+            ema_v = ema_vals[idx] if idx < len(ema_vals) else 0
+            cross_marker = ""
+            if ema_v <= highs[idx] and ema_v >= lows[idx]:
+                cross_marker = " *CROSS*"
+            candle_lines.append(
+                f"  O={opens[idx]:.2f} H={highs[idx]:.2f} L={lows[idx]:.2f} "
+                f"C={closes[idx]:.2f} V={volumes[idx]:.0f} EMA={ema_v:.2f}{cross_marker}"
+            )
+
+        # Support / resistance (swing points from last 30 candles)
+        lookback = min(30, len(highs))
+        recent_highs = highs[-lookback:]
+        recent_lows = lows[-lookback:]
+        resistance = max(recent_highs) if recent_highs else price
+        support = min(recent_lows) if recent_lows else price
+
+        # Compute trend strength metrics for LLM
+        ema_slope_pct = ((ema_vals[-1] - ema_vals[-4]) / ema_vals[-4] * 100) if len(ema_vals) >= 4 else 0
+        consecutive_trend = 0
+        for i in range(len(ema_vals)-1, max(0, len(ema_vals)-20), -1):
+            if i > 0:
+                if ema_direction == "RISING" and ema_vals[i] > ema_vals[i-1]:
+                    consecutive_trend += 1
+                elif ema_direction == "FALLING" and ema_vals[i] < ema_vals[i-1]:
+                    consecutive_trend += 1
+                else:
+                    break
+
+        forced_action = "SHORT" if signal == "SELL" else "LONG" if signal == "BUY" else "FLAT"
+
+        prompt = f"""You are an EMA crossover pattern analyst for {asset}/USDT perpetual futures.
+Your goal: FIND CROSSOVERS THAT LEAD TO STRONG TRENDS (L1→L2→L3→...→L38+ trailing stop progression).
+
+═══ CURRENT MARKET ═══
+Price: ${price:,.2f} | EMA(8): ${current_ema:.2f} ({ema_direction})
+ATR(14): ${current_atr:.2f} | Support: ${support:.2f} | Resistance: ${resistance:.2f}
+Signal: {signal} | EMA slope: {ema_slope_pct:+.3f}%/bar | Trend bars: {consecutive_trend}
+
+═══ LAST {n_candles} CANDLES (5m) ═══
+{chr(10).join(candle_lines)}
+
+═══ EMA REVERSAL STRATEGY (CALL + PUT) ═══
+
+CALL (LONG) ENTRY — When downtrend REVERSES to uptrend:
+  1. EMA was FALLING, now crosses UP through a candle (marked *CROSS*)
+  2. Next candle forms ENTIRELY ABOVE EMA
+  3. EMA direction turns RISING
+  → Entry point P1: BUY here
+  → Trailing SL starts at L1 (recent swing low, 0.5% below entry)
+  → As price rises: L1→L2→L3→L4→...→L38+ (SL pushes up every tick)
+  → Exit: when EMA reverses back down OR SL hit (whichever is higher)
+
+PUT (SHORT) ENTRY — When uptrend REVERSES to downtrend:
+  1. EMA was RISING, now crosses DOWN through a candle (marked *CROSS*)
+  2. Next candle forms ENTIRELY BELOW EMA
+  3. EMA direction turns FALLING
+  → Entry point P1: SELL/SHORT here
+  → Trailing SL starts at L1 (recent swing high, 0.5% above entry)
+  → As price falls: L1→L2→L3→L4→...→L38+ (SL pushes down every tick)
+  → Exit: when EMA reverses back up OR SL hit (whichever is lower)
+
+═══ PATTERN QUALITY ASSESSMENT ═══
+Analyze these factors to determine if this crossover leads to L38+ or just L2:
+
+HIGH CONFIDENCE (0.90-1.00) — likely L10+ trail:
+  - EMA slope is steep ({ema_slope_pct:+.3f}%/bar) — momentum is strong
+  - ATR is high (${current_atr:.2f}) — big moves expected
+  - Consecutive trend bars: {consecutive_trend} (5+ is excellent)
+  - No recent *CROSS* markers in last 3 candles (not choppy)
+  - Clear break from support/resistance level
+  - Volume increasing in trend direction
+
+LOW CONFIDENCE (0.40-0.60) — likely L1-L2 then stop:
+  - EMA is flat/sideways
+  - Multiple *CROSS* markers in recent candles (choppy/ranging)
+  - ATR is low (price not moving much)
+  - Price near support AND resistance (squeeze)
+  - Consecutive trend bars < 3
+
+═══ DECISION ═══
+Signal is {signal}. You MUST respond: {forced_action}.
+Your confidence score determines if we trade (>=0.70) or skip (<0.70).
+Rate confidence based on how many L-levels this trend could reach.
+
+Respond ONLY with JSON:
+{{"action": "{forced_action}", "confidence": <0.0-1.0>, "position_size_pct": 5, "reasoning": "brief pattern analysis"}}"""
+
+        # Query LLM
+        try:
+            llm_response = self._query_llm(prompt)
+            decision = json.loads(llm_response)
+        except Exception as e:
+            logger.warning(f"[{asset}] LLM query failed: {e}")
+            # Fallback: use signal directly with moderate confidence
+            if signal == "BUY":
+                decision = {"action": "LONG", "confidence": 0.75, "position_size_pct": 5, "reasoning": "EMA crossover BUY (no LLM)"}
+            elif signal == "SELL":
+                decision = {"action": "SHORT", "confidence": 0.75, "position_size_pct": 5, "reasoning": "EMA crossover SELL (no LLM)"}
+            else:
+                return
+
+        action = str(decision.get('action', 'FLAT')).upper()
+        confidence = float(decision.get('confidence', 0.0))
+        size_pct = float(decision.get('position_size_pct', 5))
+        reasoning = str(decision.get('reasoning', ''))[:120]
+
+        # CRITICAL: EMA signal ALWAYS overrides LLM direction
+        # The LLM has a known long bias — force it to follow the strategy
+        if signal == "BUY":
+            if action != "LONG":
+                print(f"  [{asset}] LLM override: {action} → LONG (EMA says BUY)")
+            action = "LONG"
+        elif signal == "SELL":
+            if action != "SHORT":
+                print(f"  [{asset}] LLM override: {action} → SHORT (EMA says SELL)")
+            action = "SHORT"
+
+        # Map action to direction label
+        if action == "LONG":
+            direction_label = "CALL"
+        elif action == "SHORT":
+            direction_label = "PUT"
+        else:
+            return
+
+        print(f"  [{asset}] LLM: {direction_label} MARKET conf={confidence:.2f} size={size_pct:.0f}% | {reasoning}")
+
+        # Quality gate: confidence
+        if confidence < self.min_confidence:
+            print(f"  [{asset}] SKIP: confidence {confidence:.2f} < {self.min_confidence}")
+            return
+
+        # Calculate position size from total equity (USDT + BTC collateral)
+        size_pct = max(1, min(5, size_pct))  # Cap at 5%
+        if self.equity <= 0:
+            print(f"  [{asset}] SKIP: no equity available")
+            return
+
+        notional = self.equity * (size_pct / 100.0)
+
+        # Hard cap: max $2,000 per trade (safe for ~$70K account with 1x leverage)
+        notional = min(notional, 2000.0)
+
+        qty = notional / price if price > 0 else 0
+        qty = round(qty, 6)
+
+        if qty <= 0:
+            return
+
+        # Minimum qty check (Bybit minimums: BTC=0.001, ETH=0.01)
+        min_qty = {'BTC': 0.001, 'ETH': 0.01}
+        asset_min = min_qty.get(asset, 0.001)
+        if qty < asset_min:
+            # Round up to minimum if we can afford it (< 10% of equity)
+            min_notional = asset_min * price
+            if min_notional <= self.equity * 0.10:
+                qty = asset_min
+                notional = min_notional
+                print(f"  [{asset}] Adjusted qty to minimum {asset_min} (${notional:,.0f})")
+            else:
+                print(f"  [{asset}] SKIP: min order ${min_notional:,.0f} > 10% of equity ${self.equity:,.0f}")
+                return
+
+        # Determine order side and price
+        side = 'buy' if action == 'LONG' else 'sell'
+
+        # Execution type from config
+        entry_type = self.config.get('execution', {}).get('entry_type', 'market')
+
+        if entry_type == 'limit':
+            order_price = current_ema
+            print(f"  [{asset}] {direction_label}: {side.upper()} {qty:.6f} LIMIT@${order_price:,.2f} (${notional:,.0f} = {size_pct:.0f}% of ${self.equity:,.0f})")
+        else:
+            order_price = None  # CRITICAL: market orders must NOT have a price
+            print(f"  [{asset}] {direction_label}: {side.upper()} {qty:.6f} MARKET (${notional:,.0f} = {size_pct:.0f}% of ${self.equity:,.0f})")
+
+        # Place order — fallback to limit if market order is rejected (testnet price cap)
+        symbol = self._get_symbol(asset)
+        result = self.price_source.place_order(
+            symbol=symbol,
+            side=side,
+            amount=qty,
+            order_type=entry_type,
+            price=order_price,
+        )
+
+        # If market order rejected (Bybit 30208 = price cap), retry as limit at best ask/bid
+        if result.get('status') != 'success' and '30208' in str(result.get('message', '')):
+            try:
+                ob = self.price_source.fetch_order_book(symbol, limit=5)
+                if side == 'buy' and ob.get('asks'):
+                    limit_price = float(ob['asks'][0][0])
+                elif side == 'sell' and ob.get('bids'):
+                    limit_price = float(ob['bids'][0][0])
+                else:
+                    limit_price = None
+                if limit_price:
+                    print(f"  [{asset}] Market rejected (price cap) — retrying LIMIT @ ${limit_price:,.2f}")
+                    result = self.price_source.place_order(
+                        symbol=symbol, side=side, amount=qty,
+                        order_type='limit', price=limit_price,
+                    )
+            except Exception as e:
+                print(f"  [{asset}] Limit fallback failed: {e}")
+
+        if result.get('status') == 'success':
+            order_id = result.get('order_id', 'unknown')
+
+            # Compute initial stop-loss (L1) using ORDER BOOK + ATR
+            # Priority: order book wall > ATR-based > percentage fallback
+            sl_distance = current_atr * 1.5  # ATR fallback
+            sl_distance = max(sl_distance, price * 0.003)  # minimum 0.3%
+            sl_distance = min(sl_distance, price * 0.02)   # maximum 2%
+
+            sl_source = "ATR"
+            if action == 'LONG':
+                sl_price = price - sl_distance
+                # Use order book bid wall as support-based SL if available
+                # Place SL just below the strongest bid wall (support)
+                bid_wall = ob_levels.get('bid_wall', 0)
+                if bid_wall > 0 and bid_wall < price:
+                    ob_sl = bid_wall * 0.999  # 0.1% below the wall
+                    # Only use if within reasonable range (0.3% to 2% from entry)
+                    ob_dist_pct = (price - ob_sl) / price * 100
+                    if 0.3 <= ob_dist_pct <= 2.0:
+                        sl_price = ob_sl
+                        sl_source = f"OB_BID_WALL@${bid_wall:,.2f}"
+            else:  # SHORT
+                sl_price = price + sl_distance
+                # Use order book ask wall as resistance-based SL
+                # Place SL just above the strongest ask wall (resistance)
+                ask_wall = ob_levels.get('ask_wall', 0)
+                if ask_wall > 0 and ask_wall > price:
+                    ob_sl = ask_wall * 1.001  # 0.1% above the wall
+                    ob_dist_pct = (ob_sl - price) / price * 100
+                    if 0.3 <= ob_dist_pct <= 2.0:
+                        sl_price = ob_sl
+                        sl_source = f"OB_ASK_WALL@${ask_wall:,.2f}"
+
+            imb = ob_levels.get('imbalance', 0)
+            print(f"  [{asset}] ORDER OK: {order_id} | SL L1=${sl_price:,.2f} ({sl_source}) | OB imbalance={imb:+.2f}")
+
+            # SL managed by polling loop (10s) — no exchange stop orders
+            # Exchange SL was creating orphan positions that cost $2-3 each to close
+            sl_order_id = None
+
+            # Record position
+            self.positions[asset] = {
+                'direction': action,          # LONG or SHORT
+                'side': side,
+                'entry_price': price,
+                'qty': qty,
+                'order_id': order_id,
+                'sl': sl_price,
+                'sl_order_id': sl_order_id,
+                'sl_levels': ['L1'],
+                'peak_price': price,
+                'entry_time': time.time(),
+                'confidence': confidence,
+                'reasoning': reasoning,
+                'breakeven_moved': False,
+            }
+            self.last_trade_time[asset] = time.time()
+        else:
+            err = result.get('message', str(result))
+            print(f"  [{asset}] ORDER FAILED: {err}")
+
+    # ------------------------------------------------------------------
+    # Position management — Aggressive Trailing SL (L1→L2→...→L38+)
+    # Core idea: profit becomes investment, investment becomes safe
+    # On every favorable tick, push SL forward so losses come from profits only
+    # ------------------------------------------------------------------
+    def _manage_position(self, asset: str, price: float, ohlcv: dict,
+                         ema_vals: list, atr_vals: list, ema_direction: str,
+                         signal: str, ob_levels: dict = None):
+        ob_levels = ob_levels or {}
+        pos = self.positions[asset]
+        direction = pos['direction']   # LONG or SHORT
+        entry = pos['entry_price']
+        sl = pos['sl']
+        sl_levels = pos['sl_levels']
+        peak = pos['peak_price']
+
+        closes = ohlcv['closes']
+        highs = ohlcv['highs']
+        lows = ohlcv['lows']
+
+        # ── 1. Update peak price (maximum favorable excursion) ──
+        if direction == 'LONG':
+            if price > peak:
+                pos['peak_price'] = price
+                peak = price
+            pnl_pct = ((price - entry) / entry) * 100.0
+            pnl_from_peak = ((price - peak) / peak) * 100.0 if peak > 0 else 0
+        else:  # SHORT
+            if price < peak:
+                pos['peak_price'] = price
+                peak = price
+            pnl_pct = ((entry - price) / entry) * 100.0
+            pnl_from_peak = ((peak - price) / peak) * 100.0 if peak > 0 else 0
+
+        # ── 1b. OB REVERSAL EXIT — order book turns heavily against us ──
+        # Only exit on EXTREME + SUSTAINED imbalance AND losing > 1%
+        # Testnet OB is thin — don't overreact to momentary flips
+        ob_imbalance = ob_levels.get('imbalance', 0)
+        if not (asset in self.failed_close_assets):
+            if direction == 'LONG' and ob_imbalance < -0.9 and pnl_pct < -1.0:
+                print(f"  [{asset}] OB EXIT: LONG but OB={ob_imbalance:+.2f} (extreme sell) & P&L={pnl_pct:+.2f}% — closing")
+                self._close_position(asset, price, f"OB reversal (imb={ob_imbalance:+.2f})")
+                self.last_trade_time.pop(asset, None)
+                self.last_close_time.pop(asset, None)
+                return
+            elif direction == 'SHORT' and ob_imbalance > 0.9 and pnl_pct < -1.0:
+                print(f"  [{asset}] OB EXIT: SHORT but OB={ob_imbalance:+.2f} (extreme buy) & P&L={pnl_pct:+.2f}% — closing")
+                self._close_position(asset, price, f"OB reversal (imb={ob_imbalance:+.2f})")
+                self.last_trade_time.pop(asset, None)
+                self.last_close_time.pop(asset, None)
+                return
+
+        # ── 2. HARD STOP: max -2% loss — non-negotiable ──
+        # But if asset is blacklisted (stuck, can't close), just log and skip
+        is_stuck = asset in self.failed_close_assets
+        if pnl_pct <= -2.0:
+            if is_stuck:
+                print(f"  [{asset}] STUCK {pnl_pct:+.2f}% (can't close — no liquidity)")
+                return
+            print(f"  [{asset}] HARD STOP at ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
+            self._close_position(asset, price, f"Hard stop -2%")
+            return
+
+        # ── 3. Check if current SL is hit ──
+        sl_hit = False
+        if direction == 'LONG' and price <= sl:
+            sl_hit = True
+        elif direction == 'SHORT' and price >= sl:
+            sl_hit = True
+
+        if sl_hit:
+            if is_stuck:
+                print(f"  [{asset}] STUCK SL {pnl_pct:+.2f}% (can't close — no liquidity)")
+                return
+            print(f"  [{asset}] SL {sl_levels[-1]} HIT at ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
+            self._close_position(asset, price, f"SL {sl_levels[-1]} hit at ${sl:,.2f}")
+            return
+
+        # ── 4. TRAILING SL — ATR-based + minimum profit protection ──
+        #
+        # Balance between riding trends and locking profits:
+        # - ATR trailing gives room for normal pullbacks
+        # - Minimum profit floor guarantees we keep a % of gains
+        # - Whichever is TIGHTER wins (more protective)
+        #
+        # Phase 1 (pnl < 0.5%):  Initial SL at L1 — hold through noise
+        # Phase 2 (pnl >= 0.5%): BREAKEVEN — can't lose capital
+        # Phase 3 (pnl >= 1.5%): Protect 40% of profit + ATR trail (1.5x)
+        # Phase 4 (pnl >= 3%):   Protect 50% of profit + ATR trail (1.2x)
+        # Phase 5 (pnl >= 5%):   Protect 60% of profit + ATR trail (1.0x)
+        # Phase 6 (pnl >= 10%):  Protect 70% of profit + ATR trail (0.8x)
+        #
+        # SL = MAX(profit_floor, atr_trail) — always pick the tighter one
+
+        new_sl = sl
+        qty = pos.get('qty', 0)
+        current_atr = atr_vals[-1] if atr_vals else price * 0.01
+
+        if direction == 'LONG':
+            if pnl_pct >= 0.5:
+                # Phase 2: Breakeven
+                if sl < entry:
+                    new_sl = entry
+
+            if pnl_pct >= 1.5:
+                # Determine protection level
+                if pnl_pct >= 10.0:
+                    protect_pct = 0.70
+                    atr_mult = 0.8
+                elif pnl_pct >= 5.0:
+                    protect_pct = 0.60
+                    atr_mult = 1.0
+                elif pnl_pct >= 3.0:
+                    protect_pct = 0.50
+                    atr_mult = 1.2
+                else:
+                    protect_pct = 0.40
+                    atr_mult = 1.5
+
+                # Profit floor: lock in X% of peak profit
+                profit_range = peak - entry
+                floor_sl = entry + (profit_range * protect_pct)
+
+                # ATR trail: peak - multiplier * ATR
+                atr_trail_sl = peak - (current_atr * atr_mult)
+
+                # Use whichever is TIGHTER (higher for LONG = more safe)
+                best_sl = max(floor_sl, atr_trail_sl)
+                if best_sl > new_sl and best_sl < price:
+                    new_sl = best_sl
+
+            # Swing lows + order book as additional tightening
+            if pnl_pct >= 2.0:
+                lookback = min(15, len(lows))
+                if lookback >= 3:
+                    recent_lows = lows[-lookback:]
+                    for i in range(1, len(recent_lows) - 1):
+                        if recent_lows[i] < recent_lows[i-1] and recent_lows[i] < recent_lows[i+1]:
+                            if recent_lows[i] > entry and recent_lows[i] > new_sl and recent_lows[i] < price:
+                                new_sl = recent_lows[i]
+
+                for wall_price, wall_vol in ob_levels.get('bid_walls', []):
+                    if wall_price > new_sl and wall_price < price and wall_price > entry:
+                        ob_sl = wall_price * 0.999
+                        if ob_sl > new_sl:
+                            new_sl = ob_sl
+
+        else:  # SHORT
+            if pnl_pct >= 0.5:
+                if sl > entry:
+                    new_sl = entry
+
+            if pnl_pct >= 1.5:
+                if pnl_pct >= 10.0:
+                    protect_pct = 0.70
+                    atr_mult = 0.8
+                elif pnl_pct >= 5.0:
+                    protect_pct = 0.60
+                    atr_mult = 1.0
+                elif pnl_pct >= 3.0:
+                    protect_pct = 0.50
+                    atr_mult = 1.2
+                else:
+                    protect_pct = 0.40
+                    atr_mult = 1.5
+
+                # Profit floor (SHORT: SL moves DOWN)
+                profit_range = entry - peak
+                floor_sl = entry - (profit_range * protect_pct)
+
+                # ATR trail (SHORT: SL = peak + multiplier * ATR)
+                atr_trail_sl = peak + (current_atr * atr_mult)
+
+                # Use whichever is TIGHTER (lower for SHORT = more safe)
+                best_sl = min(floor_sl, atr_trail_sl)
+                if best_sl < new_sl and best_sl > price:
+                    new_sl = best_sl
+
+            if pnl_pct >= 2.0:
+                lookback = min(15, len(highs))
+                if lookback >= 3:
+                    recent_highs = highs[-lookback:]
+                    for i in range(1, len(recent_highs) - 1):
+                        if recent_highs[i] > recent_highs[i-1] and recent_highs[i] > recent_highs[i+1]:
+                            if recent_highs[i] < entry and recent_highs[i] < new_sl and recent_highs[i] > price:
+                                new_sl = recent_highs[i]
+
+                for wall_price, wall_vol in ob_levels.get('ask_walls', []):
+                    if wall_price < new_sl and wall_price > price and wall_price < entry:
+                        ob_sl = wall_price * 1.001
+                        if ob_sl < new_sl:
+                            new_sl = ob_sl
+
+        # SL can only move FORWARD (tighter), never backward
+        # Minimum move: $0.50 or 0.01% of entry (whichever is larger) to avoid noise
+        new_sl = round(new_sl, 2)
+        min_move = max(0.50, entry * 0.0001)
+        sl_moved = False
+        if direction == 'LONG' and new_sl > sl + min_move:
+            old_level = sl_levels[-1]
+            pos['sl'] = new_sl
+            sl_levels.append(f"L{len(sl_levels) + 1}")
+            print(f"  [{asset}] SL {old_level}->{sl_levels[-1]}: ${sl:,.2f} -> ${new_sl:,.2f} | P&L: {pnl_pct:+.2f}%")
+            sl = new_sl
+            sl_moved = True
+        elif direction == 'SHORT' and new_sl < sl - min_move:
+            old_level = sl_levels[-1]
+            pos['sl'] = new_sl
+            sl_levels.append(f"L{len(sl_levels) + 1}")
+            print(f"  [{asset}] SL {old_level}->{sl_levels[-1]}: ${sl:,.2f} -> ${new_sl:,.2f} | P&L: {pnl_pct:+.2f}%")
+            sl = new_sl
+            sl_moved = True
+
+        # SL managed by polling (10s check) — no exchange stop orders
+        # This avoids orphan positions from exchange SL fills
+
+        # ── 5. EMA reversal exit (E1) — only on SIGNIFICANT profit ──
+        # Don't exit on minor pullbacks — those caused the churning.
+        # Only flip when we have meaningful profit (>= 2%) AND EMA confirms reversal
+        # Skip if asset is stuck (no liquidity) — don't spam close attempts
+        if not is_stuck:
+            current_ema = ema_vals[-1]
+            if direction == 'LONG' and ema_direction == 'FALLING' and price < current_ema and pnl_pct >= 2.0:
+                print(f"  [{asset}] EMA REVERSAL (E1): CALL->PUT | exit ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
+                self._close_position(asset, price, "EMA reversal (E1) - flipping to PUT")
+                self.last_trade_time.pop(asset, None)
+                self.last_close_time.pop(asset, None)
+                return
+            elif direction == 'SHORT' and ema_direction == 'RISING' and price > current_ema and pnl_pct >= 2.0:
+                print(f"  [{asset}] EMA REVERSAL (E1): PUT->CALL | exit ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
+                self._close_position(asset, price, "EMA reversal (E1) - flipping to CALL")
+                self.last_trade_time.pop(asset, None)
+                self.last_close_time.pop(asset, None)
+                return
+
+        # ── 6. Print HOLD status with profit-buffer % ──
+        dir_label = "CALL" if direction == "LONG" else "PUT"
+        sl_chain = '->'.join(sl_levels)
+        n_levels = len(sl_levels)
+
+        # Calculate protected vs at-risk as %
+        if direction == 'LONG':
+            sl_pnl_pct = ((sl - entry) / entry) * 100.0
+        else:
+            sl_pnl_pct = ((entry - sl) / entry) * 100.0
+
+        status = ""
+        if sl_pnl_pct > 0:
+            risk_pct = pnl_pct - sl_pnl_pct
+            if pnl_pct >= 10:
+                phase = "LOCK-70%"
+            elif pnl_pct >= 5:
+                phase = "LOCK-60%"
+            elif pnl_pct >= 3:
+                phase = "LOCK-50%"
+            elif pnl_pct >= 1.5:
+                phase = "LOCK-40%"
+            elif pnl_pct >= 0.5:
+                phase = "BREAKEVEN"
+            else:
+                phase = "INITIAL"
+            status = f"SAFE={sl_pnl_pct:+.2f}% RISK={risk_pct:.2f}% [{phase}]"
+        elif sl_pnl_pct >= 0:
+            status = "BREAKEVEN"
+
+        imb = ob_levels.get('imbalance', 0)
+        ob_tag = f"OB={imb:+.2f}" if imb != 0 else "OB=N/A"
+        print(f"  [{asset}] HOLD {dir_label} @ ${entry:,.2f} | Now: ${price:,.2f} | {sl_chain} SL=${sl:,.2f} | P&L: {pnl_pct:+.2f}% | {status} | {ob_tag}")
+
+    # ------------------------------------------------------------------
+    # Trailing stop
+    # ------------------------------------------------------------------
+    def _trail_stop(self, asset: str, price: float, direction: str,
+                    entry: float, peak: float, sl: float,
+                    sl_levels: list, highs: list, lows: list,
+                    pnl_pct: float) -> Optional[float]:
+        """
+        Structure-based trailing stop.
+        Activates at 0.05% profit.
+        LONG: higher swing lows tighten SL upward.
+        SHORT: lower swing highs tighten SL downward.
+        Fallback: 20% max giveback of peak profit.
+        """
+        if pnl_pct < 0.05:
+            return None
+
+        lookback = min(15, len(highs))
+        if lookback < 3:
+            return None
+
+        new_sl = sl
+
+        if direction == 'LONG':
+            # Find swing lows in last 15 candles
+            recent_lows = lows[-lookback:]
+            swing_lows = []
+            for i in range(1, len(recent_lows) - 1):
+                if recent_lows[i] < recent_lows[i - 1] and recent_lows[i] < recent_lows[i + 1]:
+                    swing_lows.append(recent_lows[i])
+
+            if swing_lows:
+                # Use the highest swing low that is below current price
+                valid = [s for s in swing_lows if s < price and s > sl]
+                if valid:
+                    new_sl = max(valid)
+
+            # Fallback: 15% max giveback (tighter trailing)
+            if peak > entry:
+                profit_from_peak = peak - entry
+                giveback_sl = peak - (profit_from_peak * 0.15)
+                if giveback_sl > new_sl and giveback_sl < price:
+                    new_sl = giveback_sl
+
+        else:  # SHORT
+            # Find swing highs in last 15 candles
+            recent_highs = highs[-lookback:]
+            swing_highs = []
+            for i in range(1, len(recent_highs) - 1):
+                if recent_highs[i] > recent_highs[i - 1] and recent_highs[i] > recent_highs[i + 1]:
+                    swing_highs.append(recent_highs[i])
+
+            if swing_highs:
+                # Use the lowest swing high that is above current price
+                valid = [s for s in swing_highs if s > price and s < sl]
+                if valid:
+                    new_sl = min(valid)
+
+            # Fallback: 15% max giveback (tighter trailing)
+            if peak < entry:
+                profit_from_peak = entry - peak
+                giveback_sl = peak + (profit_from_peak * 0.15)
+                if giveback_sl < new_sl and giveback_sl > price:
+                    new_sl = giveback_sl
+
+        if new_sl != sl:
+            return round(new_sl, 2)
+        return None
+
+    # ------------------------------------------------------------------
+    # Close position
+    # ------------------------------------------------------------------
+    def _close_position(self, asset: str, price: float, reason: str):
+        if asset not in self.positions:
+            return
+
+        pos = self.positions[asset]
+        direction = pos['direction']
+        entry = pos['entry_price']
+        qty = pos['qty']
+        symbol = self._get_symbol(asset)
+
+        # Get actual position qty from Bybit
+        actual_qty = qty
+        try:
+            if self.price_source.bybit and self.price_source.bybit.available:
+                positions = self.price_source.bybit.get_positions()
+                for p in positions:
+                    if asset in p.get('symbol', ''):
+                        actual_qty = float(p.get('qty', qty))
+                        break
+        except Exception:
+            pass
+
+        # Close side is opposite of entry side
+        close_side = 'sell' if direction == 'LONG' else 'buy'
+
+        # Place market close order — retry up to 3 times for partial fills
+        remaining_qty = actual_qty
+        for close_attempt in range(3):
+            result = self.price_source.place_order(
+                symbol=symbol,
+                side=close_side,
+                amount=remaining_qty,
+                order_type='market',
+                price=None,
+            )
+
+            if result.get('status') != 'success':
+                err = result.get('message', str(result))
+                if 'NoImmediate' in str(err) or 'cancel' in str(err).lower():
+                    print(f"  [{asset}] CLOSE FAILED (no liquidity): {err}")
+                    self.failed_close_assets[asset] = time.time()
+                    return
+                else:
+                    print(f"  [{asset}] CLOSE WARNING: {err}")
+
+            # Check remaining position on exchange
+            time.sleep(1)
+            try:
+                if self.price_source.bybit and self.price_source.bybit.available:
+                    ex_positions = self.price_source.bybit.get_positions()
+                    still_open = False
+                    for p in ex_positions:
+                        if asset in p.get('symbol', '') and float(p.get('qty', 0)) > 0:
+                            remaining_qty = float(p.get('qty', 0))
+                            still_open = True
+                    if not still_open:
+                        break  # Fully closed
+                    if close_attempt < 2:
+                        print(f"  [{asset}] Partial fill — {remaining_qty} remaining, retrying...")
+                    else:
+                        print(f"  [{asset}] CLOSE INCOMPLETE — {remaining_qty} still open after 3 attempts")
+                        self.failed_close_assets[asset] = time.time()
+                        return
+                else:
+                    break
+            except Exception:
+                break
+
+        # Calculate P&L
+        if direction == 'LONG':
+            pnl_pct = ((price - entry) / entry) * 100.0
+            pnl_usd = (price - entry) * qty
+        else:
+            pnl_pct = ((entry - price) / entry) * 100.0
+            pnl_usd = (entry - price) * qty
+
+        sl_chain = '->'.join(pos.get('sl_levels', ['L1']))
+        duration_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
+
+        print(f"  [{asset}] CLOSED: P&L {pnl_pct:+.2f}% | {reason}")
+
+        # Log to journal
+        try:
+            self.journal.log_trade(
+                asset=asset,
+                action=direction,
+                entry_price=entry,
+                exit_price=price,
+                qty=qty,
+                pnl_usd=pnl_usd,
+                pnl_pct=pnl_pct,
+                sl_progression=sl_chain,
+                exit_reason=reason,
+                llm_reasoning=pos.get('reasoning', ''),
+                confidence=pos.get('confidence', 0.0),
+                order_type='market',
+                duration_minutes=duration_min,
+                order_id=pos.get('order_id', ''),
+            )
+        except Exception as e:
+            logger.warning(f"Journal log failed: {e}")
+
+        # Remove from positions
+        del self.positions[asset]
+        now = time.time()
+        self.last_close_time[asset] = now
+        self.last_trade_time[asset] = now  # Also set trade cooldown to prevent immediate re-entry
+
+    # ------------------------------------------------------------------
+    # LLM query (direct Ollama HTTP)
+    # ------------------------------------------------------------------
+    def _query_llm(self, prompt: str) -> str:
+        """Query remote Ollama and return the raw text response."""
+        url = f"{self.ollama_base_url}/api/generate"
+        payload = {
+            "model": self.ollama_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 256,
+            },
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            text = data.get('response', '').strip()
+
+            # Extract JSON from response (may be wrapped in markdown)
+            if '```' in text:
+                # Find JSON between code fences
+                parts = text.split('```')
+                for part in parts:
+                    part = part.strip()
+                    if part.startswith('json'):
+                        part = part[4:].strip()
+                    if part.startswith('{'):
+                        return part
+            # Try direct parse
+            start = text.find('{')
+            end = text.rfind('}')
+            if start >= 0 and end > start:
+                return text[start:end + 1]
+            return text
+        except Exception as e:
+            logger.warning(f"Ollama query failed: {e}")
+            raise

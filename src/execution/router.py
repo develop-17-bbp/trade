@@ -60,6 +60,13 @@ class ExecutionRouter:
 
         # Exchange configurations
         self.exchanges = {
+            "alpaca": {
+                "paper_url": "https://paper-api.alpaca.markets",
+                "live_url": "https://api.alpaca.markets",
+                "fee_maker": 0.0,    # Alpaca: zero commission on crypto
+                "fee_taker": 0.0,
+                "max_orders_per_second": 10
+            },
             "binance": {
                 "testnet_url": "https://testnet.binance.vision",
                 "live_url": "https://api.binance.com",
@@ -68,7 +75,7 @@ class ExecutionRouter:
                 "max_orders_per_second": 10
             },
             "robinhood": {
-                "fee_maker": 0.0,  # Free trading
+                "fee_maker": 0.0,
                 "fee_taker": 0.0,
                 "max_orders_per_second": 5
             }
