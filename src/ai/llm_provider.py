@@ -18,12 +18,18 @@ Usage:
 
 import os
 import json
+import re
 import time
 import logging
 import hashlib
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
+
+# Pre-compiled regexes for LLM JSON cleanup
+_RE_JS_COMMENT = re.compile(r'//[^\n"]*(?=\n|$)')  # JS comments (not inside strings)
+_RE_TRAILING_COMMA_OBJ = re.compile(r',\s*}')
+_RE_TRAILING_COMMA_ARR = re.compile(r',\s*]')
 
 logger = logging.getLogger(__name__)
 
@@ -77,17 +83,20 @@ class BaseLLMProvider(ABC):
         self._call_times.append(time.time())
 
     def _parse_json(self, text: str) -> Dict:
-        """Extract JSON from LLM response text, handling truncation."""
+        """Extract JSON from LLM response text, handling truncation and comments."""
         text = text.strip()
         # Strip markdown code blocks
         if text.startswith('```'):
             lines = text.split('\n')
-            # Remove first and last ``` lines
             if lines[0].startswith('```'):
                 lines = lines[1:]
             if lines and lines[-1].strip() == '```':
                 lines = lines[:-1]
             text = '\n'.join(lines)
+        # Strip JS-style comments and trailing commas from LLM output
+        text = _RE_JS_COMMENT.sub('', text)
+        text = _RE_TRAILING_COMMA_OBJ.sub('}', text)
+        text = _RE_TRAILING_COMMA_ARR.sub(']', text)
         # Try direct parse
         try:
             return json.loads(text)
@@ -196,7 +205,11 @@ class OllamaProvider(BaseLLMProvider):
         self._throttle()
         import requests
         base = self.config.base_url or 'http://127.0.0.1:11434'
-        model_id = self.config.model or 'mistral'
+        model_id = self.config.model or 'llama3.2:latest'
+
+        # Use short connect timeout (3s) — if Ollama isn't running, fail fast
+        # Read timeout stays longer (60s) for actual inference
+        local_timeout = (3, 60)
 
         # Try OpenAI-compatible endpoint first
         endpoints = [
@@ -213,7 +226,7 @@ class OllamaProvider(BaseLLMProvider):
                         'stream': False,
                         'options': {'temperature': self.config.temperature},
                     }
-                    resp = requests.post(url, json=payload, timeout=self.config.timeout)
+                    resp = requests.post(url, json=payload, timeout=local_timeout)
                     if resp.ok:
                         data = resp.json()
                         return self._parse_json(data.get('response', '{}'))
@@ -228,7 +241,7 @@ class OllamaProvider(BaseLLMProvider):
                         payload['messages'].append({'role': 'system', 'content': system_prompt})
                     payload['messages'].append({'role': 'user', 'content': prompt})
 
-                    resp = requests.post(url, json=payload, timeout=self.config.timeout)
+                    resp = requests.post(url, json=payload, timeout=local_timeout)
                     if resp.ok:
                         data = resp.json()
                         text = data['choices'][0]['message']['content']
@@ -426,17 +439,27 @@ class LLMRouter:
             ('COHERE_API_KEY', 'cohere', 'command-r-plus', 'cohere'),
         ]
 
-        for env_key, provider, model, name in env_map:
-            key = os.environ.get(env_key, '')
-            if key:
-                self.add_provider(name, LLMConfig(
-                    provider=provider, api_key=key, model=model
-                ))
-
-        # Always add Ollama as local fallback
-        self.add_provider('local', LLMConfig(
-            provider='ollama', model='mistral'
-        ))
+        # ── Remote Ollama GPU is the PRIMARY and ONLY LLM ──
+        remote_ollama_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
+        if remote_ollama_url:
+            self.add_provider('remote_gpu', LLMConfig(
+                provider='ollama',
+                model=os.environ.get('OLLAMA_REMOTE_MODEL', 'llama3.2'),
+                base_url=remote_ollama_url,
+                timeout=120,
+            ))
+            logger.info(f"Registered remote Ollama GPU: {remote_ollama_url}")
+        else:
+            # Fallback: try local Ollama if no remote URL
+            local_base_url = (
+                os.environ.get('LLM_BASE_URL', '').strip()
+                or os.environ.get('OLLAMA_BASE_URL', '').strip()
+            )
+            self.add_provider('local', LLMConfig(
+                provider='ollama',
+                model='llama3.2:latest',
+                base_url=local_base_url,
+            ))
 
         return self
 

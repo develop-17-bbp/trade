@@ -12,10 +12,11 @@ import os
 import json
 from typing import List, Dict, Optional
 from src.trading.sub_strategies import (
-    MeanReversionStrategy, 
-    TrendFollowingStrategy, 
+    MeanReversionStrategy,
+    TrendFollowingStrategy,
     VolatilityBreakoutStrategy,
-    ScalpingStrategy
+    ScalpingStrategy,
+    EMACrossoverStrategy,
 )
 
 class AdaptiveEngine:
@@ -25,7 +26,11 @@ class AdaptiveEngine:
             'mean_reversion': MeanReversionStrategy(),
             'trend_following': TrendFollowingStrategy(),
             'volatility_breakout': VolatilityBreakoutStrategy(),
-            'scalping': ScalpingStrategy()
+            'scalping': ScalpingStrategy(),
+            'ema_crossover': EMACrossoverStrategy(
+                ema_period=config.get('ema_period', 8),
+                struct_window=config.get('struct_window', 5),
+            ),
         }
         
         # Performance memory (learning system)
@@ -80,12 +85,21 @@ class AdaptiveEngine:
         if hmm_regime == 'crisis':
             return 'scalping'  # Minimal exposure during crisis regime
 
+        # ── EMA Crossover Priority ──
+        # When EMA crossover is configured as primary (via config), use it for trending markets
+        if self.config.get('ema_crossover_primary', False):
+            if abs(trend_strength) > 0.3 and chop_index < 55:
+                return 'ema_crossover'
+
         # ── Hurst-Based Strategy Selection ── (takes priority when available)
         if hurst_regime:
             if hurst_regime == 'trending':
-                # Mathematically confirmed persistent series → trend follow
+                # Mathematically confirmed persistent series
+                # Use EMA crossover for clear trends, breakout for extreme vol
                 if volatility > 0.05:
                     return 'volatility_breakout'
+                if self.config.get('ema_crossover_primary', False):
+                    return 'ema_crossover'
                 return 'trend_following'
             elif hurst_regime == 'mean_reverting':
                 # Anti-persistent series → mean reversion is statistically grounded
