@@ -33661,3 +33661,32 @@ OSError: [Errno 22] Invalid argument
 2026-03-30 21:59:30,313 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $1.77)
 2026-03-30 22:01:25,113 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $-1.17)
 2026-03-30 22:05:51,814 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $0.00)
+2026-03-30 22:09:26,559 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-03-30 22:09:31,705 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-03-30 22:09:31,705 [INFO] src.data.fetcher: [BYBIT] USDT: 9,624.86 | BTC: 0.000000
+2026-03-30 22:09:31,904 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/llama3.2)
+2026-03-30 22:09:31,905 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://cent-gmbh-yields-amended.trycloudflare.com
+2026-03-30 22:09:31,906 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-03-30 22:10:49,674 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $0.00)
+2026-03-30 22:11:56,202 [ERROR] src.trading.executor: Main loop error
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 129, in _run_live
+    'bid_depth_usd': total bid volume in USD,
+OSError: [Errno 22] Invalid argument
+2026-03-30 22:15:56,464 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $-10.29)
+2026-03-30 22:20:30,950 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $-17.14)
+2026-03-30 22:20:41,593 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-30 22:27:48,695 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-30 22:29:40,016 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $12.61)
