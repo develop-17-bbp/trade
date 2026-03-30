@@ -329,15 +329,36 @@ class TradingExecutor:
                 ema_crossed = True
                 break
 
+        # PRICE MOMENTUM CHECK — detect reversals before EMA catches up
+        # If last 3 confirmed candles are making lower closes, price is falling
+        # even if EMA still says RISING (EMA lags on fast reversals)
+        price_falling = False
+        price_rising = False
+        if len(closes) >= 5:
+            c1, c2, c3 = closes[-2], closes[-3], closes[-4]  # last 3 confirmed
+            # Use <= to handle stale testnet prices (same close repeated)
+            if c1 < c2 and c1 < c3:
+                price_falling = True  # latest confirmed is lower than previous 2
+            elif c1 > c2 and c1 > c3:
+                price_rising = True   # latest confirmed is higher than previous 2
+
         if ema_direction == "RISING" and price > current_ema and ema_crossed:
-            signal = "BUY"
+            if price_falling:
+                signal = "NEUTRAL"  # EMA says buy but price is reversing down
+            else:
+                signal = "BUY"
         elif ema_direction == "FALLING" and price < current_ema and ema_crossed:
-            signal = "SELL"
-        # Strong trend: price >1% from EMA
+            if price_rising:
+                signal = "NEUTRAL"  # EMA says sell but price is reversing up
+            else:
+                signal = "SELL"
+        # Strong trend: price >1% from EMA — but still check momentum
         elif ema_direction == "FALLING" and price < current_ema * 0.99:
-            signal = "SELL"
+            if not price_rising:
+                signal = "SELL"
         elif ema_direction == "RISING" and price > current_ema * 1.01:
-            signal = "BUY"
+            if not price_falling:
+                signal = "BUY"
 
         ob_imb = ob_levels.get('imbalance', 0)
         ob_bid = ob_levels.get('bid_wall', 0)
@@ -478,27 +499,36 @@ class TradingExecutor:
                 # Log but DON'T skip — EMA momentum overrides
                 print(f"  [{asset}] RANGE NOTE: range={range_pct:.1f}% ratio={atr_range_ratio:.0%} but EMA momentum={ema_has_momentum} — ALLOWING")
 
-        # ORDER BOOK IMBALANCE FILTER
-        # Only block on EXTREME imbalance — testnet OB is thin and flips rapidly
-        # -0.9 = 95% sellers, +0.9 = 95% buyers
+        # ORDER BOOK IMBALANCE — log only, don't block
+        # Testnet OB is too thin/unreliable to filter entries
+        # On live exchange with real liquidity, re-enable filtering
         ob_imbalance = ob_levels.get('imbalance', 0)
-        if signal == "BUY" and ob_imbalance < -0.9:
-            print(f"  [{asset}] OB CONFLICT: signal=BUY but OB imbalance={ob_imbalance:+.2f} (extreme sell) — SKIP")
-            return
-        elif signal == "SELL" and ob_imbalance > 0.9:
-            print(f"  [{asset}] OB CONFLICT: signal=SELL but OB imbalance={ob_imbalance:+.2f} (extreme buy) — SKIP")
-            return
 
-        # MINIMUM SCORE: 7 out of 10 to enter
-        # Only trade STRONG patterns that have real trend potential (L38+ trails)
-        # Score 7-8 = strong trend setup, Score 9-10 = excellent (catch the big moves)
-        min_score = 7
+        # MINIMUM SCORE: 8 out of 10 to enter
+        # BTC's winning +86% trade had score 9. Score 7 let in too many weak setups.
+        # Also require minimum 3 consecutive EMA trend bars (2 bars = too early)
+        min_score = 8
+
+        # Count consecutive trend bars for minimum check
+        min_trend_bars = 0
+        for i in range(len(ema_vals)-1, max(0, len(ema_vals)-10), -1):
+            if i > 0:
+                if ema_direction == "RISING" and ema_vals[i] > ema_vals[i-1]:
+                    min_trend_bars += 1
+                elif ema_direction == "FALLING" and ema_vals[i] < ema_vals[i-1]:
+                    min_trend_bars += 1
+                else:
+                    break
+
         if entry_score < min_score:
-            print(f"  [{asset}] WEAK: score={entry_score}/10 ({', '.join(score_reasons) or 'no momentum'}) — need {min_score}+")
+            print(f"  [{asset}] WEAK: score={entry_score}/10 ({', '.join(score_reasons) or 'no momentum'}) -- need {min_score}+")
+            return
+        elif min_trend_bars < 3:
+            print(f"  [{asset}] TOO EARLY: score={entry_score}/10 but only {min_trend_bars} trend bars -- need 3+")
             return
         else:
             quality = "EXCELLENT" if entry_score >= 9 else "STRONG"
-            print(f"  [{asset}] {quality} PATTERN: score={entry_score}/10 ({', '.join(score_reasons)})")
+            print(f"  [{asset}] {quality} PATTERN: score={entry_score}/10 ({', '.join(score_reasons)}) trend={min_trend_bars}bars")
 
         # CRITICAL: Check EXCHANGE positions (not just internal dict)
         # Prevents stacking when internal state is out of sync
@@ -578,7 +608,9 @@ class TradingExecutor:
         if len(timestamps) >= 2:
             confirmed_candle_ts = timestamps[-2]  # Last confirmed candle
             if asset in self.last_signal_candle and self.last_signal_candle[asset] == confirmed_candle_ts:
-                return  # Already evaluated this candle
+                # Same candle — but print so user knows why no entry
+                print(f"  [{asset}] DEDUP: waiting for next 5m candle")
+                return
             self.last_signal_candle[asset] = confirmed_candle_ts
 
         # Minimum 30s between trades to prevent same-second churning
@@ -774,6 +806,49 @@ Respond ONLY with JSON:
             order_price = None  # CRITICAL: market orders must NOT have a price
             print(f"  [{asset}] {direction_label}: {side.upper()} {qty:.6f} MARKET (${notional:,.0f} = {size_pct:.0f}% of ${self.equity:,.0f})")
 
+        # PRE-CHECK: Verify order book has liquidity on BOTH sides
+        # Entry side: need to place the order
+        # Exit side: need to be able to CLOSE the position later
+        # If exit side is empty, we'll get stuck or close at terrible prices
+        ob_check = self.price_source.fetch_order_book(self._get_symbol(asset), limit=10)
+        max_dev_entry = price * 0.05   # 5% for entry
+        max_dev_exit = price * 0.03    # 3% for exit — tighter, must be able to close cleanly
+
+        # Check entry side
+        if side == 'buy':
+            reasonable_asks = [a for a in ob_check.get('asks', []) if float(a[0]) <= price + max_dev_entry]
+            if not reasonable_asks:
+                print(f"  [{asset}] NO ENTRY LIQUIDITY: no asks within 5% -- cannot buy")
+                return
+            # Check exit side (will need to SELL to close LONG)
+            reasonable_bids = [b for b in ob_check.get('bids', []) if float(b[0]) >= price - max_dev_exit]
+            if not reasonable_bids:
+                print(f"  [{asset}] NO EXIT LIQUIDITY: no bids within 3% -- can't close LONG later")
+                return
+            # Check spread isn't insane (>2% = will lose on round trip)
+            best_ask = float(reasonable_asks[0][0])
+            best_bid = float(reasonable_bids[0][0])
+            spread_pct = (best_ask - best_bid) / best_bid * 100
+            if spread_pct > 2.0:
+                print(f"  [{asset}] SPREAD TOO WIDE: {spread_pct:.1f}% (ask=${best_ask:,.2f} bid=${best_bid:,.2f}) -- will lose on round trip")
+                return
+        elif side == 'sell':
+            reasonable_bids = [b for b in ob_check.get('bids', []) if float(b[0]) >= price - max_dev_entry]
+            if not reasonable_bids:
+                print(f"  [{asset}] NO ENTRY LIQUIDITY: no bids within 5% -- cannot sell")
+                return
+            # Check exit side (will need to BUY to close SHORT)
+            reasonable_asks = [a for a in ob_check.get('asks', []) if float(a[0]) <= price + max_dev_exit]
+            if not reasonable_asks:
+                print(f"  [{asset}] NO EXIT LIQUIDITY: no asks within 3% -- can't close SHORT later")
+                return
+            best_bid = float(reasonable_bids[0][0])
+            best_ask = float(reasonable_asks[0][0])
+            spread_pct = (best_ask - best_bid) / best_bid * 100
+            if spread_pct > 2.0:
+                print(f"  [{asset}] SPREAD TOO WIDE: {spread_pct:.1f}% (ask=${best_ask:,.2f} bid=${best_bid:,.2f}) -- will lose on round trip")
+                return
+
         # Place order — fallback to limit if market order is rejected (testnet price cap)
         symbol = self._get_symbol(asset)
         result = self.price_source.place_order(
@@ -785,21 +860,32 @@ Respond ONLY with JSON:
         )
 
         # If market order rejected (Bybit 30208 = price cap), retry as limit at best ask/bid
+        # Only use prices within 5% of current price — testnet has fake walls at 2x price
         if result.get('status') != 'success' and '30208' in str(result.get('message', '')):
             try:
-                ob = self.price_source.fetch_order_book(symbol, limit=5)
+                ob = self.price_source.fetch_order_book(symbol, limit=10)
+                limit_price = None
+                max_deviation = price * 0.05  # 5% max from current price
+
                 if side == 'buy' and ob.get('asks'):
-                    limit_price = float(ob['asks'][0][0])
+                    for ask_price, ask_vol in ob['asks']:
+                        if float(ask_price) <= price + max_deviation:
+                            limit_price = float(ask_price)
+                            break
                 elif side == 'sell' and ob.get('bids'):
-                    limit_price = float(ob['bids'][0][0])
-                else:
-                    limit_price = None
+                    for bid_price, bid_vol in ob['bids']:
+                        if float(bid_price) >= price - max_deviation:
+                            limit_price = float(bid_price)
+                            break
+
                 if limit_price:
-                    print(f"  [{asset}] Market rejected (price cap) — retrying LIMIT @ ${limit_price:,.2f}")
+                    print(f"  [{asset}] Market rejected (price cap) -- retrying LIMIT @ ${limit_price:,.2f}")
                     result = self.price_source.place_order(
                         symbol=symbol, side=side, amount=qty,
                         order_type='limit', price=limit_price,
                     )
+                else:
+                    print(f"  [{asset}] Market rejected & no reasonable limit price within 5% -- SKIP")
             except Exception as e:
                 print(f"  [{asset}] Limit fallback failed: {e}")
 
@@ -899,23 +985,8 @@ Respond ONLY with JSON:
             pnl_pct = ((entry - price) / entry) * 100.0
             pnl_from_peak = ((peak - price) / peak) * 100.0 if peak > 0 else 0
 
-        # ── 1b. OB REVERSAL EXIT — order book turns heavily against us ──
-        # Only exit on EXTREME + SUSTAINED imbalance AND losing > 1%
-        # Testnet OB is thin — don't overreact to momentary flips
+        # OB imbalance — tracked for display only (testnet OB too unreliable for exits)
         ob_imbalance = ob_levels.get('imbalance', 0)
-        if not (asset in self.failed_close_assets):
-            if direction == 'LONG' and ob_imbalance < -0.9 and pnl_pct < -1.0:
-                print(f"  [{asset}] OB EXIT: LONG but OB={ob_imbalance:+.2f} (extreme sell) & P&L={pnl_pct:+.2f}% — closing")
-                self._close_position(asset, price, f"OB reversal (imb={ob_imbalance:+.2f})")
-                self.last_trade_time.pop(asset, None)
-                self.last_close_time.pop(asset, None)
-                return
-            elif direction == 'SHORT' and ob_imbalance > 0.9 and pnl_pct < -1.0:
-                print(f"  [{asset}] OB EXIT: SHORT but OB={ob_imbalance:+.2f} (extreme buy) & P&L={pnl_pct:+.2f}% — closing")
-                self._close_position(asset, price, f"OB reversal (imb={ob_imbalance:+.2f})")
-                self.last_trade_time.pop(asset, None)
-                self.last_close_time.pop(asset, None)
-                return
 
         # ── 2. HARD STOP: max -2% loss — non-negotiable ──
         # But if asset is blacklisted (stuck, can't close), just log and skip
@@ -929,18 +1000,22 @@ Respond ONLY with JSON:
             return
 
         # ── 3. Check if current SL is hit ──
+        # Use CONFIRMED candle close for SL checks (not live tick)
+        # This prevents 10-second wicks from triggering exits in a trending market
+        # Hard stop (step 2) still uses live price for safety
+        confirmed_close = closes[-2] if len(closes) >= 2 else price
         sl_hit = False
-        if direction == 'LONG' and price <= sl:
+        if direction == 'LONG' and confirmed_close <= sl:
             sl_hit = True
-        elif direction == 'SHORT' and price >= sl:
+        elif direction == 'SHORT' and confirmed_close >= sl:
             sl_hit = True
 
         if sl_hit:
             if is_stuck:
                 print(f"  [{asset}] STUCK SL {pnl_pct:+.2f}% (can't close — no liquidity)")
                 return
-            print(f"  [{asset}] SL {sl_levels[-1]} HIT at ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
-            self._close_position(asset, price, f"SL {sl_levels[-1]} hit at ${sl:,.2f}")
+            print(f"  [{asset}] SL {sl_levels[-1]} HIT at ${price:,.2f} (candle closed ${confirmed_close:,.2f} vs SL ${sl:,.2f}) | P&L: {pnl_pct:+.2f}%")
+            self._close_position(asset, price, f"SL {sl_levels[-1]} hit (candle close ${confirmed_close:,.2f})")
             return
 
         # ── 4. TRAILING SL — ATR-based + minimum profit protection ──
@@ -1081,19 +1156,23 @@ Respond ONLY with JSON:
         # SL managed by polling (10s check) — no exchange stop orders
         # This avoids orphan positions from exchange SL fills
 
-        # ── 5. EMA reversal exit (E1) — only on SIGNIFICANT profit ──
-        # Don't exit on minor pullbacks — those caused the churning.
-        # Only flip when we have meaningful profit (>= 2%) AND EMA confirms reversal
-        # Skip if asset is stuck (no liquidity) — don't spam close attempts
-        if not is_stuck:
-            current_ema = ema_vals[-1]
-            if direction == 'LONG' and ema_direction == 'FALLING' and price < current_ema and pnl_pct >= 2.0:
+        # ── 5. EMA reversal exit (E1) — only on CONFIRMED candle + SIGNIFICANT profit ──
+        # Use confirmed EMA (not live tick EMA) to avoid false reversals
+        # Only flip when >= 5% profit AND 2 consecutive confirmed candles show reversal
+        if not is_stuck and len(ema_vals) >= 3:
+            confirmed_ema = ema_vals[-2]
+            prev_confirmed_ema = ema_vals[-3]
+            # Need 2 consecutive confirmed EMA bars falling/rising (not just one tick)
+            ema_confirmed_falling = confirmed_ema < prev_confirmed_ema
+            ema_confirmed_rising = confirmed_ema > prev_confirmed_ema
+
+            if direction == 'LONG' and ema_confirmed_falling and confirmed_close < confirmed_ema and pnl_pct >= 5.0:
                 print(f"  [{asset}] EMA REVERSAL (E1): CALL->PUT | exit ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
                 self._close_position(asset, price, "EMA reversal (E1) - flipping to PUT")
                 self.last_trade_time.pop(asset, None)
                 self.last_close_time.pop(asset, None)
                 return
-            elif direction == 'SHORT' and ema_direction == 'RISING' and price > current_ema and pnl_pct >= 2.0:
+            elif direction == 'SHORT' and ema_confirmed_rising and confirmed_close > confirmed_ema and pnl_pct >= 5.0:
                 print(f"  [{asset}] EMA REVERSAL (E1): PUT->CALL | exit ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
                 self._close_position(asset, price, "EMA reversal (E1) - flipping to CALL")
                 self.last_trade_time.pop(asset, None)
