@@ -33690,3 +33690,186 @@ Traceback (most recent call last):
   File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
 OSError: [Errno 22] Invalid argument
 2026-03-30 22:29:40,016 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $12.61)
+2026-03-30 22:31:14,100 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $0.00)
+2026-03-30 22:38:28,503 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $-13.80)
+2026-03-30 22:38:31,923 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-30 22:51:14,290 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-30 23:04:59,710 [ERROR] src.trading.executor: Main loop error
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 141, in _run_live
+OSError: [Errno 22] Invalid argument
+2026-03-30 23:07:09,937 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $-15.63)
+2026-03-30 23:14:46,055 [INFO] src.monitoring.journal: Journal: logged LONG trade for ETH (PnL $-78.70)
+2026-03-30 23:18:08,934 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-03-30 23:18:13,911 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-03-30 23:18:13,911 [INFO] src.data.fetcher: [BYBIT] USDT: 9,515.88 | BTC: 0.000000
+2026-03-30 23:18:14,110 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/llama3.2)
+2026-03-30 23:18:14,110 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://cent-gmbh-yields-amended.trycloudflare.com
+2026-03-30 23:18:14,111 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-03-30 23:19:55,645 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-30 23:35:11,067 [ERROR] src.trading.executor: Main loop error
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 129, in _run_live
+    'bid_depth_usd': total bid volume in USD,
+OSError: [Errno 22] Invalid argument
+2026-03-30 23:38:19,121 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-14.40)
+2026-03-30 23:48:05,223 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-30 23:54:03,685 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $22.67)
+2026-03-30 23:55:28,448 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-15.87)
+2026-03-31 00:00:27,947 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-13.90)
+2026-03-31 00:01:24,007 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:05:36,541 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-11.29)
+2026-03-31 00:07:31,771 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 202, in _process_asset
+    while True:
+        ^^^^^^^
+        try:
+        ^^^^
+            loop_start = time.time()
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 373, in _evaluate_entry
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:15:07,147 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:22:18,556 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 202, in _process_asset
+    while True:
+        ^^^^^^^
+        try:
+        ^^^^
+            loop_start = time.time()
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 328, in _evaluate_entry
+    if l <= e <= h:
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:29:25,121 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 202, in _process_asset
+    while True:
+        ^^^^^^^
+        try:
+        ^^^^
+            loop_start = time.time()
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 373, in _evaluate_entry
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:30:20,563 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-1.90)
+2026-03-31 00:35:46,595 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-10.57)
+2026-03-31 00:37:30,893 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 202, in _process_asset
+    while True:
+        ^^^^^^^
+        try:
+        ^^^^
+            loop_start = time.time()
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 301, in _evaluate_entry
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:43:38,478 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 202, in _process_asset
+    while True:
+        ^^^^^^^
+        try:
+        ^^^^
+            loop_start = time.time()
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 373, in _evaluate_entry
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:46:09,972 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-10.57)
+2026-03-31 00:50:45,470 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-13.16)
+2026-03-31 00:51:14,387 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:55:20,533 [INFO] src.monitoring.journal: Journal: logged LONG trade for BTC (PnL $292.94)
+2026-03-31 00:58:21,509 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 197, in _process_asset
+OSError: [Errno 22] Invalid argument
+2026-03-31 00:59:55,037 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-03-31 00:59:59,646 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-03-31 00:59:59,646 [INFO] src.data.fetcher: [BYBIT] USDT: 0.00 | BTC: 1.000000
+2026-03-31 01:00:00,020 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/llama3.2)
+2026-03-31 01:00:00,020 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://cent-gmbh-yields-amended.trycloudflare.com
+2026-03-31 01:00:00,021 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-03-31 01:01:13,034 [INFO] src.monitoring.journal: Journal: logged SHORT trade for ETH (PnL $-11.47)
+2026-03-31 01:06:17,214 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-03-31 01:06:22,618 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-03-31 01:06:22,618 [INFO] src.data.fetcher: [BYBIT] USDT: 9,765.80 | BTC: 0.000000
+2026-03-31 01:06:22,959 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/llama3.2)
+2026-03-31 01:06:22,960 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://cent-gmbh-yields-amended.trycloudflare.com
+2026-03-31 01:06:22,961 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-03-31 01:07:01,204 [ERROR] src.trading.executor: Error processing ETH
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 133, in _run_live
+    result = {
+    
+  File "C:\Users\convo\trade\src\trading\executor.py", line 202, in _process_asset
+    while True:
+        ^^^^^^^
+        try:
+        ^^^^
+            loop_start = time.time()
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 373, in _evaluate_entry
+OSError: [Errno 22] Invalid argument
