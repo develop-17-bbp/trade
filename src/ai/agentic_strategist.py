@@ -68,6 +68,25 @@ class StrategistDecision(BaseModel):
                     continue
         return sanitized
 
+
+class TradeActionDecision(BaseModel):
+    """Structured per-trade decision emitted by the LLM trade decider."""
+    action: str = Field(default="FLAT", description="LONG, SHORT, FLAT, HOLD, REDUCE, or EXIT")
+    direction: int = Field(default=0, ge=-1, le=1, description="-1 short, 0 flat, +1 long")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="0-1 confidence for the action")
+    position_scale: float = Field(default=0.0, ge=0.0, le=1.0, description="0-1 size multiplier")
+    market_regime: str = Field(default="UNKNOWN")
+    reasoning_trace: str = Field(default="")
+    risk_assessment: str = Field(default="")
+    key_signals: List[str] = Field(default_factory=list)
+
+    @field_validator('action')
+    @classmethod
+    def validate_action(cls, v):
+        allowed = {"LONG", "SHORT", "FLAT", "HOLD", "REDUCE", "EXIT"}
+        text = str(v or "FLAT").upper()
+        return text if text in allowed else "FLAT"
+
 # ── Agentic Strategist v2.0 ──
 
 class AgenticStrategist:
@@ -76,7 +95,7 @@ class AgenticStrategist:
     Features: Structured Output, Fact-Checking, and Bayesian Confidence Calibration.
     """
 
-    def __init__(self, provider: str = "local", model: str = "mistral", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
+    def __init__(self, provider: str = "local", model: str = "llama3.2:latest", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
         self.use_local_on_failure = use_local_on_failure
         self.provider = provider
         self.model_name = model
@@ -111,6 +130,24 @@ class AgenticStrategist:
             from src.ai.prompt_constraints import ConstrainedLLMAnalyst
 
             router = LLMRouter()
+
+            # Step 0: If a remote Ollama URL is set in config, expose it as env var
+            # so the LLM router can auto-discover it
+            _remote_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
+            if not _remote_url:
+                # Try reading from config.yaml ai.ollama_base_url
+                try:
+                    import yaml
+                    _cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.yaml')
+                    if os.path.exists(_cfg_path):
+                        with open(_cfg_path) as _f:
+                            _yaml_cfg = yaml.safe_load(_f)
+                        _remote_url = (_yaml_cfg or {}).get('ai', {}).get('ollama_base_url', '')
+                        if _remote_url:
+                            os.environ['OLLAMA_REMOTE_URL'] = _remote_url
+                            self.logger.info(f"[LLM] Remote Ollama GPU from config: {_remote_url}")
+                except Exception:
+                    pass
 
             # Step 1: Auto-detect ALL available cloud API keys + local Ollama
             router.add_from_env()
@@ -209,11 +246,34 @@ class AgenticStrategist:
             raw_json = self._call_llm(prompt)
             
             # 3. Structured Verification (Hallucination Safeguard Tier 1)
+            # Lenient parsing: extract what we can from LLM response, fill defaults
             try:
                 decision = StrategistDecision(**raw_json)
             except Exception as e:
-                self.logger.error(f"LLM Hallucination Detected: Invalid Schema. Falling back. Error: {e}")
-                decision = self._get_fallback_decision("Schema error")
+                self.logger.warning(f"LLM schema mismatch (parsing leniently): {e}")
+                # Extract what we can from the raw JSON and fill defaults
+                try:
+                    _regime = str(raw_json.get('market_regime', raw_json.get('regime', 'VOLATILE'))).upper()
+                    _reasoning = str(raw_json.get('reasoning_trace', raw_json.get('reasoning', raw_json.get('analysis', ''))))
+                    _conf = raw_json.get('confidence_score', raw_json.get('confidence', 50))
+                    _bias = raw_json.get('macro_bias', raw_json.get('bias', raw_json.get('direction', 0.0)))
+                    # Try to extract action/direction for trade signal
+                    _action = str(raw_json.get('action', '')).upper()
+                    if _action in ('LONG', 'BUY') and isinstance(_bias, (int, float)) and _bias <= 0:
+                        _bias = 0.3
+                    elif _action in ('SHORT', 'SELL') and isinstance(_bias, (int, float)) and _bias >= 0:
+                        _bias = -0.3
+                    decision = StrategistDecision(
+                        market_regime=_regime if _regime in ['TRENDING', 'RANGING', 'VOLATILE', 'CHOPPY'] else 'VOLATILE',
+                        reasoning_trace=_reasoning[:500] if _reasoning else 'LLM analysis (schema adapted)',
+                        confidence_score=max(0, min(100, int(float(_conf)))),
+                        suggested_config_update=raw_json.get('suggested_config_update', {}),
+                        macro_bias=max(-0.5, min(0.5, float(_bias))) if isinstance(_bias, (int, float)) else 0.0,
+                    )
+                    self.logger.info(f"[LLM] Lenient parse OK: regime={decision.market_regime} bias={decision.macro_bias:+.2f} conf={decision.confidence_score}")
+                except Exception as e2:
+                    self.logger.error(f"LLM parse failed completely: {e2}")
+                    decision = self._get_fallback_decision("Schema error")
 
             # DEBUG: check types being passed to memory
             self.logger.debug(f"decision.market_regime={decision.market_regime} macro_bias={decision.macro_bias}")
@@ -356,11 +416,21 @@ You are analyzing a SINGLE trade decision. Explain WHY this trade should be open
   - Trend Direction: {market_info.get('trend_direction', 'N/A')}
   - Volatility (30d): {market_info.get('volatility', 'N/A')}
 
+**EMA Crossover Strategy**:
+  - EMA(8): {market_info.get('ema_8', 'N/A')}
+  - Price vs EMA: {market_info.get('price_vs_ema', 'N/A')}
+  - EMA Direction: {market_info.get('ema_direction', 'N/A')}
+  - EMA Crosses Prev Candle: {market_info.get('ema_crosses_prev_candle', 'N/A')}
+  - Stop-Loss Progression: {market_info.get('sl_progression', 'N/A')}
+  - Current SL: {market_info.get('current_sl', 'N/A')}
+
 ### RECENT TRADE CONTEXT:
 {recent_context}
 
 ### INSTRUCTIONS:
-Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering signal alignment, entry rationale, and key risk."}}
+Apply the EMA crossover strategy: SELL when EMA crosses candle bearish + next below EMA. BUY on reverse.
+Trail stop-loss aggressively (L1→L2→L3→L4). Never exit early. Only exit on confirmed reversal.
+Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering EMA crossover signal, entry rationale, stop-loss status, and key risk."}}
 """
         
         try:
@@ -385,6 +455,165 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
             
             side_sentiment = "bullish" if entry_side == "BUY" else "bearish"
             return f"Trade opened: {entry_side} {asset} at ${entry_price:,.2f}. Signal confidence: {confidence:.0%}. Market regime: {market_info.get('regime', 'unknown')}. {side_sentiment.capitalize()} setup detected."
+
+    def decide_trade(self, asset: str, prices, highs, lows, volumes,
+                     current_price: float,
+                     l1_signal: Optional[Dict] = None,
+                     l2_sentiment: Optional[Dict] = None,
+                     l3_risk: Optional[Dict] = None,
+                     market_data: Optional[Dict] = None,
+                     recent_trades: Optional[List[Dict]] = None,
+                     base_signal: int = 0,
+                     base_confidence: float = 0.0,
+                     enhanced_decision: Optional[Dict] = None,
+                     account_balance: float = 10000.0) -> TradeActionDecision:
+        """
+        Structured per-trade LLM decision that can be consumed by the executor.
+        The LLM sees the full live context, but hard risk vetoes remain enforced
+        by the executor and downstream risk layers.
+        """
+        if recent_trades is None:
+            recent_trades = []
+
+        l1_info = l1_signal if isinstance(l1_signal, dict) else {}
+        l2_info = l2_sentiment if isinstance(l2_sentiment, dict) else {}
+        l3_info = l3_risk if isinstance(l3_risk, dict) else {}
+        market_info = market_data if isinstance(market_data, dict) else {}
+        overlay_info = enhanced_decision if isinstance(enhanced_decision, dict) else {}
+
+        sentiment_score = float(l2_info.get('sentiment_score', 0.0) or 0.0)
+        recent_context = self._format_history(recent_trades[-5:]) if recent_trades else "No recent trades"
+
+        # ── Inject EMA Crossover Strategy State ──
+        ema_state = {}
+        try:
+            from src.trading.adaptive_engine import AdaptiveEngine
+            # Access the EMA crossover strategy if it exists in the engine
+            # The executor passes it through market_data, or we get it from the strategy
+            ema_state = market_info.get('ema_crossover_state', {})
+            if not ema_state:
+                # Try to compute EMA state directly from price data
+                from src.indicators.indicators import ema as compute_ema
+                if prices is not None and len(prices) >= 10:
+                    ema_vals = compute_ema(list(prices), 8)
+                    last_price = float(prices[-1]) if hasattr(prices, '__getitem__') else current_price
+                    last_ema = ema_vals[-1] if ema_vals else 0
+                    prev_ema = ema_vals[-2] if len(ema_vals) >= 2 else 0
+                    ema_state = {
+                        'ema_8': round(last_ema, 2),
+                        'price_vs_ema': 'ABOVE' if last_price > last_ema else 'BELOW',
+                        'ema_direction': 'RISING' if last_ema > prev_ema else 'FALLING',
+                        'ema_crosses_prev_candle': (prev_ema <= float(highs[-2]) and prev_ema >= float(lows[-2])) if len(highs) >= 2 else False,
+                        'candle_below_ema': float(highs[-1]) < last_ema if highs else False,
+                        'candle_above_ema': float(lows[-1]) > last_ema if lows else False,
+                    }
+        except Exception:
+            pass
+
+        ema_section = ""
+        if ema_state:
+            ema_section = f"""
+### EMA CROSSOVER STRATEGY STATE (CRITICAL - Use for entry/exit/SL decisions)
+{json.dumps(ema_state, default=str)}
+STRATEGY RULES:
+- SELL entry: EMA crossed prev candle (bearish) + current candle BELOW EMA + EMA FALLING
+- BUY entry: EMA crossed prev candle (bullish) + current candle ABOVE EMA + EMA RISING
+- EXIT: Reverse crossover confirmed (opposite of entry condition)
+- STOP-LOSS: Dynamic trailing L1→L2→L3→L4 based on structure points
+- MAXIMIZE PROFIT by aggressively trailing stop-loss while protecting accumulated gains
+- NEVER exit too early; only exit on CONFIRMED reversal
+"""
+
+        context = f"""
+### EXECUTION CONTEXT
+- Asset: {asset}
+- Current Price: {current_price:,.2f}
+- Base Pipeline Signal: {base_signal}
+- Base Confidence: {base_confidence:.3f}
+{ema_section}
+### L1 SIGNAL
+{json.dumps(l1_info, default=str)}
+
+### L2 SENTIMENT
+{json.dumps(l2_info, default=str)}
+
+### L3 RISK
+{json.dumps(l3_info, default=str)}
+
+### MARKET STATE
+{json.dumps(market_info, default=str)}
+
+### AGENT OVERLAY
+{json.dumps(overlay_info, default=str)}
+
+### RECENT TRADES
+{recent_context}
+"""
+
+        try:
+            if self._constrained_analyst is not None:
+                fallback_chain = self._preferred_fallback_chain()
+                result = self._constrained_analyst.analyze_market(
+                    prices=prices,
+                    highs=highs,
+                    lows=lows,
+                    volumes=volumes,
+                    sentiment_score=sentiment_score,
+                    asset=asset,
+                    account_balance=account_balance,
+                    trade_history=context,
+                    fallback_chain=fallback_chain,
+                )
+            else:
+                result = self._call_llm(context)
+
+            action = str(result.get('action', 'FLAT')).upper()
+            direction_map = {
+                'LONG': 1,
+                'SHORT': -1,
+                'FLAT': 0,
+                'HOLD': 0,
+                'REDUCE': 0,
+                'EXIT': 0,
+            }
+            direction = direction_map.get(action, 0)
+            confidence = max(0.0, min(1.0, float(result.get('confidence_score', 0)) / 100.0))
+            position_scale = 0.0 if direction == 0 else max(0.1, min(1.0, confidence))
+
+            # Honor explicit high-risk context before returning a directional trade.
+            vpin = float(l3_info.get('vpin', 0.0) or 0.0)
+            risk_action = str(l3_info.get('risk_action', '') or '').upper()
+            if vpin > 0.8 or 'BLOCK' in risk_action or 'VETO' in risk_action:
+                direction = 0
+                action = 'FLAT'
+                position_scale = 0.0
+                result['reasoning_trace'] = (
+                    f"{result.get('reasoning_trace', '')} "
+                    f"[Risk Override: VPIN={vpin:.2f}, action={risk_action or 'NONE'}]"
+                ).strip()
+
+            return TradeActionDecision(
+                action=action,
+                direction=direction,
+                confidence=confidence,
+                position_scale=position_scale,
+                market_regime=str(result.get('market_regime', market_info.get('regime', 'UNKNOWN'))).upper(),
+                reasoning_trace=str(result.get('reasoning_trace', 'No trade reasoning provided'))[:800],
+                risk_assessment=str(result.get('risk_assessment', '')),
+                key_signals=[str(x) for x in (result.get('key_signals') or [])[:5]],
+            )
+        except Exception as e:
+            self.logger.warning(f"LLM trade decision failed: {e}")
+            return TradeActionDecision(
+                action='FLAT',
+                direction=0,
+                confidence=0.0,
+                position_scale=0.0,
+                market_regime=str(market_info.get('regime', 'UNKNOWN')).upper(),
+                reasoning_trace=f"LLM trade decision unavailable: {str(e)[:120]}",
+                risk_assessment="Fallback to non-LLM execution",
+                key_signals=[],
+            )
 
     def _verify_reality(self, decision: StrategistDecision, market_data: Dict) -> StrategistDecision:
         """Cross-checks LLM claims against hard quantitative data."""
@@ -449,6 +678,25 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
         # Add timestamp for this call
         self.rate_limiter_queue.append(now)
         return True
+
+    def _preferred_fallback_chain(self) -> Optional[List[str]]:
+        """
+        Prefer remote GPU Ollama → cloud APIs → local Ollama → rule-based.
+        The remote_gpu provider is the Cloudflare tunnel to the GPU machine.
+        """
+        if not self._llm_router:
+            return None
+        providers = list(self._llm_router.providers.keys())
+        # Priority: remote_gpu (fast GPU) → gemini (cloud) → local (CPU ollama)
+        preferred = []
+        for p in ['remote_gpu', 'gemini', 'local']:
+            if p in providers:
+                preferred.append(p)
+        # Add any remaining providers
+        for p in providers:
+            if p not in preferred:
+                preferred.append(p)
+        return preferred if preferred else None
     
     def _call_llm(self, prompt: str) -> Dict:
         """
@@ -463,6 +711,19 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
         """
         # ── LLMRouter path (preferred — handles cloud → local → rule-based automatically) ──
         if self._llm_router:
+            preferred_chain = self._preferred_fallback_chain()
+            if preferred_chain:
+                system_prompt = "You are a crypto trading strategist. Return only valid JSON."
+                result = self._llm_router.query(
+                    prompt,
+                    system_prompt=system_prompt,
+                    fallback_chain=preferred_chain,
+                    cache=False,
+                )
+                if result.get('error') != 'all_providers_failed':
+                    self.fallback_mode = False
+                    return result
+
             # When cloud quota is exhausted, skip cloud providers and go straight to local
             if self.fallback_mode or not self._check_rate_limit():
                 self.logger.info("[Strategist] Cloud quota/rate-limit hit — routing to local LLM via router")
@@ -560,12 +821,22 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
         elif self.model_name:
             model_id = self.model_name
         self.logger.info(f"[LOCAL-LLM] Calling Local Reasoning Engine: {model_id}")
-        
-        endpoints = [
-            "http://127.0.0.1:11434/v1/chat/completions",
-            "http://127.0.0.1:1234/v1/chat/completions",
-            "http://127.0.0.1:11434/api/generate" # Basic Ollama fallback
-        ]
+
+        configured_base = (
+            os.environ.get("LLM_BASE_URL", "").strip()
+            or os.environ.get("OLLAMA_BASE_URL", "").strip()
+        ).rstrip("/")
+        if configured_base:
+            endpoints = [
+                f"{configured_base}/v1/chat/completions",
+                f"{configured_base}/api/generate",
+            ]
+        else:
+            endpoints = [
+                "http://127.0.0.1:11434/v1/chat/completions",
+                "http://127.0.0.1:1234/v1/chat/completions",
+                "http://127.0.0.1:11434/api/generate" # Basic Ollama fallback
+            ]
         
         response = None
         for url in endpoints:
@@ -588,7 +859,7 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
                         ],
                         "temperature": 0.1
                     }
-                resp = requests.post(url, json=payload, timeout=(5, 120))
+                resp = requests.post(url, json=payload, timeout=(3, 60))
                 if resp.status_code == 200:
                     response = resp
                     break
@@ -596,6 +867,8 @@ Respond with JSON only: {{"reasoning_trace": "2-3 sentence explanation covering 
                 continue
                 
         if not response:
+            if configured_base:
+                raise ConnectionError(f"Configured LLM endpoint unavailable: {configured_base}")
             raise ConnectionError("Make sure Ollama or LM Studio is running locally on port 11434 or 1234.")
             
         result = response.json()
