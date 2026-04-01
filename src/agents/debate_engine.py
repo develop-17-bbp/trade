@@ -207,7 +207,7 @@ class DebateEngine:
                     post_votes[agent_name].reasoning += f" [DEBATE-FLIP: {challenge_text}]"
                     result.flipped_agents.append(agent_name)
                     conviction[agent_name] *= (1.0 - self.flip_penalty)
-                    logger.info(f"[DEBATE] {agent_name} FLIPPED {old_dir:+d} → {new_dir:+d} "
+                    logger.info(f"[DEBATE] {agent_name} FLIPPED {old_dir:+d} -> {new_dir:+d} "
                                 f"under challenge from {opponent_name}")
 
             elif defended:
