@@ -129,7 +129,7 @@ class AlphaDecayModel:
         self.optimal_hold = peak_horizon
         self._fitted = True
 
-        logger.info(f"Alpha Decay: λ={self.decay_rate:.4f}, half_life={self.half_life:.1f} bars, "
+        logger.info(f"Alpha Decay: lambda={self.decay_rate:.4f}, half_life={self.half_life:.1f} bars, "
                      f"optimal_hold={self.optimal_hold} bars, peak_IC={peak_ic:.4f}")
 
         return {

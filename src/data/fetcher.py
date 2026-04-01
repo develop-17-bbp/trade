@@ -368,10 +368,15 @@ class BybitClient:
                 'options': {
                     'defaultType': 'linear',
                     'recvWindow': 60000,
+                    'adjustForTimeDifference': True,
                 },
                 'enableRateLimit': True,
             })
+            # Sync clock with Bybit server to prevent timestamp rejections
             self.exchange.load_time_difference()
+            if hasattr(self.exchange, 'options'):
+                self.exchange.options['recvWindow'] = 60000
+            logger.info(f"[BYBIT] Time offset: {getattr(self.exchange, 'timeOffset', 0)}ms")
 
             # Verify auth
             balance = self.exchange.fetch_balance()
@@ -389,25 +394,44 @@ class BybitClient:
             return {'error': 'Not connected'}
         try:
             balance = self.exchange.fetch_balance()
-            usdt = balance.get('USDT', {})
-            btc = balance.get('BTC', {})
-            usdt_total = float(usdt.get('total', 0) or 0)
-            usdt_free = float(usdt.get('free', 0) or 0)
-            btc_total = float(btc.get('total', 0) or 0)
-            # Estimate equity in USD
-            try:
-                btc_price = float(self.exchange.fetch_ticker('BTC/USDT:USDT').get('last', 0))
-            except Exception:
-                btc_price = 0
-            equity = usdt_total + btc_total * btc_price
+
+            # Extract REAL equity from Bybit's raw API response
+            # fetch_balance()['info'] contains the raw Bybit V5 response with:
+            #   totalEquity = wallet balance + unrealized PnL (REAL account value)
+            #   totalWalletBalance = deposited funds only (ignores open positions)
+            # We MUST use totalEquity for sizing — wallet balance hides -$31K losses
+            info = balance.get('info', {})
+            raw_list = info.get('result', {}).get('list', [{}])
+            raw_acct = raw_list[0] if raw_list else {}
+
+            total_equity = float(raw_acct.get('totalEquity', 0) or 0)
+            total_wallet = float(raw_acct.get('totalWalletBalance', 0) or 0)
+            unrealized_pnl = float(raw_acct.get('totalPerpUPL', 0) or 0)
+            available_balance = float(raw_acct.get('totalAvailableBalance', 0) or 0)
+
+            # Fallback: if raw API fields are missing, use ccxt balance
+            if total_equity <= 0:
+                usdt = balance.get('USDT', {})
+                btc = balance.get('BTC', {})
+                usdt_total = float(usdt.get('total', 0) or 0)
+                usdt_free = float(usdt.get('free', 0) or 0)
+                btc_total = float(btc.get('total', 0) or 0)
+                try:
+                    btc_price = float(self.exchange.fetch_ticker('BTC/USDT:USDT').get('last', 0))
+                except Exception:
+                    btc_price = 0
+                total_equity = usdt_total + btc_total * btc_price
+                available_balance = usdt_free
+                total_wallet = total_equity
+
             return {
-                'equity': equity,
-                'cash': usdt_free,
-                'buying_power': usdt_free * 2,  # 2x margin
-                'portfolio_value': equity,
+                'equity': total_equity,           # Real equity (wallet + unrealized PnL)
+                'wallet_balance': total_wallet,    # Wallet only (deposits - withdrawals)
+                'unrealized_pnl': unrealized_pnl,  # Open position PnL
+                'cash': available_balance,          # Available to trade
+                'buying_power': available_balance * 2,
+                'portfolio_value': total_equity,
                 'status': 'ACTIVE',
-                'usdt_total': usdt_total,
-                'btc_total': btc_total,
             }
         except Exception as e:
             return {'error': str(e)}
@@ -454,7 +478,8 @@ class BybitClient:
                     order_type: str = 'market', limit_price: Optional[float] = None,
                     stop_price: Optional[float] = None,
                     trail_percent: Optional[float] = None,
-                    time_in_force: str = 'gtc') -> Dict:
+                    time_in_force: str = 'gtc',
+                    reduce_only: bool = False) -> Dict:
         if not self.available:
             return {'status': 'error', 'message': 'Not connected'}
 
@@ -462,6 +487,8 @@ class BybitClient:
             # Convert symbol: BTC/USD -> BTC/USDT:USDT, ETH/USDT -> ETH/USDT:USDT
             bybit_sym = self._convert_symbol(symbol)
             params = {}
+            if reduce_only:
+                params['reduceOnly'] = True
 
             if order_type == 'limit' and limit_price:
                 order = self.exchange.create_order(bybit_sym, 'limit', side, qty, limit_price, params)
@@ -548,6 +575,142 @@ class BybitClient:
         return s
 
 
+class DeltaClient:
+    """
+    Delta Exchange testnet/live client via CCXT.
+    Uses correct testnet URL: cdn-ind.testnet.deltaex.org
+    (ccxt default URL is wrong for Delta testnet)
+    """
+
+    def __init__(self, api_key: Optional[str] = None,
+                 api_secret: Optional[str] = None,
+                 testnet: bool = True):
+        self.api_key = api_key or os.environ.get('DELTA_API_KEY', '')
+        self.api_secret = api_secret or os.environ.get('DELTA_API_SECRET', '')
+        self.testnet = testnet
+        self.available = False
+        self.exchange = None
+
+        if not (self.api_key and self.api_secret):
+            logger.warning("[DELTA] No API keys — set DELTA_API_KEY / DELTA_API_SECRET")
+            return
+
+        try:
+            import ccxt
+            self.exchange = ccxt.delta({
+                'apiKey': self.api_key,
+                'secret': self.api_secret,
+                'sandbox': testnet,
+                'options': {'defaultType': 'future'},
+                'enableRateLimit': True,
+            })
+            # Override testnet URL — ccxt default is wrong for Delta India demo
+            if testnet:
+                self.exchange.urls['api'] = {
+                    'public': 'https://cdn-ind.testnet.deltaex.org',
+                    'private': 'https://cdn-ind.testnet.deltaex.org',
+                }
+
+            # Verify auth
+            balance = self.exchange.fetch_balance()
+            usd = float(balance.get('USD', {}).get('total', 0) or 0)
+            logger.info(f"[DELTA] Connected to {'TESTNET' if testnet else 'LIVE'}")
+            logger.info(f"[DELTA] USD: {usd:,.2f}")
+            self.available = True
+        except Exception as e:
+            logger.warning(f"[DELTA] Connection failed: {e}")
+            self.available = False
+
+    def get_account(self) -> Dict:
+        if not self.available:
+            return {'error': 'Not connected'}
+        try:
+            balance = self.exchange.fetch_balance()
+            usd = balance.get('USD', {})
+            usd_total = float(usd.get('total', 0) or 0)
+            usd_free = float(usd.get('free', 0) or 0)
+            return {
+                'equity': usd_total,
+                'cash': usd_free,
+                'buying_power': usd_free,
+                'portfolio_value': usd_total,
+                'status': 'ACTIVE',
+            }
+        except Exception as e:
+            return {'error': str(e)}
+
+    def get_positions(self) -> List[Dict]:
+        if not self.available:
+            return []
+        try:
+            positions = self.exchange.fetch_positions()
+            result = []
+            for p in positions:
+                contracts = float(p.get('contracts', 0) or 0)
+                if contracts > 0:
+                    result.append({
+                        'symbol': p.get('symbol', ''),
+                        'side': p.get('side', ''),
+                        'qty': str(contracts),
+                        'avg_entry_price': str(p.get('entryPrice', 0)),
+                        'current_price': str(p.get('markPrice', 0)),
+                        'unrealized_pl': str(p.get('unrealizedPnl', 0)),
+                        'market_value': str(contracts * float(p.get('markPrice', 0) or 0)),
+                    })
+            return result
+        except Exception as e:
+            logger.debug(f"[DELTA] get_positions error: {e}")
+            return []
+
+    def place_order(self, symbol: str, side: str, qty: float,
+                    order_type: str = 'market', limit_price: Optional[float] = None,
+                    stop_price: Optional[float] = None,
+                    trail_percent: Optional[float] = None,
+                    time_in_force: str = 'gtc',
+                    reduce_only: bool = False) -> Dict:
+        if not self.available:
+            return {'status': 'error', 'message': 'Not connected'}
+        try:
+            delta_sym = self._convert_symbol(symbol)
+            params = {'reduceOnly': True} if reduce_only else {}
+            if order_type == 'limit' and limit_price:
+                order = self.exchange.create_order(delta_sym, 'limit', side, qty, limit_price, params)
+            else:
+                order = self.exchange.create_order(delta_sym, 'market', side, qty, None, params)
+
+            return {
+                'status': 'success',
+                'order_id': str(order.get('id', '')),
+                'symbol': order.get('symbol', ''),
+                'side': order.get('side', ''),
+                'type': order.get('type', ''),
+                'amount': float(order.get('amount', 0) or 0),
+                'filled_qty': float(order.get('filled', 0) or 0),
+                'filled_avg_price': order.get('average') or order.get('price'),
+                'testnet': self.testnet,
+            }
+        except Exception as e:
+            return {'status': 'error', 'message': str(e), 'testnet': self.testnet}
+
+    def fetch_order_book(self, symbol: str, limit: int = 25) -> Dict:
+        if not self.available:
+            return {'bids': [], 'asks': []}
+        try:
+            delta_sym = self._convert_symbol(symbol)
+            ob = self.exchange.fetch_order_book(delta_sym, limit=limit)
+            return {'bids': ob.get('bids', []), 'asks': ob.get('asks', [])}
+        except Exception as e:
+            logger.debug(f"[DELTA] fetch_order_book error: {e}")
+            return {'bids': [], 'asks': []}
+
+    def _convert_symbol(self, s: str) -> str:
+        # BTC -> BTCUSD, BTC/USDT -> BTCUSD, BTC/USDT:USDT -> BTCUSD
+        s = s.replace(':USDT', '').replace('/USDT', '').replace('/USD', '')
+        if len(s) <= 5 and '/' not in s:
+            return f"{s}USD"
+        return s
+
+
 class PriceFetcher:
     """
     Multi-exchange price data fetcher.
@@ -579,6 +742,7 @@ class PriceFetcher:
         # ── Exchange clients ──
         self.alpaca: Optional[AlpacaClient] = None
         self.bybit: Optional[BybitClient] = None
+        self.delta: Optional[DeltaClient] = None
 
         # ── LiveCoinWatch (fast price data) ──
         self.lcw: Optional[LiveCoinWatchFetcher] = None
@@ -590,7 +754,9 @@ class PriceFetcher:
         self.exchange = None
 
         # ── Initialize based on exchange_name ──
-        if 'bybit' in self.exchange_name:
+        if 'delta' in self.exchange_name:
+            self._init_delta(api_key, api_secret, testnet)
+        elif 'bybit' in self.exchange_name:
             self._init_bybit(api_key, api_secret, testnet)
         elif 'alpaca' in self.exchange_name:
             self._init_alpaca(api_key, api_secret, testnet)
@@ -617,6 +783,27 @@ class PriceFetcher:
             print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
         else:
             print(f"  [BYBIT] Not connected - set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
+            self._init_ccxt_readonly()
+
+    def _init_delta(self, api_key, api_secret, testnet):
+        """Initialize Delta Exchange as primary exchange (futures — LONG + SHORT)."""
+        self.delta = DeltaClient(
+            api_key=api_key,
+            api_secret=api_secret,
+            testnet=testnet,
+        )
+        self._authenticated = self.delta.available
+        self._available = self.delta.available
+
+        if self.delta.available:
+            print(f"  [DELTA] {'TESTNET' if testnet else 'LIVE'} trading connected")
+            acct = self.delta.get_account()
+            if 'equity' in acct:
+                print(f"  [DELTA] Equity: ${acct['equity']:,.2f} | Cash: ${acct.get('cash', 0):,.2f}")
+            self.exchange = self.delta.exchange
+            print(f"  [DATA] Delta CCXT initialized for OHLCV data")
+        else:
+            print(f"  [DELTA] Not connected - set DELTA_API_KEY / DELTA_API_SECRET")
             self._init_ccxt_readonly()
 
     def _init_alpaca(self, api_key, api_secret, paper):
@@ -956,7 +1143,8 @@ class PriceFetcher:
     def place_order(self, symbol: str, side: str, amount: float,
                     order_type: str = 'market', price: Optional[float] = None,
                     stop_price: Optional[float] = None,
-                    trail_percent: Optional[float] = None) -> Dict:
+                    trail_percent: Optional[float] = None,
+                    reduce_only: bool = False) -> Dict:
         """
         Place any order type. Routes to Alpaca (primary) or CCXT (fallback).
 
@@ -969,6 +1157,37 @@ class PriceFetcher:
         """
         if not self.is_authenticated:
             return {'status': 'error', 'message': 'Not authenticated. Set API key/secret.'}
+
+        # ── Delta Exchange order routing ──
+        if self.delta and self.delta.available:
+            pre_trade_price = self.fetch_latest_price(symbol)
+            effective_price = price if order_type == 'limit' else None
+            result = self.delta.place_order(
+                symbol=symbol, side=side, qty=amount,
+                order_type=order_type, limit_price=effective_price,
+                reduce_only=reduce_only,
+            )
+            if result.get('status') == 'success':
+                fill_price = result.get('filled_avg_price')
+                slippage_pct = 0.0
+                if pre_trade_price and fill_price and pre_trade_price > 0:
+                    slippage_pct = abs(float(fill_price) - pre_trade_price) / pre_trade_price * 100
+                return {
+                    'status': 'success',
+                    'order_id': result.get('order_id'),
+                    'symbol': result.get('symbol'),
+                    'side': result.get('side'),
+                    'type': result.get('type'),
+                    'amount': amount,
+                    'filled': result.get('filled_qty'),
+                    'price': fill_price,
+                    'cost': float(fill_price or 0) * amount if fill_price else None,
+                    'fee': {'cost': 0, 'currency': 'USD'},
+                    'testnet': self.testnet,
+                    'slippage_pct': slippage_pct,
+                    'exchange': 'delta',
+                }
+            return result
 
         # ── Bybit order routing (primary — supports SHORT) ──
         if self.bybit and self.bybit.available:
@@ -984,6 +1203,7 @@ class PriceFetcher:
                 limit_price=effective_price,
                 stop_price=stop_price,
                 trail_percent=trail_percent,
+                reduce_only=reduce_only,
             )
             if result.get('status') == 'success':
                 fill_price = result.get('filled_avg_price')

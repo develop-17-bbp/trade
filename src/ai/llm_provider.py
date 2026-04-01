@@ -205,7 +205,7 @@ class OllamaProvider(BaseLLMProvider):
         self._throttle()
         import requests
         base = self.config.base_url or 'http://127.0.0.1:11434'
-        model_id = self.config.model or 'llama3.2:latest'
+        model_id = self.config.model or 'mistral:latest'
 
         # Use short connect timeout (3s) — if Ollama isn't running, fail fast
         # Read timeout stays longer (60s) for actual inference
@@ -444,7 +444,7 @@ class LLMRouter:
         if remote_ollama_url:
             self.add_provider('remote_gpu', LLMConfig(
                 provider='ollama',
-                model=os.environ.get('OLLAMA_REMOTE_MODEL', 'llama3.2'),
+                model=os.environ.get('OLLAMA_REMOTE_MODEL', 'mistral'),
                 base_url=remote_ollama_url,
                 timeout=120,
             ))
@@ -457,7 +457,7 @@ class LLMRouter:
             )
             self.add_provider('local', LLMConfig(
                 provider='ollama',
-                model='llama3.2:latest',
+                model='mistral:latest',
                 base_url=local_base_url,
             ))
 

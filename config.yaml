@@ -2,9 +2,15 @@
 mode: testnet                  # execution mode: 'paper', 'testnet', or 'live'
 poll_interval: 10             # check every 10s, analyze 5m candles, trade on crossovers
 
-# ── Exchange Configuration (for testnet/live) ──
-# Get API keys from: https://testnet.binance.vision/ (testnet)
-#                 or https://www.binance.com/en/user/settings/api-management (live)
+# ── Exchange Configuration ──
+# Both exchanges run independently with same strategy
+exchanges:
+  - name: bybit
+    assets: [BTC, ETH]
+  - name: delta
+    assets: [BTC, ETH]
+
+# Primary exchange (for backward compatibility)
 exchange:
   name: bybit
 
@@ -29,17 +35,42 @@ risk:
   atr_stop_mult: 1.5
   atr_tp_mult: 4.5
 
-# ── AI / LLM (GPU Ollama — 100% weight) ──
+# ── AI / LLM ──
+# Bybit uses Ollama (mistral 7B), Delta uses Claude API (haiku)
+# llm_provider: 'auto' = Delta→Claude, Bybit→Ollama | 'claude' | 'ollama'
 ai:
   reasoning_provider: "auto"
-  reasoning_model: "llama3.2:latest"
-  ollama_base_url: "https://cent-gmbh-yields-amended.trycloudflare.com"
+  reasoning_model: "mistral:latest"
+  ollama_base_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
+  llm_provider: "auto"            # auto: Delta=Claude, Bybit=Ollama
+  claude_model: "claude-haiku-4-5" # Cost-effective for trade decisions (~$0.001/call)
   use_llm_trade_decider: true
   llm_trade_decider_mode: "primary"
   llm_trade_conf_threshold: 0.40
   rate_limit_calls_per_minute: 15
   fallback_on_quota_error: true
   use_local_on_failure: true
+  bear_agent_enabled: true        # Second LLM call to argue AGAINST the trade
+  bear_veto_threshold: 7          # risk_score >= 7 = VETO (protects capital)
+  bear_reduce_threshold: 5        # risk_score 5-6 = reduce position 50%
+  facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
+  risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
+  edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
+  orchestrator_enabled: true      # 10 math agents + adversarial debate → feeds LLM
+
+# ── Auto-Healer Monitor (GPU LLM) ──
+# Trading uses Mistral 7B (smarter, reads agent data)
+# Monitoring uses llama3.2 (faster, sufficient for error detection)
+monitor:
+  enabled: true
+  ollama_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
+  ollama_model: "llama3.2:latest"
+  scan_interval: 60               # Check logs every 60s
+  auto_fix: true                  # Apply safe fixes (null guards, type casts, defaults)
+  max_fixes_per_hour: 5           # Rate limit auto-fixes
+
+# ── Time-Based Exits ──
+max_hold_minutes: 360             # Close stale/losing positions after 6 hours
 
 # ── Order Execution ──
 execution:

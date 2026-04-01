@@ -1,0 +1,24 @@
+2026-04-02 00:28:03,090 [WARNING] Failed to get diagnosis for error: 2026-04-01 21:55:15,697 [WARNING] src.trading.executor: [BTC] Bear agent failed:
+2026-04-02 00:28:04,570 [INFO] [DIAGNOSIS] critical | The error occurred because the 'NoneType' value was passed to a function expecting a string or real 
+2026-04-02 00:28:04,571 [INFO] [FIX] applied=False | null_guard | Low severity, monitoring only
+2026-04-02 00:28:06,134 [INFO] [DIAGNOSIS] critical | The error occurred because the `facilitator` function in `src/trading/executor.py` expects a string 
+2026-04-02 00:28:06,135 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
+2026-04-02 00:28:08,366 [INFO] [DIAGNOSIS] critical | The error occurred because the 'facilitator' parameter in the trading executor is being passed a Non
+2026-04-02 00:28:08,367 [INFO] [FIX] applied=False | null_guard | Low severity, monitoring only
+2026-04-02 00:28:10,376 [INFO] [DIAGNOSIS] critical | The error occurred because the 'NoneType' value was passed to a function expecting a string or real 
+2026-04-02 00:28:10,376 [INFO] [FIX] applied=False | null_guard | Low severity, monitoring only
+2026-04-02 00:30:47,148 [INFO] [DIAGNOSIS] critical | The error indicates an issue with the Bear agent in the BTC market. It seems there's extra data caus
+2026-04-02 00:30:47,149 [INFO] [FIX] applied=False | exchange_api | Low severity, monitoring only
+2026-04-02 00:30:49,367 [INFO] [DIAGNOSIS] critical | The error occurs due to a NoneType being passed where a real number is expected in the facilitator f
+2026-04-02 00:30:49,367 [INFO] [FIX] applied=False | exchange_api | Low severity, monitoring only
+2026-04-02 00:30:51,595 [INFO] [DIAGNOSIS] critical | The error occurs because a NoneType is being passed to the float() function where a real number or s
+2026-04-02 00:30:51,596 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
+2026-04-02 00:30:53,662 [INFO] [DIAGNOSIS] critical | The error occurs because a NoneType is being passed to the float() function where it expects a strin
+2026-04-02 00:30:53,662 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
+2026-04-02 00:30:55,800 [INFO] [DIAGNOSIS] critical | The error occurs because a NoneType is being passed to the float() function where a string or real n
+2026-04-02 00:30:55,801 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
+2026-04-02 00:38:10,880 [INFO] [FIX] applied=False | logging_improvement | Known transient issue
+2026-04-02 00:38:10,882 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
+2026-04-02 00:38:10,884 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
+2026-04-02 00:38:10,886 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
+2026-04-02 00:38:10,888 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
