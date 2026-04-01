@@ -691,15 +691,13 @@ STRATEGY RULES:
 
     def _preferred_fallback_chain(self) -> Optional[List[str]]:
         """
-        Prefer remote GPU Ollama → cloud APIs → local Ollama → rule-based.
-        The remote_gpu provider is the Cloudflare tunnel to the GPU machine.
+        Prefer local Ollama → remote tunnel (if registered) → cloud APIs → rule-based.
         """
         if not self._llm_router:
             return None
         providers = list(self._llm_router.providers.keys())
-        # Priority: remote_gpu (fast GPU) → gemini (cloud) → local (CPU ollama)
         preferred = []
-        for p in ['remote_gpu', 'gemini', 'local']:
+        for p in ['local', 'remote_gpu', 'gemini']:
             if p in providers:
                 preferred.append(p)
         # Add any remaining providers

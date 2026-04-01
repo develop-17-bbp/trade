@@ -35961,3 +35961,63 @@ OSError: [Errno 22] Invalid argument
 2026-04-02 05:10:37,559 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:10:37] "GET /api/summary HTTP/1.1" 200 -
 2026-04-02 05:10:56,464 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:10:56] "GET /api/summary HTTP/1.1" 200 -
 2026-04-02 05:11:55,994 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:11:55] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:12:56,816 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:12:56] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:13:56,253 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:13:56] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:14:56,888 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:14:56] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:15:56,877 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:15:56] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:16:25,267 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-04-02 05:16:25,267 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-04-02 05:16:25,764 [INFO] src.data.fetcher: [BYBIT] Time offset: 0ms
+2026-04-02 05:16:26,432 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:16:26] "GET / HTTP/1.1" 200 -
+2026-04-02 05:16:29,749 [INFO] src.ai.agentic_strategist: [LLM] Local Ollama from config: http://127.0.0.1:11434
+2026-04-02 05:16:29,749 [INFO] src.ai.llm_provider: Registered LLM provider: local (ollama/qwen2.5:3b)
+2026-04-02 05:16:29,749 [INFO] src.ai.agentic_strategist: [LLM] No cloud API keys found — using local Ollama → rule-based fallback
+2026-04-02 05:16:30,369 [INFO] src.monitoring.journal: Loaded 1187 trades from journal
+2026-04-02 05:16:30,377 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-02 05:16:30,377 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+2026-04-02 05:16:30,697 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:16:30] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:16:46,039 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:16:46] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:16:56,429 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:16:56] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:17:00,323 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:17:00] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:17:03,634 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 05:17:03,719 [INFO] src.risk.evt_risk: EVT fit: xi=-0.5000, sigma=0.0002, threshold=0.0006, exceedances=10
+2026-04-02 05:17:03,721 [INFO] src.models.hawkes_process: Hawkes fit: mu=0.0724, alpha=0.3000, beta=1.0000, branching=0.300
+2026-04-02 05:17:03,722 [INFO] src.models.fracdiff: FracDiff: min d=0.95 achieves stationarity (p=0.0139)
+2026-04-02 05:17:16,993 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:17:16] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:17:17,962 [INFO] src.data.polymarket_fetcher: [Polymarket] Found 15 crypto markets from 100 total events
+2026-04-02 05:17:17,966 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (-1) — applying 20% bonus
+2026-04-02 05:17:17,966 [INFO] src.agents.orchestrator: [DEBATE] BTC: Pre-debate: 0 LONG / 4 SHORT / 6 FLAT | Post-debate: 0 LONG / 5 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 05:17:17,966 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 0.39s: dir=-1 conf=0.600 scale=0.597 consensus=MODERATE data_quality=1.00 audit=EXECUTE
+2026-04-02 05:17:17,969 [INFO] src.monitoring.journal: Loaded 565 trades from journal
+2026-04-02 05:17:32,541 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:17:32] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:17:46,183 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:17:46] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:17:56,519 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:17:56] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:18:00,421 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:18:00] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:18:16,651 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:18:16] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:18:31,197 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:18:31] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:18:47,420 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:18:47] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:18:57,162 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:18:57] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:19:00,877 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:19:00] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:19:17,616 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:19:17] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:19:56,090 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:19:56] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:20:00,370 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:20:00] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:20:46,218 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-04-02 05:20:46,219 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-04-02 05:20:46,763 [INFO] src.data.fetcher: [BYBIT] Time offset: 0ms
+2026-04-02 05:20:47,370 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:20:47] "GET / HTTP/1.1" 200 -
+2026-04-02 05:20:50,989 [INFO] src.ai.agentic_strategist: [LLM] Local Ollama from config: http://127.0.0.1:11434
+2026-04-02 05:20:50,989 [INFO] src.ai.llm_provider: Registered LLM provider: local (ollama/qwen2.5:3b)
+2026-04-02 05:20:50,989 [INFO] src.ai.agentic_strategist: [LLM] No cloud API keys found — using local Ollama → rule-based fallback
+2026-04-02 05:20:51,404 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-02 05:20:51,404 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+2026-04-02 05:20:52,115 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:20:52] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:21:07,479 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:21:07] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:21:21,336 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:21:21] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:21:37,446 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:21:37] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:21:52,881 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:21:52] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:22:08,356 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:22:08] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:22:23,022 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:22:23] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:22:38,392 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:22:38] "GET /api/summary HTTP/1.1" 200 -
+2026-04-02 05:22:57,205 [INFO] werkzeug: 127.0.0.1 - - [02/Apr/2026 05:22:57] "GET /api/summary HTTP/1.1" 200 -

@@ -75,7 +75,7 @@ execution:
   exit_type: "market"
   bybit_hedge_mode: true
   # EMA crossover + entries use signal_timeframe; context_timeframe is extra (logs + optional filter).
-  signal_timeframe: "5m"
+  signal_timeframe: "1m"
   context_timeframe: "1m"
   # If true, skip LONG when 1m momentum is down / SHORT when 1m momentum is up (see executor logs).
   require_context_alignment: false

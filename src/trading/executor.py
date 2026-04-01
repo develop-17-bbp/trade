@@ -13,6 +13,7 @@ import logging
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any
+from urllib.parse import urlparse
 
 try:
     import anthropic
@@ -75,19 +76,34 @@ class TradingExecutor:
         risk = config.get('risk', {})
         self.daily_loss_limit_pct: float = risk.get('daily_loss_limit_pct', 3.0)
 
-        # AI / LLM settings
+        # AI / LLM settings — local Ollama first (OLLAMA_HOST / BASE), then tunnel (OLLAMA_REMOTE_URL)
         ai_cfg = config.get('ai', {})
-        self.ollama_base_url: str = (
-            os.environ.get('OLLAMA_REMOTE_URL', '').strip()
-            or os.environ.get('OLLAMA_HOST', '').strip()
+        _ollama_local = (
+            os.environ.get('OLLAMA_HOST', '').strip()
             or os.environ.get('OLLAMA_BASE_URL', '').strip()
-            or ai_cfg.get('ollama_base_url', 'http://127.0.0.1:11434')
-        ).rstrip('/')
-        self.ollama_model: str = (
-            os.environ.get('OLLAMA_REMOTE_MODEL', '').strip()
-            or os.environ.get('OLLAMA_MODEL', '').strip()
-            or ai_cfg.get('reasoning_model', 'mistral:latest')
         )
+        _ollama_remote = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
+        _ollama_cfg = (ai_cfg.get('ollama_base_url') or 'http://127.0.0.1:11434').strip()
+        if _ollama_local:
+            self.ollama_base_url = _ollama_local.rstrip('/')
+        elif _ollama_remote:
+            self.ollama_base_url = _ollama_remote.rstrip('/')
+        else:
+            self.ollama_base_url = _ollama_cfg.rstrip('/') or 'http://127.0.0.1:11434'
+
+        _h = (urlparse(self.ollama_base_url).hostname or '').lower()
+        _using_local_ollama = _h in ('127.0.0.1', 'localhost', '0.0.0.0', '')
+        if _using_local_ollama:
+            self.ollama_model = (
+                os.environ.get('OLLAMA_MODEL', '').strip()
+                or ai_cfg.get('reasoning_model', 'mistral:latest')
+            )
+        else:
+            self.ollama_model = (
+                os.environ.get('OLLAMA_REMOTE_MODEL', '').strip()
+                or os.environ.get('OLLAMA_MODEL', '').strip()
+                or ai_cfg.get('reasoning_model', 'mistral:latest')
+            )
         self.llm_conf_threshold: float = ai_cfg.get('llm_trade_conf_threshold', 0.40)
 
         # Claude API settings (used for Delta Exchange)
