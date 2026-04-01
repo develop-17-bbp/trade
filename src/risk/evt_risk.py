@@ -106,7 +106,7 @@ class EVTRisk:
         # Tail index: 1/ξ (higher = thinner tail)
         tail_index = 1.0 / self.xi if abs(self.xi) > 0.01 else float('inf')
 
-        logger.info(f"EVT fit: ξ={self.xi:.4f}, σ={self.sigma:.4f}, "
+        logger.info(f"EVT fit: xi={self.xi:.4f}, sigma={self.sigma:.4f}, "
                      f"threshold={self.threshold:.4f}, exceedances={n_exc}")
 
         return {

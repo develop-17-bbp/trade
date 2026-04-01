@@ -95,7 +95,7 @@ class AgenticStrategist:
     Features: Structured Output, Fact-Checking, and Bayesian Confidence Calibration.
     """
 
-    def __init__(self, provider: str = "local", model: str = "llama3.2:latest", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
+    def __init__(self, provider: str = "local", model: str = "mistral:latest", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
         self.use_local_on_failure = use_local_on_failure
         self.provider = provider
         self.model_name = model

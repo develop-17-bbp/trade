@@ -132,8 +132,8 @@ class HawkesProcess:
         self._fitted = True
         branching = self.alpha / self.beta
 
-        logger.info(f"Hawkes fit: μ={self.mu:.4f}, α={self.alpha:.4f}, "
-                     f"β={self.beta:.4f}, branching={branching:.3f}")
+        logger.info(f"Hawkes fit: mu={self.mu:.4f}, alpha={self.alpha:.4f}, "
+                     f"beta={self.beta:.4f}, branching={branching:.3f}")
 
         return {
             'mu': self.mu,
