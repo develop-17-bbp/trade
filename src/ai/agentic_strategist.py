@@ -131,30 +131,40 @@ class AgenticStrategist:
 
             router = LLMRouter()
 
-            # Step 0: If a remote Ollama URL is set in config, expose it as env var
-            # so the LLM router can auto-discover it
+            # Step 0: config ai.ollama_base_url — localhost must use OLLAMA_HOST / local provider,
+            # not OLLAMA_REMOTE_URL (otherwise add_from_env skips "local" and model override misses).
             _remote_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
             if not _remote_url:
-                # Try reading from config.yaml ai.ollama_base_url
                 try:
                     import yaml
+                    from urllib.parse import urlparse
+
                     _cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.yaml')
                     if os.path.exists(_cfg_path):
                         with open(_cfg_path) as _f:
                             _yaml_cfg = yaml.safe_load(_f)
-                        _remote_url = (_yaml_cfg or {}).get('ai', {}).get('ollama_base_url', '')
-                        if _remote_url:
-                            os.environ['OLLAMA_REMOTE_URL'] = _remote_url
-                            self.logger.info(f"[LLM] Remote Ollama GPU from config: {_remote_url}")
+                        _cfg_ollama = ((_yaml_cfg or {}).get('ai', {}) or {}).get('ollama_base_url', '') or ''
+                        if _cfg_ollama:
+                            _host = (urlparse(_cfg_ollama).hostname or '').lower()
+                            _base = _cfg_ollama.rstrip('/')
+                            if _host in ('127.0.0.1', 'localhost', '0.0.0.0'):
+                                os.environ.setdefault('OLLAMA_HOST', _base)
+                                self.logger.info(f"[LLM] Local Ollama from config: {_base}")
+                            else:
+                                os.environ['OLLAMA_REMOTE_URL'] = _base
+                                self.logger.info(f"[LLM] Remote Ollama from config: {_base}")
                 except Exception:
                     pass
 
             # Step 1: Auto-detect ALL available cloud API keys + local Ollama
             router.add_from_env()
 
-            # Step 2: Override local Ollama model with config value if set
-            if self.model_name and 'local' in router.providers:
-                router.providers['local'].config.model = self.model_name
+            # Step 2: Apply strategist model to whichever Ollama provider was registered
+            if self.model_name:
+                if 'local' in router.providers:
+                    router.providers['local'].config.model = self.model_name
+                if 'remote_gpu' in router.providers:
+                    router.providers['remote_gpu'].config.model = self.model_name
 
             # Step 3: If user explicitly configured a provider, ensure it's primary
             if self.provider not in ('local', 'auto') and self.api_key:

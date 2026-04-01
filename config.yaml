@@ -1,13 +1,12 @@
 # ── General Settings ──
-mode: testnet                  # execution mode: 'paper', 'testnet', or 'live'
+# paper/testnet: non-live execution. With BYBIT_DEMO=true + Bybit only, orders go to Bybit demo API (not Bybit testnet).
+mode: paper
 poll_interval: 10             # check every 10s, analyze 5m candles, trade on crossovers
 
 # ── Exchange Configuration ──
-# Both exchanges run independently with same strategy
+# Bybit demo: .env BYBIT_DEMO=true, BYBIT_API_KEY / BYBIT_API_SECRET (demo keys from Bybit → Demo Trading).
 exchanges:
   - name: bybit
-    assets: [BTC, ETH]
-  - name: delta
     assets: [BTC, ETH]
 
 # Primary exchange (for backward compatibility)
@@ -36,13 +35,12 @@ risk:
   atr_tp_mult: 4.5
 
 # ── AI / LLM ──
-# Bybit uses Ollama (mistral 7B), Delta uses Claude API (haiku)
-# llm_provider: 'auto' = Delta→Claude, Bybit→Ollama | 'claude' | 'ollama'
+# Local Ollama: same host/model as `ollama serve` + `ollama run qwen2.5:3b` (see also OLLAMA_HOST / OLLAMA_MODEL in .env)
 ai:
   reasoning_provider: "auto"
-  reasoning_model: "mistral:latest"
-  ollama_base_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
-  llm_provider: "auto"            # auto: Delta=Claude, Bybit=Ollama
+  reasoning_model: "qwen2.5:3b"
+  ollama_base_url: "http://127.0.0.1:11434"
+  llm_provider: "ollama"
   claude_model: "claude-haiku-4-5" # Cost-effective for trade decisions (~$0.001/call)
   use_llm_trade_decider: true
   llm_trade_decider_mode: "primary"
@@ -58,13 +56,11 @@ ai:
   edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
   orchestrator_enabled: true      # 10 math agents + adversarial debate → feeds LLM
 
-# ── Auto-Healer Monitor (GPU LLM) ──
-# Trading uses Mistral 7B (smarter, reads agent data)
-# Monitoring uses llama3.2 (faster, sufficient for error detection)
+# ── Auto-Healer Monitor ──
 monitor:
   enabled: true
-  ollama_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
-  ollama_model: "llama3.2:latest"
+  ollama_url: "http://127.0.0.1:11434"
+  ollama_model: "qwen2.5:3b"
   scan_interval: 60               # Check logs every 60s
   auto_fix: true                  # Apply safe fixes (null guards, type casts, defaults)
   max_fixes_per_hour: 5           # Rate limit auto-fixes
@@ -73,6 +69,8 @@ monitor:
 max_hold_minutes: 360             # Close stale/losing positions after 6 hours
 
 # ── Order Execution ──
+# Bybit USDT linear futures: long = buy, short = sell (same contract). One-way mode: default.
+# If your Bybit account uses hedge (dual-side) mode, set env BYBIT_HEDGE_MODE=1 so orders send positionIdx 1/2.
 execution:
   entry_type: "market"
   exit_type: "market"

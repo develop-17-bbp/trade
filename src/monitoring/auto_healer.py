@@ -215,15 +215,18 @@ class AutoHealer:
         self.ollama_url = (
             monitor_cfg.get('ollama_url', '')
             or os.environ.get('MONITOR_OLLAMA_URL', '')
-            or os.environ.get('OLLAMA_REMOTE_URL', '')
-            or ai_cfg.get('ollama_base_url', 'http://localhost:11434')
+            or os.environ.get('OLLAMA_REMOTE_URL', '').strip()
+            or os.environ.get('OLLAMA_HOST', '').strip()
+            or os.environ.get('OLLAMA_BASE_URL', '').strip()
+            or ai_cfg.get('ollama_base_url', 'http://127.0.0.1:11434')
         ).rstrip('/')
 
         self.ollama_model = (
             monitor_cfg.get('ollama_model', '')
             or os.environ.get('MONITOR_OLLAMA_MODEL', '')
-            or os.environ.get('OLLAMA_REMOTE_MODEL', '')
-            or ai_cfg.get('reasoning_model', 'llama3.2:latest')
+            or os.environ.get('OLLAMA_REMOTE_MODEL', '').strip()
+            or os.environ.get('OLLAMA_MODEL', '').strip()
+            or ai_cfg.get('reasoning_model', 'qwen2.5:3b')
         )
 
         self.scan_interval = monitor_cfg.get('scan_interval', 60)

@@ -73,11 +73,14 @@ class TradingExecutor:
         # AI / LLM settings
         ai_cfg = config.get('ai', {})
         self.ollama_base_url: str = (
-            os.environ.get('OLLAMA_REMOTE_URL', '')
-            or ai_cfg.get('ollama_base_url', 'http://localhost:11434')
+            os.environ.get('OLLAMA_REMOTE_URL', '').strip()
+            or os.environ.get('OLLAMA_HOST', '').strip()
+            or os.environ.get('OLLAMA_BASE_URL', '').strip()
+            or ai_cfg.get('ollama_base_url', 'http://127.0.0.1:11434')
         ).rstrip('/')
         self.ollama_model: str = (
-            os.environ.get('OLLAMA_REMOTE_MODEL', '')
+            os.environ.get('OLLAMA_REMOTE_MODEL', '').strip()
+            or os.environ.get('OLLAMA_MODEL', '').strip()
             or ai_cfg.get('reasoning_model', 'mistral:latest')
         )
         self.llm_conf_threshold: float = ai_cfg.get('llm_trade_conf_threshold', 0.40)
@@ -118,13 +121,12 @@ class TradingExecutor:
         testnet = config.get('mode', 'testnet') in ('testnet', 'paper')
         self.price_source = PriceFetcher(exchange_name=exchange_name, testnet=testnet)
 
-        # LLM strategist (used as fallback / for deeper analysis)
+        # LLM strategist — same model/endpoint as trade-time Ollama (env + config)
         provider = ai_cfg.get('reasoning_provider', 'auto')
-        model = ai_cfg.get('reasoning_model', 'mistral:latest')
         use_local = ai_cfg.get('use_local_on_failure', False)
         self.strategist = AgenticStrategist(
             provider=provider,
-            model=model,
+            model=self.ollama_model,
             use_local_on_failure=use_local,
         )
 
@@ -2475,7 +2477,7 @@ class TradingExecutor:
             text = message.content[0].text.strip()
             return self._extract_json(text)
         except Exception as e:
-            logger.warning(f"Claude query failed: {e} -- falling back to Ollama mistral")
+            logger.warning(f"Claude query failed: {e} -- falling back to Ollama ({self.ollama_model})")
             print(f"  [AI] Claude failed ({type(e).__name__}): {str(e)[:80]} -- using Ollama fallback")
             return self._query_llm(prompt)
 
@@ -2571,6 +2573,9 @@ class TradingExecutor:
 
         prompt = f"""You are a COMPLETE trading decision system for {asset} on {self._exchange_name.upper()}.
 You must play ALL 7 roles below and produce ONE final decision in a SINGLE JSON response.
+
+=== INSTRUMENT: USDT PERPETUAL FUTURES (LONG + SHORT) ===
+Both directions are valid: CALL/LONG (buy) and PUT/SHORT (sell) must be evaluated with equal rigor — do not default to long-only bias when the setup is bearish.
 
 === OUR STRATEGY: EMA(8) CROSSOVER + TRAILING STOP-LOSS (L1→Ln) ===
 This is a CALL/PUT strategy based on EMA(8) crossovers with a multi-level trailing SL system:

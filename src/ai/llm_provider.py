@@ -454,10 +454,12 @@ class LLMRouter:
             local_base_url = (
                 os.environ.get('LLM_BASE_URL', '').strip()
                 or os.environ.get('OLLAMA_BASE_URL', '').strip()
+                or os.environ.get('OLLAMA_HOST', '').strip()
             )
+            _local_model = os.environ.get('OLLAMA_MODEL', '').strip() or 'mistral:latest'
             self.add_provider('local', LLMConfig(
                 provider='ollama',
-                model='mistral:latest',
+                model=_local_model,
                 base_url=local_base_url,
             ))
 

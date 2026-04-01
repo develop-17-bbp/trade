@@ -1,0 +1,6 @@
+# Optional LLM client libraries (API-based providers).
+# The trading stack runs without these: ML + rules + orchestrator still work;
+# add_from_env() skips registration when an SDK is missing.
+# Install: pip install -r requirements-llm-sdks.txt
+openai>=1.0.0
+anthropic>=0.18.0
