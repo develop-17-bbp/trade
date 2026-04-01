@@ -346,11 +346,36 @@ def _env_bool(val: Optional[str]) -> bool:
     return str(val).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
-def _bybit_linear_position_idx(side: str, hedge_mode: bool) -> int:
-    """Bybit V5 USDT linear: one-way = 0; hedge = 1 (buy/long leg) / 2 (sell/short leg)."""
-    if not hedge_mode:
-        return 0
+def _bybit_linear_position_idx_open(side: str) -> int:
+    """Hedge open: buy (long) → 1, sell (short) → 2."""
     return 1 if side == 'buy' else 2
+
+
+def _bybit_linear_position_idx_reduce(side: str) -> int:
+    """Hedge reduce-only: sell closes long → 1, buy closes short → 2."""
+    return 1 if side == 'sell' else 2
+
+
+_BYBIT_HEDGE_CFG_CACHE: Optional[bool] = None
+
+
+def bybit_hedge_mode_enabled() -> bool:
+    """True if Bybit orders must send positionIdx (hedge / dual-side account)."""
+    global _BYBIT_HEDGE_CFG_CACHE
+    if _env_bool(os.environ.get('BYBIT_HEDGE_MODE')):
+        return True
+    if _BYBIT_HEDGE_CFG_CACHE is not None:
+        return _BYBIT_HEDGE_CFG_CACHE
+    try:
+        import yaml
+        cfg_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+        with open(cfg_path, 'r', encoding='utf-8') as f:
+            cfg = yaml.safe_load(f) or {}
+        ex = cfg.get('execution') or {}
+        _BYBIT_HEDGE_CFG_CACHE = bool(ex.get('bybit_hedge_mode', False))
+    except Exception:
+        _BYBIT_HEDGE_CFG_CACHE = False
+    return _BYBIT_HEDGE_CFG_CACHE
 
 
 class BybitClient:
@@ -424,6 +449,8 @@ class BybitClient:
                 env_label = 'TESTNET' if use_sandbox else 'LIVE'
             logger.info(f"[BYBIT] Connected to {env_label}")
             logger.info(f"[BYBIT] USDT: {usdt:,.2f} | BTC: {btc:,.6f}")
+            if bybit_hedge_mode_enabled():
+                logger.info("[BYBIT] Hedge mode ON — positionIdx set on all orders (execution.bybit_hedge_mode or BYBIT_HEDGE_MODE)")
             self.available = True
         except Exception as e:
             logger.warning(f"[BYBIT] Connection failed: {e}")
@@ -529,9 +556,13 @@ class BybitClient:
             params = {}
             if reduce_only:
                 params['reduceOnly'] = True
-            # Hedge-mode accounts must send positionIdx (1=buy leg, 2=sell leg). One-way: omit — let CCXT/Bybit default.
-            if side in ('buy', 'sell') and _env_bool(os.environ.get('BYBIT_HEDGE_MODE')):
-                params['positionIdx'] = _bybit_linear_position_idx(side, True)
+            # Hedge: open long=buy→1, short=sell→2; reduce sell closes long→1, buy closes short→2
+            if side in ('buy', 'sell') and bybit_hedge_mode_enabled():
+                params['positionIdx'] = (
+                    _bybit_linear_position_idx_reduce(side)
+                    if reduce_only
+                    else _bybit_linear_position_idx_open(side)
+                )
 
             if order_type == 'limit' and limit_price:
                 order = self.exchange.create_order(bybit_sym, 'limit', side, qty, limit_price, params)
@@ -577,11 +608,16 @@ class BybitClient:
             return {'status': 'error'}
         try:
             positions = self.exchange.fetch_positions()
+            hedge = bybit_hedge_mode_enabled()
             for p in positions:
                 contracts = float(p.get('contracts', 0) or 0)
                 if contracts > 0:
-                    close_side = 'sell' if p.get('side') == 'long' else 'buy'
-                    self.exchange.create_order(p['symbol'], 'market', close_side, contracts, None, {'reduceOnly': True})
+                    pos_side = p.get('side', 'long')
+                    close_side = 'sell' if pos_side == 'long' else 'buy'
+                    params: Dict = {'reduceOnly': True}
+                    if hedge:
+                        params['positionIdx'] = 1 if pos_side == 'long' else 2
+                    self.exchange.create_order(p['symbol'], 'market', close_side, contracts, None, params)
             return {'status': 'success', 'closed': True}
         except Exception as e:
             return {'status': 'error', 'message': str(e)}

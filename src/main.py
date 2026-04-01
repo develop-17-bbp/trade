@@ -106,5 +106,39 @@ def main():
         executor.run()
 
 
+def _open_dashboard_browser(delay_sec: float = 1.0) -> None:
+    import threading
+    import time
+    import webbrowser
+
+    def _go():
+        time.sleep(delay_sec)
+        webbrowser.open('http://127.0.0.1:5000/')
+
+    threading.Thread(target=_go, daemon=True).start()
+
+
 if __name__ == '__main__':
-    main()
+    argv = sys.argv[1:]
+    dash_only = '--broker-dashboard' in argv
+    dash_with_bot = '--dashboard' in argv
+
+    if dash_only or dash_with_bot:
+        from src.broker_dashboard.app import run_app
+        import threading
+
+        _open_dashboard_browser(1.0 if dash_with_bot else 0.6)
+
+        if dash_with_bot:
+            def _serve():
+                run_app(host='127.0.0.1', port=5000)
+
+            threading.Thread(target=_serve, daemon=True).start()
+            print('  Trade Desk: http://127.0.0.1:5000 (opening in browser)')
+            print('  Trading engine starting in parallel…')
+            main()
+        else:
+            print('  Trade Desk: http://127.0.0.1:5000 (opening in browser)')
+            run_app(host='127.0.0.1', port=5000)
+    else:
+        main()

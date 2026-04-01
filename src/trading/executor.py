@@ -66,6 +66,11 @@ class TradingExecutor:
         self.ema_period: int = adaptive.get('ema_period', 8)
         self.struct_window: int = adaptive.get('struct_window', 5)
 
+        _exec = config.get('execution', {})
+        self.signal_timeframe: str = (_exec.get('signal_timeframe') or '5m').strip()
+        self.context_timeframe: str = (_exec.get('context_timeframe') or '1m').strip()
+        self.require_context_alignment: bool = bool(_exec.get('require_context_alignment', False))
+
         # Risk settings
         risk = config.get('risk', {})
         self.daily_loss_limit_pct: float = risk.get('daily_loss_limit_pct', 3.0)
@@ -152,10 +157,10 @@ class TradingExecutor:
         except Exception:
             pass
 
-        # State
+        # State — equity/cash filled only from broker (see _sync_balance_from_broker)
         self.positions: Dict[str, Dict[str, Any]] = {}
-        self.equity: float = self.initial_capital
-        self.cash: float = self.initial_capital
+        self.equity: float = 0.0
+        self.cash: float = 0.0
         self.bar_count: int = 0
         self.last_trade_time: Dict[str, float] = {}
         self.last_close_time: Dict[str, float] = {}
@@ -174,7 +179,8 @@ class TradingExecutor:
         # Halt ALL trading if cumulative realized losses exceed threshold
         self.max_drawdown_pct: float = risk.get('max_drawdown_pct', 10.0)
         self.daily_loss_limit_pct: float = risk.get('daily_loss_limit_pct', 3.0)
-        self.session_start_equity: float = self.initial_capital
+        self.session_start_equity: float = 0.0
+        self._session_baseline_written: bool = False
         self.session_realized_pnl: float = 0.0
         self.daily_realized_pnl: float = 0.0
         self.daily_reset_date: str = datetime.utcnow().strftime('%Y-%m-%d')
@@ -229,6 +235,45 @@ class TradingExecutor:
                 print(f"  [MEMORY] Trade memory vault loaded (semantic search)")
             except Exception as e:
                 logger.warning(f"Memory vault init failed (needs sentence-transformers): {e}")
+
+        self._sync_balance_from_broker()
+        if self.equity <= 0 and not self._exchange_client:
+            print(f"  [BROKER] No exchange client — equity unset until Bybit/Delta connects (not using config initial_capital)")
+
+    def _broker_session_file(self) -> str:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(root, "logs", "broker_session.json")
+
+    def _persist_broker_session_baseline(self, equity: float) -> None:
+        path = self._broker_session_file()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "session_start_equity": equity,
+                    "exchange": self._exchange_name,
+                    "updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }, f, indent=2)
+        except Exception as e:
+            logger.debug(f"Session baseline write failed: {e}")
+
+    def _sync_balance_from_broker(self) -> None:
+        """Set equity and cash only from exchange get_account() — no config NAV fallback."""
+        try:
+            client = self._exchange_client
+            if not client:
+                return
+            acct = client.get_account()
+            if not acct or acct.get("error"):
+                return
+            self.equity = float(acct.get("equity", 0) or 0)
+            self.cash = float(acct.get("cash", 0) or 0)
+            if not self._session_baseline_written:
+                self.session_start_equity = self.equity
+                self._persist_broker_session_baseline(self.equity)
+                self._session_baseline_written = True
+        except Exception as e:
+            logger.debug(f"Broker balance sync failed: {e}")
 
     # ------------------------------------------------------------------
     # Agent Orchestrator — run 10 math agents + debate, format for LLM
@@ -911,25 +956,22 @@ class TradingExecutor:
                 loop_start = time.time()
                 self.bar_count += 1
 
-                # Fetch REAL account equity (wallet balance + unrealized PnL)
-                # Previously used wallet balance which hid -$31K in open losses
+                self._sync_balance_from_broker()
                 unrealized_pnl = 0.0
                 wallet_balance = 0.0
                 try:
                     if self._exchange_client:
-                        acct = self._exchange_client.get_account()
-                        total_equity = float(acct.get('equity', 0) or 0)
-                        available = float(acct.get('cash', 0) or 0)
+                        acct = self._exchange_client.get_account() or {}
                         unrealized_pnl = float(acct.get('unrealized_pnl', 0) or 0)
                         wallet_balance = float(acct.get('wallet_balance', 0) or 0)
-                        if total_equity > 0:
-                            self.equity = total_equity
-                        if available > 0:
-                            self.cash = available
                 except Exception:
                     pass
 
-                ret_pct = ((self.equity - self.initial_capital) / self.initial_capital) * 100.0
+                base = self.session_start_equity
+                if base and base > 0:
+                    ret_pct = ((self.equity - base) / base) * 100.0
+                else:
+                    ret_pct = 0.0
                 n_pos = len(self.positions)
                 total_vetoed = sum(s['vetoed'] for s in self.bear_veto_stats.values())
                 total_reduced = sum(s['reduced'] for s in self.bear_veto_stats.values())
@@ -996,15 +1038,19 @@ class TradingExecutor:
         symbol = self._get_symbol(asset)
 
         # ══════════════════════════════════════════════════════════════
-        # 5m CANDLES ONLY — analyze 5m, trade 5m, check every 10s
+        # Signal TF (default 5m): EMA crossover + entries + candle dedup
+        # Context TF (default 1m): shorter-TF momentum / EMA for logs; optional entry filter
+        # poll_interval: how often we wake and refetch (not the chart timeframe)
         # ══════════════════════════════════════════════════════════════
 
         try:
-            raw_5m = self.price_source.fetch_ohlcv(symbol, timeframe='5m', limit=100)
+            raw_sig = self.price_source.fetch_ohlcv(
+                symbol, timeframe=self.signal_timeframe, limit=100
+            )
         except Exception as e:
             print(f"  [{self._ex_tag}:{asset}] OHLCV fetch failed: {e}")
             return
-        ohlcv = PriceFetcher.extract_ohlcv(raw_5m)
+        ohlcv = PriceFetcher.extract_ohlcv(raw_sig)
 
         closes = ohlcv['closes']
         highs = ohlcv['highs']
@@ -1013,7 +1059,10 @@ class TradingExecutor:
         volumes = ohlcv['volumes']
 
         if len(closes) < 20:
-            print(f"  [{self._ex_tag}:{asset}] Not enough 5m data ({len(closes)} candles)")
+            print(
+                f"  [{self._ex_tag}:{asset}] Not enough {self.signal_timeframe} data "
+                f"({len(closes)} candles)"
+            )
             return
 
         # ══════════════════════════════════════════════════════════════
@@ -1033,7 +1082,7 @@ class TradingExecutor:
         price = closes[-2]  # Last confirmed close (signal reference)
         tick_price = live_price  # Real-time price (execution/SL)
 
-        # Compute EMA(8) and ATR(14) on 5m candles (including current for freshness)
+        # Compute EMA(8) and ATR(14) on signal-timeframe candles (incl. forming bar for freshness)
         ema_vals = ema(closes, self.ema_period)
         atr_vals = atr(highs, lows, closes, 14)
 
@@ -1043,6 +1092,30 @@ class TradingExecutor:
         current_atr = atr_vals[-1] if atr_vals else 0
         ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
 
+        # Shorter timeframe context (default 1m): momentum + micro EMA — does not replace 5m signal
+        ctx_suffix = ""
+        self._ctx_gate = {'blocks_long': False, 'blocks_short': False}
+        _ctx = self.context_timeframe
+        if _ctx and _ctx != self.signal_timeframe:
+            try:
+                raw_ctx = self.price_source.fetch_ohlcv(symbol, timeframe=_ctx, limit=150)
+                cx = PriceFetcher.extract_ohlcv(raw_ctx)
+                cc = cx['closes']
+                if len(cc) >= 5:
+                    c1, c2, c3 = cc[-2], cc[-3], cc[-4]
+                    micro_down = c1 < c2 and c1 < c3
+                    micro_up = c1 > c2 and c1 > c3
+                    mom = "↓" if micro_down else ("↑" if micro_up else "~")
+                    ema_c = ema(cc, self.ema_period)
+                    e2 = ema_c[-2] if len(ema_c) >= 2 else cc[-2]
+                    e3 = ema_c[-3] if len(ema_c) >= 3 else e2
+                    micro_ema = "R" if e2 > e3 else "F"
+                    ctx_suffix = f" | {_ctx}: mom={mom} EMA={micro_ema}"
+                    self._ctx_gate['blocks_long'] = micro_down
+                    self._ctx_gate['blocks_short'] = micro_up
+            except Exception:
+                ctx_suffix = f" | {_ctx}: n/a"
+
         # Fetch L2 order book for support/resistance walls
         try:
             order_book = self.price_source.fetch_order_book(symbol, limit=25)
@@ -1050,7 +1123,7 @@ class TradingExecutor:
         except Exception:
             ob_levels = {'bid_wall': 0, 'ask_wall': 0, 'bid_walls': [], 'ask_walls': [], 'imbalance': 0, 'bid_depth_usd': 0, 'ask_depth_usd': 0}
 
-        # ── Signal from 5m EMA crossover (CONFIRMED candles only) ──
+        # ── Signal from signal_timeframe EMA crossover (CONFIRMED candles only) ──
         signal = "NEUTRAL"
 
         # Check if EMA crossed through recent CONFIRMED candles (skip last incomplete)
@@ -1109,7 +1182,11 @@ class TradingExecutor:
         if ob_ask > 0:
             ob_info += f" res=${ob_ask:,.2f}"
         ob_info += "]"
-        print(f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} (sig=${price:,.2f}) | EMA(5m): ${current_ema:.2f} {ema_direction} | Signal: {signal} | ATR: ${current_atr:.2f} | {ob_info}")
+        print(
+            f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} (sig=${price:,.2f}) | "
+            f"EMA({self.signal_timeframe}): ${current_ema:.2f} {ema_direction} | "
+            f"Signal: {signal} | ATR: ${current_atr:.2f} | {ob_info}{ctx_suffix}"
+        )
 
         # ── Stale position check: if internal state says position but exchange is clean ──
         if asset in self.positions and asset not in self.failed_close_assets:
@@ -1380,16 +1457,26 @@ class TradingExecutor:
         except Exception as e:
             logger.debug(f"Exchange position check failed: {e}")
 
-        # CANDLE DEDUP: Only enter once per confirmed 5m candle
-        # Prevents re-entering the same signal 6 times (10s poll x 5m candle)
+        # CANDLE DEDUP: only one entry attempt per confirmed signal-timeframe candle
         timestamps = ohlcv.get('timestamps', [])
         if len(timestamps) >= 2:
             confirmed_candle_ts = timestamps[-2]  # Last confirmed candle
             if asset in self.last_signal_candle and self.last_signal_candle[asset] == confirmed_candle_ts:
-                # Same candle — but print so user knows why no entry
-                print(f"  [{self._ex_tag}:{asset}] DEDUP: waiting for next 5m candle")
+                print(
+                    f"  [{self._ex_tag}:{asset}] DEDUP: waiting for next "
+                    f"{self.signal_timeframe} candle"
+                )
                 return
             self.last_signal_candle[asset] = confirmed_candle_ts
+
+        if self.require_context_alignment:
+            g = getattr(self, '_ctx_gate', None) or {}
+            if signal == "BUY" and g.get('blocks_long'):
+                print(f"  [{self._ex_tag}:{asset}] SKIP: {self.context_timeframe} momentum vs LONG")
+                return
+            if signal == "SELL" and g.get('blocks_short'):
+                print(f"  [{self._ex_tag}:{asset}] SKIP: {self.context_timeframe} momentum vs SHORT")
+                return
 
         # Minimum 30s between trades to prevent same-second churning
         now = time.time()
@@ -2618,7 +2705,7 @@ Price: ${price:,.2f} | EMA(8): ${current_ema:.2f} ({ema_direction}) | EMA-price 
 ATR: ${current_atr:.2f} | Slope: {ema_slope_pct:+.3f}%/bar | Trend bars: {consecutive_trend}
 Support: ${support:.2f} | Resistance: ${resistance:.2f} | Volume: {vol_trend}
 
-Last {n_candles} candles (5m):
+Last {n_candles} candles ({self.signal_timeframe}):
 {candle_block}
 
 === 13 MATH AGENT OUTPUTS ===
@@ -2792,7 +2879,7 @@ Distance from EMA: {separation_pct:.2f}%
 Volume trend: {vol_trend}
 {wick_warning}
 
-LAST {n_candles} CANDLES (5m):
+LAST {n_candles} CANDLES ({self.signal_timeframe}):
 {candle_data}
 
 SCORE EACH RISK 0-2 POINTS:
