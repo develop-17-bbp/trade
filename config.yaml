@@ -26,6 +26,7 @@ adaptive:
   ema_crossover_primary: true
   ema_period: 8                                # EMA period (matches chart)
   struct_window: 5                             # Structure points for SL (L1->L4)
+  min_entry_score: 4                           # Hard gate: block trades below this score before LLM call
 
 # ── Risk (minimal — daily loss limit only) ──
 risk:
@@ -59,13 +60,13 @@ ai:
   orchestrator_enabled: true      # 10 math agents + adversarial debate → feeds LLM
 
 # ── Auto-Healer Monitor (GPU LLM) ──
-# Trading uses Mistral 7B (smarter, reads agent data)
-# Monitoring uses llama3.2 (faster, sufficient for error detection)
+# SAME model as trading (mistral) to avoid GPU model-swap thrashing
+# Ollama can only hold 1 model in VRAM — switching causes 5-10s delays + failures
 monitor:
   enabled: true
   ollama_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
-  ollama_model: "llama3.2:latest"
-  scan_interval: 60               # Check logs every 60s
+  ollama_model: "mistral:latest"
+  scan_interval: 120              # Check logs every 2min (less frequent = less contention)
   auto_fix: true                  # Apply safe fixes (null guards, type casts, defaults)
   max_fixes_per_hour: 5           # Rate limit auto-fixes
 

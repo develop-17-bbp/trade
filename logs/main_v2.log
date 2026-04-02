@@ -1,0 +1,293 @@
+  [ENV] Loaded C:\Users\convo\trade\.env
+============================================================
+  MULTI-EXCHANGE MODE
+  Exchanges: ['bybit', 'delta']
+============================================================
+2026-04-02 21:47:12,749 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+  Started BYBIT executor: ['BTC', 'ETH']
+  [AI] WARNING: Claude requested but ANTHROPIC_API_KEY not set -- falling back to Ollama  Started DELTA executor: ['BTC', 'ETH']
+
+2026-04-02 21:47:12,750 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-04-02 21:47:14,376 [INFO] src.data.fetcher: [BYBIT] Time offset: 0ms
+2026-04-02 21:47:16,293 [INFO] src.data.fetcher: [DELTA] Connected to TESTNET
+2026-04-02 21:47:16,298 [INFO] src.data.fetcher: [DELTA] USD: 159.04
+  [DELTA] TESTNET trading connected
+  [DELTA] Equity: $159.04 | Cash: $71.55
+  [DATA] Delta CCXT initialized for OHLCV data
+2026-04-02 21:47:16,560 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-02 21:47:16,560 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-02 21:47:16,560 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+  [DELTA:BTC] Leverage set to 1x on delta
+  [DELTA:ETH] Leverage set to 1x on delta
+2026-04-02 21:47:17,155 [INFO] src.monitoring.journal: Loaded 1199 trades from journal
+  [DELTA:BTC] EDGE: 16W/62L rate=21% exp=-2.12 mult=0.58x
+  [DELTA:ETH] EDGE: 46W/76L rate=38% exp=+0.01 mult=1.00x
+2026-04-02 21:47:17,161 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-02 21:47:17,162 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+  [AGENTS] Orchestrator + Debate Engine loaded (13 agents)
+  [DATA] On-chain fetcher loaded (BTC hashrate, mempool, DeFi TVL)
+  [MEMORY] Trade memory vault loaded (semantic search)
+============================================================
+  EMA(8) Crossover + LLM | DELTA Futures
+  Assets: ['BTC', 'ETH'] | Poll: 10s
+  LLM: mistral @ https://spas-inclusive-breaking-frontier.trycloudflare.com
+  Bear Veto: ACTIVE (veto>=7 reduce>=5)
+============================================================
+
+[DELTA BAR 1] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 0
+  [DELTA:BTC] ORPHAN DETECTED: buy 1.0 @ $66,874.30 — CLOSING
+2026-04-02 21:47:18,727 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-04-02 21:47:18,728 [INFO] src.data.fetcher: [BYBIT] USDT: 30,264.77 | BTC: 0.000000
+  [BYBIT] TESTNET trading connected
+  [BYBIT] Equity: $30,256.81 | USDT: $29,286.21
+  [DATA] Bybit CCXT initialized for OHLCV data
+2026-04-02 21:47:19,022 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-02 21:47:19,022 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-02 21:47:19,022 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-04-02 21:47:19,285 [INFO] src.monitoring.journal: Loaded 1199 trades from journal
+  [BYBIT:BTC] EDGE: 16W/62L rate=21% exp=-2.12 mult=0.58x
+  [BYBIT:ETH] EDGE: 46W/76L rate=38% exp=+0.01 mult=1.00x
+2026-04-02 21:47:19,286 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-02 21:47:19,287 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+  [AGENTS] Orchestrator + Debate Engine loaded (13 agents)
+  [DATA] On-chain fetcher loaded (BTC hashrate, mempool, DeFi TVL)
+  [MEMORY] Trade memory vault loaded (semantic search)
+============================================================
+  EMA(8) Crossover + LLM | BYBIT Futures
+  Assets: ['BTC', 'ETH'] | Poll: 10s
+  LLM: mistral @ https://spas-inclusive-breaking-frontier.trycloudflare.com
+  Bear Veto: ACTIVE (veto>=7 reduce>=5)
+============================================================
+
+[BYBIT BAR 1] Equity: $30,256.81 | Cash: $29,286.21 | Return: -69.74% | Positions: 0
+  [DELTA:BTC] ORPHAN PHANTOM: position already gone (liquidated?) — suppressing
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+  [DELTA:BTC] $66,871.10 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.26 sup=$66,869.10 res=$66,873.00]
+  [DELTA:BTC] WARNINGS (LLM decides): WEAK entry score 1/10 (trend_2bars)
+  [DELTA:BTC] SYNCED buy position (1.0) $67 | SL=$67,068.39
+  [DELTA:ETH] $2,055.45 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.11 sup=$2,044.25 res=$2,074.60]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+2026-04-02 21:47:25,685 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 21:47:25,900 [INFO] src.risk.evt_risk: EVT fit: xi=-0.0778, sigma=0.0011, threshold=0.0021, exceedances=10
+2026-04-02 21:47:25,904 [INFO] src.models.fracdiff: FracDiff: min d=0.95 achieves stationarity (p=0.0001)
+
+[BYBIT BAR 2] Equity: $30,259.81 | Cash: $29,289.11 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[BYBIT BAR 3] Equity: $30,259.81 | Cash: $29,289.11 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+2026-04-02 21:47:41,768 [WARNING] src.data.base_fetcher: API call failed https://gamma-api.polymarket.com/events: HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /events?active=true&closed=false&limit=100 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000001F36DC00A50>: Failed to establish a new connection: [Errno 11001] getaddrinfo failed'))
+2026-04-02 21:47:41,769 [WARNING] src.data.polymarket_fetcher: [Polymarket] No events returned or unexpected format
+2026-04-02 21:47:41,770 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (-1) — applying 20% bonus
+2026-04-02 21:47:41,770 [INFO] src.agents.orchestrator: [DEBATE] ETH: Pre-debate: 0 LONG / 4 SHORT / 6 FLAT | Post-debate: 0 LONG / 5 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 21:47:41,771 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 11.05s: dir=-1 conf=0.682 scale=0.620 consensus=STRONG data_quality=1.00 audit=EXECUTE
+  [DELTA:ETH] AGENTS RAW: PUT MODERATE (net=-0.30) | 11 agents | avg_conf=0.40
+2026-04-02 21:47:41,778 [INFO] src.monitoring.journal: Loaded 627 trades from journal
+  [DELTA:ETH] UNIFIED LLM (1 call, 7 roles):
+    AGENTS: quality=3/10 conflicts=[]
+    BULL: The trend is weak with only one trend bar and a falling EMA.
+    BEAR: risk=4/10 | The entry score is low (3/10) indicating a mild slope and we
+    L-LEVEL PREDICTION: L1 | REJECT conf=0.25 size=1%
+    FACILITATOR: SKIP
+  [DELTA:ETH] REJECTED: quality=3/10 risk=4/10 pred=L1 | SKIP
+  [DELTA SLEEP] 1s
+
+[DELTA BAR 2] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,845.70 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,851.50 res=$66,855.40]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,845.70 | L1 SL=$67,068.39 | P&L: +0.04% |  | OB=-0.25
+  [DELTA:ETH] $2,054.75 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=-0.20 sup=$2,041.50 res=$2,067.90]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 4] Equity: $30,259.69 | Cash: $29,288.99 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 3] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,867.70 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,870.40 res=$66,874.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,867.70 | L1 SL=$67,068.39 | P&L: +0.01% |  | OB=-0.25
+  [DELTA:ETH] $2,054.60 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=-0.20 sup=$2,042.15 res=$2,068.55]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 5] Equity: $30,259.02 | Cash: $29,288.35 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 4] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,867.60 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,886.00 res=$66,889.90]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,867.60 | L1 SL=$67,068.39 | P&L: +0.01% |  | OB=-0.25
+  [DELTA:ETH] $2,056.05 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=-0.20 sup=$2,042.75 res=$2,069.25]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 6] Equity: $30,259.08 | Cash: $29,288.41 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 5] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,911.10 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,910.90 res=$66,914.80]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,911.10 | L1 SL=$67,068.39 | P&L: -0.06% |  | OB=-0.25
+  [DELTA:ETH] $2,056.05 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.13 sup=$2,044.40 res=$2,066.90]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 7] Equity: $30,261.75 | Cash: $29,290.99 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 6] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,912.30 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,924.10 res=$66,928.00]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,912.30 | L1 SL=$67,068.39 | P&L: -0.06% |  | OB=-0.25
+  [DELTA:ETH] $2,056.05 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.12 sup=$2,044.40 res=$2,066.90]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 8] Equity: $30,260.32 | Cash: $29,289.61 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $94,677.15 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 7] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,927.60 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,904.40 res=$66,908.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,927.60 | L1 SL=$67,068.39 | P&L: -0.08% |  | OB=-0.25
+  [DELTA:ETH] $2,056.25 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.12 sup=$2,043.60 res=$2,066.10]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 9] Equity: $30,261.35 | Cash: $29,290.60 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $92,820.74 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 8] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,906.70 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,904.70 res=$66,908.60]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,906.70 | L1 SL=$67,068.39 | P&L: -0.05% |  | OB=-0.25
+  [DELTA:ETH] $2,055.85 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.13 sup=$2,044.20 res=$2,069.80]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 10] Equity: $30,260.72 | Cash: $29,289.99 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $92,820.74 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 9] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,897.80 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $129.39 | OB[imb=-0.25 sup=$66,889.40 res=$66,893.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,897.80 | L1 SL=$67,068.39 | P&L: -0.04% |  | OB=-0.25
+  [DELTA:ETH] $2,055.65 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.07 sup=$2,043.85 res=$2,069.55]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.04%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 11] Equity: $30,259.90 | Cash: $29,289.20 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $92,820.74 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6120.50 | OB[imb=+1.00]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 10] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,900.30 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $135.33 | OB[imb=-0.25 sup=$66,902.50 res=$66,906.40]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,900.30 | L1 SL=$67,068.39 | P&L: -0.04% |  | OB=-0.25
+  [DELTA:ETH] $2,056.45 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.14 sup=$2,044.65 res=$2,070.35]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 12] Equity: $30,259.75 | Cash: $29,289.05 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $91,525.86 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6293.15 | OB[imb=+1.00 sup=$89,228.17]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 11] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,900.30 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $135.33 | OB[imb=-0.25 sup=$66,898.30 res=$66,902.20]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,900.30 | L1 SL=$67,068.39 | P&L: -0.04% |  | OB=-0.25
+  [DELTA:ETH] $2,056.45 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.19 sup=$2,044.65 res=$2,073.35]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 13] Equity: $30,262.11 | Cash: $29,291.34 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $91,525.86 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6293.15 | OB[imb=+1.00 sup=$89,228.17]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 12] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,890.40 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $135.33 | OB[imb=-0.25 sup=$66,889.40 res=$66,893.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,890.40 | L1 SL=$67,068.39 | P&L: -0.02% |  | OB=-0.25
+  [DELTA:ETH] $2,055.70 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.34 sup=$2,040.95 res=$2,073.35]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 14] Equity: $30,260.26 | Cash: $29,289.55 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $91,525.86 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6293.15 | OB[imb=+1.00 sup=$89,228.17]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 13] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,876.50 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $135.33 | OB[imb=-0.25 sup=$66,883.40 res=$66,887.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,876.50 | L1 SL=$67,068.39 | P&L: -0.00% |  | OB=-0.25
+  [DELTA:ETH] $2,055.85 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=+0.19 sup=$2,043.80 res=$2,073.00]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 15] Equity: $30,260.66 | Cash: $29,289.93 | Return: -69.74% | Positions: 0
+  [BYBIT:BTC] $972,240.90 (sig=$960,716.60) | EMA(5m): $887829.62 RISING | Signal: BUY | ATR: $19629.27 | OB[imb=+1.00]
+  [BYBIT:BTC] EXCELLENT PATTERN: score=10/10 (steep_slope=4.57%, trend_10bars, sep=7.24%, 3_green) trend=10bars
+  [BYBIT:BTC] SKIP: 1 pending order(s) already on exchange
+  [BYBIT:ETH] $91,457.36 (sig=$92,820.74) | EMA(5m): $90700.27 RISING | Signal: NEUTRAL | ATR: $6302.29 | OB[imb=+1.00 sup=$89,228.17]
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 14] Equity: $159.04 | Cash: $71.55 | Return: -99.84% | Positions: 1 | Bear: 0v/1r
+  [DELTA:BTC] $66,862.90 (sig=$66,865.80) | EMA(5m): $66827.88 RISING | Signal: BUY | ATR: $135.33 | OB[imb=-0.25 sup=$66,865.30 res=$66,869.20]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,862.90 | L1 SL=$67,068.39 | P&L: +0.02% |  | OB=-0.25
+  [DELTA:ETH] $2,055.05 (sig=$2,057.40) | EMA(5m): $2058.00 FALLING | Signal: SELL | ATR: $5.62 | OB[imb=-0.13 sup=$2,043.20 res=$2,068.55]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
