@@ -12,6 +12,14 @@ import threading
 import yaml
 from dotenv import load_dotenv
 
+# Force UTF-8 output on Windows (prevents UnicodeEncodeError with cp1252)
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 # Ensure project root is on sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -51,6 +59,7 @@ def main():
             logging.FileHandler(
                 os.path.join(PROJECT_ROOT, 'logs', 'system_output.log'),
                 mode='a',
+                encoding='utf-8',
             ),
         ],
     )
