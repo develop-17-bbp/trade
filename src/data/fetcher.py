@@ -799,7 +799,7 @@ class PriceFetcher:
     With Bybit: prices, order book, and OHLCV come from Bybit (authenticated or public read-only fallback).
     """
 
-    VALID_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1M']
+    VALID_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M']
 
     def __init__(self, exchange_name: str = "alpaca",
                  testnet: bool = True,

@@ -12,7 +12,7 @@ import time
 import logging
 import requests
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 try:
@@ -66,11 +66,25 @@ class TradingExecutor:
         adaptive = config.get('adaptive', {})
         self.ema_period: int = adaptive.get('ema_period', 8)
         self.struct_window: int = adaptive.get('struct_window', 5)
+        self.entry_pattern_min_score: int = int(adaptive.get('entry_pattern_min_score', 3))
+        self.entry_min_trend_bars: int = int(adaptive.get('entry_min_trend_bars', 1))
 
         _exec = config.get('execution', {})
-        self.signal_timeframe: str = (_exec.get('signal_timeframe') or '5m').strip()
+        self.signal_timeframe: str = (_exec.get('signal_timeframe') or '1h').strip()
         self.context_timeframe: str = (_exec.get('context_timeframe') or '1m').strip()
         self.require_context_alignment: bool = bool(_exec.get('require_context_alignment', False))
+        _mtf_raw = _exec.get('analysis_timeframes')
+        if isinstance(_mtf_raw, list) and _mtf_raw:
+            self.analysis_timeframes = [str(x).strip() for x in _mtf_raw if str(x).strip()]
+        else:
+            self.analysis_timeframes = ['1m', '5m', '15m', '30m', '1h']
+        if self.signal_timeframe not in self.analysis_timeframes:
+            self.analysis_timeframes.append(self.signal_timeframe)
+        _seen: set = set()
+        self.analysis_timeframes = [
+            x for x in self.analysis_timeframes if not (x in _seen or _seen.add(x))
+        ]
+        self.mtf_confluence_min: int = max(0, int(_exec.get('mtf_confluence_min', 0)))
 
         # Risk settings
         risk = config.get('risk', {})
@@ -131,11 +145,15 @@ class TradingExecutor:
             print(f"  [AI] WARNING: anthropic SDK not installed -- falling back to Ollama")
             self._use_claude = False
 
-        # Quality gates
-        self.min_confidence: float = 0.80  # Higher since we send more signals to LLM now
+        # Quality gates (spec §4–§5)
+        self.min_confidence: float = float(ai_cfg.get('llm_min_confidence', 0.50))
+        self.llm_fallback_confidence: float = float(ai_cfg.get('llm_fallback_confidence', 0.75))
+        self.llm_fallback_confidence_gate: float = float(
+            ai_cfg.get('llm_fallback_confidence_gate', self.llm_fallback_confidence)
+        )
         self.min_atr_ratio: float = 0.0003
-        self.trade_cooldown: float = 120.0       # 2 min between any trades
-        self.post_close_cooldown: float = 180.0   # 3 min after closing before new entry
+        self.trade_cooldown: float = float(config.get('trade_cooldown_seconds', 30))
+        self.post_close_cooldown: float = 180.0   # spec §4.4: 180s after close
 
         # Exchange
         exchange_name = config.get('exchange', {}).get('name', 'bybit')
@@ -185,8 +203,8 @@ class TradingExecutor:
 
         # Bear/Risk veto agent
         self.bear_enabled: bool = ai_cfg.get('bear_agent_enabled', True)
-        self.bear_veto_threshold: int = ai_cfg.get('bear_veto_threshold', 7)
-        self.bear_reduce_threshold: int = ai_cfg.get('bear_reduce_threshold', 5)
+        self.bear_veto_threshold: int = int(ai_cfg.get('bear_veto_threshold', 10))
+        self.bear_reduce_threshold: int = int(ai_cfg.get('bear_reduce_threshold', 8))
         self.bear_veto_stats: Dict[str, Dict[str, int]] = {}
         for a in self.assets:
             self.bear_veto_stats[a] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
@@ -222,6 +240,9 @@ class TradingExecutor:
         # ── Agent Orchestrator + Debate Engine ──
         # 10 specialized math agents + adversarial debate → feeds into LLM prompt
         self.orchestrator_enabled: bool = ai_cfg.get('orchestrator_enabled', True)
+        # Spec mode: agents inform LLM only — no entry veto / no confidence dilution
+        self.orchestrator_entry_veto: bool = bool(ai_cfg.get('orchestrator_entry_veto', False))
+        self.orchestrator_blend_confidence: bool = bool(ai_cfg.get('orchestrator_blend_confidence', False))
         self._orchestrator = None
         self._math_injector = None
         if self.orchestrator_enabled and ORCHESTRATOR_AVAILABLE:
@@ -953,7 +974,11 @@ class TradingExecutor:
         print("=" * 60)
         ex_name = self._exchange_name.upper()
         print(f"  EMA(8) Crossover + LLM | {ex_name} Futures")
-        print(f"  Assets: {self.assets} | Poll: {self.poll_interval}s")
+        print(
+            f"  Assets: {self.assets} | Poll: {self.poll_interval}s | "
+            f"Signal: {self.signal_timeframe} | Context: {self.context_timeframe} | "
+            f"MTF stack: {', '.join(self.analysis_timeframes)}"
+        )
         if self._use_claude and self._claude_client:
             print(f"  LLM: Claude API ({self._claude_model}) -- Anthropic")
         else:
@@ -1037,6 +1062,88 @@ class TradingExecutor:
                 time.sleep(5)
 
     # ------------------------------------------------------------------
+    # Multi-timeframe snapshots (EMA8 + momentum on confirmed bars)
+    # ------------------------------------------------------------------
+    def _tf_snapshot(
+        self, closes: list, highs: list, lows: list
+    ) -> Optional[Dict[str, Any]]:
+        """Per-timeframe trend stats aligned with signal TF semantics (confirmed bars)."""
+        need = max(self.ema_period + 5, 20)
+        if len(closes) < need:
+            return None
+        ema_vals = ema(closes, self.ema_period)
+        if len(ema_vals) < 5:
+            return None
+        cur_e = ema_vals[-2]
+        prev_e = ema_vals[-3]
+        direction = "RISING" if cur_e > prev_e else "FALLING"
+        base = ema_vals[-5] if abs(ema_vals[-5]) > 1e-12 else cur_e
+        slope_pct = ((ema_vals[-2] - base) / base * 100) if base else 0.0
+        sig_close = closes[-2]
+        ema_term = ema_vals[-1]
+        sep_pct = (
+            abs(sig_close - ema_term) / ema_term * 100 if ema_term > 0 else 0.0
+        )
+        c1, c2, c3 = closes[-2], closes[-3], closes[-4]
+        if c1 > c2 and c1 > c3:
+            mom = "up"
+        elif c1 < c2 and c1 < c3:
+            mom = "down"
+        else:
+            mom = "flat"
+        return {
+            "direction": direction,
+            "slope_pct": float(slope_pct),
+            "sep_pct": float(sep_pct),
+            "mom": mom,
+            "ema": float(cur_e),
+        }
+
+    def _collect_mtf_analysis(
+        self,
+        symbol: str,
+        signal_closes: list,
+        signal_highs: list,
+        signal_lows: list,
+        signal_ema_direction: str,
+    ) -> Tuple[str, int, int, Dict[str, Dict[str, Any]]]:
+        """
+        On every poll: refresh each analysis timeframe. Reuses signal TF OHLCV when tf matches.
+        Returns (llm_block, aligned_count, total_valid, snapshots_by_tf).
+        """
+        lines: List[str] = []
+        snaps: Dict[str, Dict[str, Any]] = {}
+        for tf in self.analysis_timeframes:
+            try:
+                if tf == self.signal_timeframe:
+                    cl, hi, lo = signal_closes, signal_highs, signal_lows
+                else:
+                    raw = self.price_source.fetch_ohlcv(
+                        symbol, timeframe=tf, limit=120
+                    )
+                    ox = PriceFetcher.extract_ohlcv(raw)
+                    cl, hi, lo = ox['closes'], ox['highs'], ox['lows']
+                snap = self._tf_snapshot(cl, hi, lo)
+                if snap is None:
+                    lines.append(f"  {tf}: (insufficient data)")
+                    continue
+                snaps[tf] = snap
+                s = snap
+                lines.append(
+                    f"  {tf}: EMA{self.ema_period} {s['direction']} "
+                    f"slope={s['slope_pct']:+.3f}% sep={s['sep_pct']:.2f}% "
+                    f"mom={s['mom']} EMA=${s['ema']:,.2f}"
+                )
+            except Exception as e:
+                lines.append(f"  {tf}: error ({type(e).__name__})")
+        block = "\n".join(lines)
+        aligned = sum(
+            1 for s in snaps.values() if s.get("direction") == signal_ema_direction
+        )
+        total = len(snaps)
+        return block, aligned, total, snaps
+
+    # ------------------------------------------------------------------
     # Per-asset processing
     # ------------------------------------------------------------------
     def _process_asset(self, asset: str):
@@ -1054,10 +1161,14 @@ class TradingExecutor:
         symbol = self._get_symbol(asset)
 
         # ══════════════════════════════════════════════════════════════
-        # Signal TF (default 5m): EMA crossover + entries + candle dedup
-        # Context TF (default 1m): shorter-TF momentum / EMA for logs; optional entry filter
-        # poll_interval: how often we wake and refetch (not the chart timeframe)
+        # Signal TF (e.g. 1h): EMA crossover + entries + candle dedup
+        # analysis_timeframes: full stack refreshed each poll → logs + unified LLM
+        # poll_interval: how often we wake and refetch (not the chart bar size)
         # ══════════════════════════════════════════════════════════════
+        self._mtf_block_for_llm = ''
+        self._mtf_aligned = 0
+        self._mtf_n = 0
+        self._mtf_snaps: Dict[str, Dict[str, Any]] = {}
 
         try:
             raw_sig = self.price_source.fetch_ohlcv(
@@ -1108,11 +1219,28 @@ class TradingExecutor:
         current_atr = atr_vals[-1] if atr_vals else 0
         ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
 
-        # Shorter timeframe context (default 1m): momentum + micro EMA — does not replace 5m signal
+        mtf_block, mtf_aligned, mtf_n, mtf_snaps = self._collect_mtf_analysis(
+            symbol, closes, highs, lows, ema_direction
+        )
+        self._mtf_block_for_llm = mtf_block
+        self._mtf_aligned = mtf_aligned
+        self._mtf_n = mtf_n
+        self._mtf_snaps = mtf_snaps
+
+        # Context TF (e.g. 1m): prefer MTF snapshot if that TF is in the stack
         ctx_suffix = ""
         self._ctx_gate = {'blocks_long': False, 'blocks_short': False}
         _ctx = self.context_timeframe
-        if _ctx and _ctx != self.signal_timeframe:
+        ctx_snap = mtf_snaps.get(_ctx) if _ctx and mtf_snaps else None
+        if ctx_snap:
+            mom = "↓" if ctx_snap['mom'] == 'down' else (
+                "↑" if ctx_snap['mom'] == 'up' else "~"
+            )
+            micro_ema = "R" if ctx_snap['direction'] == "RISING" else "F"
+            ctx_suffix = f" | {_ctx}: mom={mom} EMA={micro_ema}"
+            self._ctx_gate['blocks_long'] = ctx_snap['mom'] == 'down'
+            self._ctx_gate['blocks_short'] = ctx_snap['mom'] == 'up'
+        elif _ctx and _ctx != self.signal_timeframe:
             try:
                 raw_ctx = self.price_source.fetch_ohlcv(symbol, timeframe=_ctx, limit=150)
                 cx = PriceFetcher.extract_ohlcv(raw_ctx)
@@ -1203,6 +1331,16 @@ class TradingExecutor:
             f"EMA({self.signal_timeframe}): ${current_ema:.2f} {ema_direction} | "
             f"Signal: {signal} | ATR: ${current_atr:.2f} | {ob_info}{ctx_suffix}"
         )
+        if mtf_n > 0:
+            compact = " ".join(
+                f"{tf}:{('R' if mtf_snaps[tf]['direction'] == 'RISING' else 'F')}"
+                for tf in self.analysis_timeframes
+                if tf in mtf_snaps
+            )
+            print(
+                f"  [{self._ex_tag}:{asset}] MTF EMA{self.ema_period} "
+                f"align {mtf_aligned}/{mtf_n} vs {ema_direction} | {compact}"
+            )
 
         # ── Stale position check: if internal state says position but exchange is clean ──
         if asset in self.positions and asset not in self.failed_close_assets:
@@ -1283,9 +1421,9 @@ class TradingExecutor:
                 entry_score += 1
                 score_reasons.append(f"trend_{consec}bars")
 
-            # 3. PRICE vs EMA SEPARATION (0-2 points)
-            # Price clearly above/below EMA = momentum confirmed
-            separation = abs(price - ema_vals[-1]) / ema_vals[-1] * 100 if ema_vals[-1] > 0 else 0
+            # 3. PRICE vs EMA SEPARATION (0-2 points) — spec §4.1 / §2.4: price = closes[-2], EMA term = ema_vals[-1]
+            sig_close = closes[-2] if len(closes) >= 2 else price
+            separation = abs(sig_close - ema_vals[-1]) / ema_vals[-1] * 100 if ema_vals[-1] > 0 else 0
             if separation > 0.5:
                 entry_score += 2
                 score_reasons.append(f"sep={separation:.2f}%")
@@ -1338,11 +1476,9 @@ class TradingExecutor:
         # On live exchange with real liquidity, re-enable filtering
         ob_imbalance = ob_levels.get('imbalance', 0)
 
-        # MINIMUM SCORE: 5 out of 10 to enter
-        # Score 5+ = decent crossover, send to LLM + Bear + Agents for validation
-        # Score 7+ = strong signal, high L-level potential
-        # Below 5 = too weak, skip without wasting LLM calls
-        min_score = 5
+        # MINIMUM SCORE — spec §4.1: need >= 3 / 10; >= 1 confirmed EMA trend bar
+        min_score = self.entry_pattern_min_score
+        min_trend_need = self.entry_min_trend_bars
 
         # Count consecutive trend bars — CONFIRMED candles only (skip [-1] incomplete)
         min_trend_bars = 0
@@ -1358,8 +1494,8 @@ class TradingExecutor:
         if entry_score < min_score:
             print(f"  [{self._ex_tag}:{asset}] WEAK: score={entry_score}/10 ({', '.join(score_reasons) or 'no momentum'}) -- need {min_score}+")
             return
-        elif min_trend_bars < 2:
-            print(f"  [{self._ex_tag}:{asset}] TOO EARLY: only {min_trend_bars} trend bars -- need 2+")
+        elif min_trend_bars < min_trend_need:
+            print(f"  [{self._ex_tag}:{asset}] TOO EARLY: only {min_trend_bars} trend bars -- need {min_trend_need}+")
             return
 
         # ── HARD GATE: EMA slope must agree with signal direction ──
@@ -1372,9 +1508,9 @@ class TradingExecutor:
             elif signal == "SELL" and slope_pct > 0.01:
                 print(f"  [{self._ex_tag}:{asset}] SLOPE REJECT: PUT but EMA slope={slope_pct:+.3f}% (positive) — skip")
                 return
-        else:
-            quality = "EXCELLENT" if entry_score >= 9 else "STRONG" if entry_score >= 7 else "OK"
-            print(f"  [{self._ex_tag}:{asset}] {quality} PATTERN: score={entry_score}/10 ({', '.join(score_reasons)}) trend={min_trend_bars}bars")
+
+        quality = "EXCELLENT" if entry_score >= 9 else "STRONG" if entry_score >= 7 else "OK"
+        print(f"  [{self._ex_tag}:{asset}] {quality} PATTERN: score={entry_score}/10 ({', '.join(score_reasons)}) trend={min_trend_bars}bars")
 
         # CRITICAL: Check EXCHANGE positions (not just internal dict)
         # CHECK OPEN ORDERS — if we already have a pending limit order, don't place another
@@ -1494,11 +1630,25 @@ class TradingExecutor:
                 print(f"  [{self._ex_tag}:{asset}] SKIP: {self.context_timeframe} momentum vs SHORT")
                 return
 
-        # Minimum 30s between trades to prevent same-second churning
+        if self.mtf_confluence_min > 0:
+            ma = getattr(self, '_mtf_aligned', 0)
+            mn = getattr(self, '_mtf_n', 0)
+            if mn > 0 and ma < self.mtf_confluence_min:
+                print(
+                    f"  [{self._ex_tag}:{asset}] MTF CONFLUENCE: {ma}/{mn} "
+                    f"< min {self.mtf_confluence_min} for {ema_direction} — skip"
+                )
+                return
+
+        # spec §4.4: trade cooldown (default 30s)
         now = time.time()
+        if asset in self.last_close_time:
+            elapsed_pc = now - self.last_close_time[asset]
+            if elapsed_pc < self.post_close_cooldown:
+                return
         if asset in self.last_trade_time:
             elapsed = now - self.last_trade_time[asset]
-            if elapsed < 30:
+            if elapsed < self.trade_cooldown:
                 return
 
         # Quality gate: ATR ratio
@@ -1551,7 +1701,7 @@ class TradingExecutor:
         # UNIFIED LLM: ALL 7 roles in ONE call
         # Agent Synthesis + Bull + Bear + 3 Personas + Facilitator
         # ══════════════════════════════════════════════════════════
-        if orch_result and orch_result.get('veto'):
+        if self.orchestrator_entry_veto and orch_result and orch_result.get('veto'):
             print(f"  [{self._ex_tag}:{asset}] AGENTS VETO: consensus={orch_result['consensus']} — skipping trade")
             return
 
@@ -1568,6 +1718,9 @@ class TradingExecutor:
             closes=closes, highs=highs, lows=lows,
             volumes=volumes, orch_result=orch_result,
             pnl_history=pnl_history,
+            mtf_block=getattr(self, '_mtf_block_for_llm', '') or '',
+            mtf_aligned=int(getattr(self, '_mtf_aligned', 0)),
+            mtf_n=int(getattr(self, '_mtf_n', 0)),
         )
 
         # Extract unified decision
@@ -1593,13 +1746,12 @@ class TradingExecutor:
         reasoning = str(unified.get('facilitator_verdict', ''))[:120]
         risk_score = unified.get('risk_score', 5)
 
-        # Blend with agent math confidence (60% agents + 40% LLM)
-        if orch_result and orch_result.get('confidence', 0) > 0:
+        # Optional: blend agent math into confidence (off by default — spec §5.3 uses LLM gate only)
+        if self.orchestrator_blend_confidence and orch_result and orch_result.get('confidence', 0) > 0:
             agent_conf = orch_result['confidence']
             agent_scale = orch_result.get('position_scale', 1.0)
             blended_conf = confidence * 0.4 + agent_conf * 0.6
 
-            # Agent direction disagrees with signal? Reduce confidence
             agent_dir = orch_result.get('direction', 0)
             signal_dir = 1 if signal == "BUY" else -1
             if agent_dir != 0 and agent_dir != signal_dir:
@@ -1614,9 +1766,25 @@ class TradingExecutor:
         action = "LONG" if signal == "BUY" else "SHORT"
         direction_label = "CALL" if signal == "BUY" else "PUT"
 
-        # Quality gate: confidence
-        if confidence < self.min_confidence:
-            print(f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {self.min_confidence}")
+        # spec §6.2: elevated risk → halve size (veto already handled via proceed=false)
+        if self.bear_reduce_threshold <= risk_score < self.bear_veto_threshold:
+            size_pct *= 0.5
+            print(f"  [{self._ex_tag}:{asset}] BEAR REDUCE: risk={risk_score} >= {self.bear_reduce_threshold} — size halved")
+            if asset not in self.bear_veto_stats:
+                self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
+            self.bear_veto_stats[asset]['reduced'] += 1
+
+        # Quality gate: confidence (llm_min_confidence in config; LLM failure uses llm_fallback_confidence_gate)
+        conf_floor = (
+            self.llm_fallback_confidence_gate
+            if unified.get('llm_unavailable')
+            else self.min_confidence
+        )
+        if confidence < conf_floor:
+            print(
+                f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {conf_floor}"
+                f"{' (LLM fallback gate)' if unified.get('llm_unavailable') else ''}"
+            )
             return
 
         # Track bear stats
@@ -2609,7 +2777,10 @@ class TradingExecutor:
                             support: float, resistance: float,
                             closes: list, highs: list, lows: list,
                             volumes: list, orch_result: dict,
-                            pnl_history: str = '') -> dict:
+                            pnl_history: str = '',
+                            mtf_block: str = '',
+                            mtf_aligned: int = 0,
+                            mtf_n: int = 0) -> dict:
         """
         SINGLE LLM call that performs ALL 7 analysis roles:
           1. Agent Synthesis — interpret 13 math agents together
@@ -2721,6 +2892,13 @@ Price: ${price:,.2f} | EMA(8): ${current_ema:.2f} ({ema_direction}) | EMA-price 
 ATR: ${current_atr:.2f} | Slope: {ema_slope_pct:+.3f}%/bar | Trend bars: {consecutive_trend}
 Support: ${support:.2f} | Resistance: ${resistance:.2f} | Volume: {vol_trend}
 
+=== MULTI-TIMEFRAME STACK (EMA{self.ema_period} on each TF; last closed bar; refreshed every engine poll) ===
+Signal timeframe is {self.signal_timeframe} — that is the bar size for ENTRY rules above.
+Alignment: {mtf_aligned} of {mtf_n} analyzed timeframes agree on EMA direction ({ema_direction}) with the signal TF.
+{(mtf_block if mtf_block.strip() else '  (no MTF snapshot)')}
+
+Use this stack for REALISTIC trend judgment: broad agreement across TFs supports a stable move; lower TFs strongly opposing higher TFs suggests chop or pullback — favor SKIP or lower confidence when the stack is mixed.
+
 Last {n_candles} candles ({self.signal_timeframe}):
 {candle_block}
 
@@ -2744,14 +2922,15 @@ ROLE 6 - CONSERVATIVE: Given our historical L-level distribution, is this worth 
 ROLE 7 - FACILITATOR: FINAL VERDICT — Will this trade reach L4+ (ENTER) or die at L1-L2 (SKIP)?
 
 === DECISION RULES ===
+- Weigh the MULTI-TIMEFRAME STACK: if most TFs align with {ema_direction}, trend is more credible; if many TFs disagree, treat as unstable and lower confidence or set proceed=false.
 - predicted_l_level: Your best estimate of where trailing SL exits (L1, L2, L4, L10+, etc.)
-- risk_score: 0=safe, 5=moderate, 7+=dangerous (veto if >=7)
+- risk_score: 0=safe, 5=moderate — veto entry if >={self.bear_veto_threshold}; size reduction zone if >={self.bear_reduce_threshold}
 - trade_quality: 0=terrible, 5=marginal, 8+=excellent (measures L-level potential)
   quality 8+: Strong trend indicators → likely L4+ → ENTER with full size
   quality 5-7: Moderate setup → might reach L3-L4 → enter with reduced size
   quality ≤4: Weak/choppy → likely L1-L2 → SKIP (save capital for better setup)
 - confidence: 0.0-1.0 (your HONEST estimate based on historical patterns above)
-- If agents conflict OR risk>=7 OR quality<=3: set proceed=false
+- If agents conflict OR risk>={self.bear_veto_threshold} OR quality<=3: set proceed=false
 - position_size_pct: 1-{max_position_pct}% (scale with trade_quality and predicted L-level)
 - REMEMBER: It's BETTER to skip a marginal trade than to lose at L1. We profit from PATIENCE.
 
@@ -2802,16 +2981,18 @@ Respond with ONLY this JSON (no other text):
 
         except Exception as e:
             logger.warning(f"[{asset}] Unified LLM failed: {e}")
-            # Safe fallback — don't trade if LLM fails
+            # spec §5.3: fallback confidence with EMA direction — proceed; gate uses llm_fallback_confidence_gate
             return {
-                'proceed': False,
-                'confidence': 0.3,
-                'position_size_pct': 2,
+                'proceed': True,
+                'confidence': self.llm_fallback_confidence,
+                'llm_unavailable': True,
+                'position_size_pct': 3,
                 'risk_score': 5,
-                'trade_quality': 3,
-                'bull_case': f'LLM unavailable ({type(e).__name__})',
-                'bear_case': 'Cannot assess risk — skipping',
-                'facilitator_verdict': 'No LLM analysis — reject for safety',
+                'trade_quality': 6,
+                'predicted_l_level': '?',
+                'bull_case': f'LLM unavailable ({type(e).__name__}) — following EMA signal',
+                'bear_case': 'Risk not LLM-scored — using default risk_score=5',
+                'facilitator_verdict': 'EMA indicator gate passed; LLM offline',
                 'agent_conflicts': 'unknown',
             }
 
@@ -3059,7 +3240,7 @@ RISK COMMITTEE:
 
 DECISION RULES:
 - If 2+ risk personas say "proceed: false" → you should also reject
-- If bull_conf < 0.80 → reject
+- If bull_conf < {self.min_confidence:.2f} → reject
 - If bear_risk >= 9 → reject unless aggressive makes compelling case
 - Position size = weighted average (aggressive 20%, neutral 50%, conservative 30%)
 - You can override any individual agent if their reasoning is weak

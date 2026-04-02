@@ -1,7 +1,8 @@
 # ── General Settings ──
 # paper/testnet: non-live execution. With BYBIT_DEMO=true + Bybit only, orders go to Bybit demo API (not Bybit testnet).
 mode: paper
-poll_interval: 30             # seconds between loop iterations (not the chart timeframe)
+poll_interval: 30             # how often the engine wakes: refetch prices, OHLCV, order book (~30s)
+trade_cooldown_seconds: 30    # spec §4.4: min seconds between trades per asset
 
 # ── Exchange Configuration ──
 # Bybit demo: .env BYBIT_DEMO=true, BYBIT_API_KEY / BYBIT_API_SECRET (demo keys from Bybit → Demo Trading).
@@ -25,6 +26,9 @@ adaptive:
   ema_crossover_primary: true
   ema_period: 8                                # EMA period (matches chart)
   struct_window: 5                             # Structure points for SL (L1->L4)
+  # spec §4.1 pre-LLM pattern score (0–10): min 3, min 1 confirmed EMA trend bar
+  entry_pattern_min_score: 3
+  entry_min_trend_bars: 1
 
 # ── Risk (minimal — daily loss limit only) ──
 risk:
@@ -48,9 +52,15 @@ ai:
   rate_limit_calls_per_minute: 15
   fallback_on_quota_error: true
   use_local_on_failure: true
-  bear_agent_enabled: true        # Second LLM call to argue AGAINST the trade
-  bear_veto_threshold: 7          # risk_score >= 7 = VETO (protects capital)
-  bear_reduce_threshold: 5        # risk_score 5-6 = reduce position 50%
+  bear_agent_enabled: true        # Risk scoring inside unified LLM (spec §6)
+  bear_veto_threshold: 10         # spec §6.2: risk_score >= 10 → VETO
+  bear_reduce_threshold: 8        # spec §6.2: risk_score >= 8 → reduce size 50%
+  llm_min_confidence: 0.60        # Bull confidence gate (was 0.80 per spec §5.3)
+  llm_fallback_confidence: 0.75   # spec §5.3 when unified LLM call fails
+  llm_fallback_confidence_gate: 0.75  # pass gate on LLM failure if conf >= this
+  # spec §1 / §5: math agents inform context; do not veto entries or dilute LLM confidence
+  orchestrator_entry_veto: false
+  orchestrator_blend_confidence: false
   facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
   risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
   edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
@@ -69,13 +79,20 @@ monitor:
 max_hold_minutes: 360             # Close stale/losing positions after 6 hours
 
 # ── Order Execution ──
-# Bybit hedge (dual-side) futures: set bybit_hedge_mode true and/or BYBIT_HEDGE_MODE=1 in .env
+# Bybit USDT linear: must match Bybit → Derivatives → Position mode.
+# Hedge Mode (dual long/short) → true (sends positionIdx 1/2). One-Way → false (omit idx / use 0).
+# Mismatch causes retCode 10001 "position idx not match position mode".
 execution:
   entry_type: "market"
   exit_type: "market"
   bybit_hedge_mode: true
-  # EMA crossover + entries use signal_timeframe; context_timeframe is extra (logs + optional filter).
-  signal_timeframe: "1m"
+  # signal_timeframe: trade decisions — EMA(8), ATR, entries, dedup (confirmed bars). Use 30m or 1h for slower, stabler signals.
+  signal_timeframe: "15m"
+  # Shorter TF for optional momentum filter (should be one of analysis_timeframes, usually 1m).
   context_timeframe: "1m"
-  # If true, skip LONG when 1m momentum is down / SHORT when 1m momentum is up (see executor logs).
-  require_context_alignment: false
+  # Every poll: fetch each TF below and compute EMA(8) trend (for logs + unified LLM). Reuses signal TF data (no double fetch).
+  analysis_timeframes: ["1m", "5m", "15m", "30m", "1h"]
+  # Optional hard gate: require at least N timeframes (with valid data) to agree with signal TF EMA direction. 0 = off.
+  mtf_confluence_min: 0
+  # If true, skip LONG when context_timeframe momentum is down / SHORT when up (see executor logs).
+  require_context_alignment: true
