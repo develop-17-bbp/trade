@@ -1,0 +1,1933 @@
+  [ENV] Loaded C:\Users\convo\trade\.env
+============================================================
+  MULTI-EXCHANGE MODE
+  Exchanges: ['bybit', 'delta']
+============================================================
+2026-04-02 22:25:44,944 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+  Started BYBIT executor: ['BTC', 'ETH']
+  [AI] WARNING: Claude requested but ANTHROPIC_API_KEY not set -- falling back to Ollama  Started DELTA executor: ['BTC', 'ETH']
+
+2026-04-02 22:25:44,944 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-04-02 22:25:46,714 [INFO] src.data.fetcher: [DELTA] Connected to TESTNET
+2026-04-02 22:25:46,714 [INFO] src.data.fetcher: [DELTA] USD: 158.89
+  [DELTA] TESTNET trading connected
+2026-04-02 22:25:46,776 [INFO] src.data.fetcher: [BYBIT] Time offset: 0ms
+  [DELTA] Equity: $158.89 | Cash: $71.34
+  [DATA] Delta CCXT initialized for OHLCV data
+2026-04-02 22:25:47,035 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-02 22:25:47,035 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-02 22:25:47,035 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+  [DELTA:BTC] Leverage set to 1x on delta
+  [DELTA:ETH] Leverage set to 1x on delta
+2026-04-02 22:25:47,611 [INFO] src.monitoring.journal: Loaded 1201 trades from journal
+  [DELTA:BTC] EDGE: 16W/60L rate=21% exp=-2.08 mult=0.58x
+  [DELTA:ETH] EDGE: 46W/78L rate=37% exp=-0.05 mult=0.99x
+2026-04-02 22:25:47,617 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-02 22:25:47,617 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+  [AGENTS] Orchestrator + Debate Engine loaded (13 agents)
+  [DATA] On-chain fetcher loaded (BTC hashrate, mempool, DeFi TVL)
+  [MEMORY] Trade memory vault loaded (semantic search)
+============================================================
+  EMA(8) Crossover + LLM | DELTA Futures
+  Assets: ['BTC', 'ETH'] | Poll: 10s
+  LLM: mistral @ https://spas-inclusive-breaking-frontier.trycloudflare.com
+  Bear Veto: ACTIVE (veto>=7 reduce>=5)
+============================================================
+
+[DELTA BAR 1] Equity: $158.89 | Cash: $71.34 | Return: -99.84% | Positions: 0
+  [DELTA:BTC] ORPHAN DETECTED: buy 1.0 @ $66,874.30 — CLOSING
+  [DELTA:BTC] ORPHAN PHANTOM: position already gone (liquidated?) — suppressing
+  [DELTA:ETH] ORPHAN DETECTED: buy 1.0 @ $2,062.50 — CLOSING
+2026-04-02 22:25:52,022 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-04-02 22:25:52,022 [INFO] src.data.fetcher: [BYBIT] USDT: 30,223.37 | BTC: 0.000000
+  [BYBIT] TESTNET trading connected
+  [DELTA:ETH] ORPHAN PHANTOM: position already gone (liquidated?) — suppressing
+  [BYBIT] Equity: $30,218.94 | USDT: $26,217.57
+  [DATA] Bybit CCXT initialized for OHLCV data
+2026-04-02 22:25:52,355 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-02 22:25:52,355 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-02 22:25:52,355 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-04-02 22:25:53,567 [INFO] src.monitoring.journal: Loaded 1201 trades from journal
+  [BYBIT:BTC] EDGE: 16W/60L rate=21% exp=-2.08 mult=0.58x
+  [BYBIT:ETH] EDGE: 46W/78L rate=37% exp=-0.05 mult=0.99x
+2026-04-02 22:25:53,568 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-02 22:25:53,568 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+  [AGENTS] Orchestrator + Debate Engine loaded (13 agents)
+  [DATA] On-chain fetcher loaded (BTC hashrate, mempool, DeFi TVL)
+  [MEMORY] Trade memory vault loaded (semantic search)
+============================================================
+  EMA(8) Crossover + LLM | BYBIT Futures
+  Assets: ['BTC', 'ETH'] | Poll: 10s
+  LLM: mistral @ https://spas-inclusive-breaking-frontier.trycloudflare.com
+  Bear Veto: ACTIVE (veto>=7 reduce>=5)
+============================================================
+
+[BYBIT BAR 1] Equity: $30,218.88 | UPnL: $-0.92 | Cash: $26,217.52 | Return: -69.78% | Positions: 0
+  [BYBIT:ETH] ORPHAN DETECTED: long 0.02 @ $100,137.97 — CLOSING
+  [DELTA:BTC] $67,129.40 (sig=$67,124.20) | EMA(5m): $66992.25 RISING | Signal: BUY | ATR: $172.97 | OB[imb=-0.24 sup=$67,127.70 res=$67,131.60]
+  [DELTA:BTC] OK PATTERN: score=6/10 (good_slope=0.10%, trend_5bars, 2_green) trend=5bars
+  [BYBIT:ETH] ORPHAN CLOSED: dd55cadf-26d3-4ff2-8e96-a765175e23da
+  [DELTA:BTC] SYNCED buy position (1.0) $67 | SL=$67,133.76
+  [BYBIT:BTC] ORPHAN DETECTED: long 0.002 @ $1,000,000.00 — CLOSING
+  [DELTA:ETH] $2,064.65 (sig=$2,065.00) | EMA(5m): $2062.04 RISING | Signal: NEUTRAL | ATR: $6.02 | OB[imb=+0.14 sup=$2,051.35 res=$2,078.55]
+  [DELTA SLEEP] 3s
+  [BYBIT:BTC] ORPHAN CLOSED: 7c3a54b0-4a1b-452e-8fda-f0f8f556237b
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.49 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] STRONG PATTERN: score=8/10 (steep_slope=0.83%, trend_10bars, sep=1.27%) trend=10bars
+
+[DELTA BAR 2] Equity: $158.89 | Cash: $71.34 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,128.80 (sig=$67,124.20) | EMA(5m): $66992.25 RISING | Signal: BUY | ATR: $172.97 | OB[imb=-0.24 sup=$67,127.70 res=$67,131.60]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $67,128.80 | L1 SL=$67,133.76 | P&L: -0.38% |  | OB=-0.24
+2026-04-02 22:26:00,138 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 22:26:00,350 [INFO] src.risk.evt_risk: EVT fit: xi=0.2570, sigma=0.0229, threshold=0.0030, exceedances=10
+2026-04-02 22:26:00,356 [INFO] src.models.hawkes_process: Hawkes fit: mu=0.2559, alpha=0.1971, beta=1.0000, branching=0.197
+2026-04-02 22:26:00,363 [INFO] src.models.fracdiff: FracDiff: min d=1.00 achieves stationarity (p=0.0164)
+  [DELTA:ETH] $2,064.65 (sig=$2,065.00) | EMA(5m): $2062.04 RISING | Signal: NEUTRAL | ATR: $6.02 | OB[imb=+0.14 sup=$2,051.35 res=$2,078.55]
+  [DELTA SLEEP] 8s
+
+[DELTA BAR 3] Equity: $158.89 | Cash: $71.34 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,125.90 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $153.16 | OB[imb=-0.24 sup=$67,123.00 res=$67,126.90]
+  [DELTA:BTC] STUCK SL -0.38% (can't close — no liquidity)
+  [DELTA:ETH] $2,064.95 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.40 | OB[imb=+0.15 sup=$2,051.35 res=$2,078.55]
+  [DELTA SLEEP] 8s
+
+[DELTA BAR 4] Equity: $158.89 | Cash: $71.34 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,108.60 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $153.16 | OB[imb=-0.24 sup=$67,100.10 res=$67,104.00]
+  [DELTA:BTC] STUCK SL -0.35% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.95 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.40 | OB[imb=-0.08 sup=$2,048.70 res=$2,075.00]
+  [DELTA SLEEP] 8s
+
+[DELTA BAR 5] Equity: $158.89 | Cash: $71.34 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,110.50 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $153.16 | OB[imb=-0.24 sup=$67,103.40 res=$67,107.30]
+  [DELTA:BTC] STUCK SL -0.35% (can't close — no liquidity)
+2026-04-02 22:26:31,714 [WARNING] src.data.base_fetcher: API call failed https://gamma-api.polymarket.com/events: HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /events?active=true&closed=false&limit=100 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000002E79D0EA850>: Failed to establish a new connection: [Errno 11001] getaddrinfo failed'))
+2026-04-02 22:26:31,714 [WARNING] src.data.polymarket_fetcher: [Polymarket] No events returned or unexpected format
+2026-04-02 22:26:31,716 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (+1) — applying 20% bonus
+2026-04-02 22:26:31,716 [INFO] src.agents.orchestrator: [DEBATE] BTC: Pre-debate: 4 LONG / 0 SHORT / 6 FLAT | Post-debate: 5 LONG / 0 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 22:26:31,716 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 11.07s: dir=1 conf=0.645 scale=0.611 consensus=STRONG data_quality=1.00 audit=EXECUTE
+  [BYBIT:BTC] AGENTS RAW: CALL MODERATE (net=+0.32) | 11 agents | avg_conf=0.41
+2026-04-02 22:26:31,725 [INFO] src.monitoring.journal: Loaded 572 trades from journal
+  [DELTA:ETH] $2,063.45 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.40 | OB[imb=-0.09 sup=$2,048.70 res=$2,075.20]
+  [DELTA SLEEP] 8s
+  [BYBIT:BTC] UNIFIED LLM (1 call, 7 roles):
+    AGENTS: quality=7/10 conflicts=[]
+    BULL: Strong uptrend (1.446% slope), 10 trend bars, and declining 
+    BEAR: risk=4/10 | The trade could fail if the market suddenly reverses, as ind
+    L-LEVEL PREDICTION: L4 | ENTER conf=0.65 size=2%
+    FACILITATOR: Proceed with caution. Position size should be 2% of total portfolio and monitor 
+2026-04-02 22:26:35,447 [INFO] src.monitoring.journal: Loaded 1201 trades from journal
+  [BYBIT:BTC] BEAR AGENT: risk=6/10 | Late entry (1pt), Reversal signs (2pts), Volume (2pts), Key level (1pt)
+  [BYBIT:BTC] BEAR OVERRIDE: risk 4 -> 6 (bear sees more danger)
+  [BYBIT:BTC] BEAR REDUCE: risk=6/10 (>=5) — size 2% -> 1%
+  [BYBIT:BTC] LLM DECISION: conf=0.65 size=1% risk=6/10 quality=7/10
+  [BYBIT:BTC] EDGE: 0.58x (16W/60L) size 1% -> 1%
+  [BYBIT:BTC] SIZING: 1% of $30,219 = $302 (max $2,000)
+  [BYBIT:BTC] Adjusted qty to minimum 0.001 ($1,000)
+  [BYBIT:BTC] CALL: BUY 0.001000 MARKET ($1,000 = 1% of $30,219)
+  [BYBIT:BTC] LIQUIDITY: spread=0.0% bids=10 asks=4
+  [BYBIT:BTC] LIQUIDITY OK: spread=0.00% bids=10 asks=4
+  [BYBIT:BTC] ORDER OK: 17cb1803-88e5-4115-8e97-954e2e278fc0 | SL L1=$988,588.77 (ATR) | OB imbalance=+0.00
+
+[DELTA BAR 6] Equity: $158.89 | Cash: $71.34 | Return: -99.84% | Positions: 1
+  [BYBIT:ETH] $100,092.82 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7021.14 | OB[imb=+0.86]
+  [BYBIT:ETH] OK PATTERN: score=6/10 (steep_slope=2.47%, trend_2bars, sep=3.67%) trend=2bars
+2026-04-02 22:26:41,302 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 22:26:41,312 [INFO] src.risk.evt_risk: EVT fit: xi=0.1164, sigma=0.0254, threshold=0.0488, exceedances=10
+2026-04-02 22:26:41,319 [INFO] src.models.hawkes_process: Hawkes fit: mu=0.5154, alpha=0.0001, beta=1.0000, branching=0.000
+2026-04-02 22:26:41,322 [INFO] src.models.fracdiff: FracDiff: min d=0.95 achieves stationarity (p=0.0020)
+  [DELTA:BTC] $67,105.90 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $153.16 | OB[imb=-0.24 sup=$67,103.00 res=$67,106.90]
+  [DELTA:BTC] STUCK SL -0.35% (can't close — no liquidity)
+  [DELTA:ETH] $2,064.30 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.40 | OB[imb=-0.10 sup=$2,049.25 res=$2,075.60]
+  [DELTA SLEEP] 8s
+
+[DELTA BAR 7] Equity: $159.06 | Cash: $138.43 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,081.60 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $153.16 | OB[imb=-0.24 sup=$67,076.90 res=$67,080.80]
+  [DELTA:BTC] STUCK SL -0.31% (can't close — no liquidity)
+2026-04-02 22:26:52,487 [WARNING] src.data.base_fetcher: API call failed https://gamma-api.polymarket.com/events: HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /events?active=true&closed=false&limit=100 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000002E79D130CD0>: Failed to establish a new connection: [Errno 11001] getaddrinfo failed'))
+2026-04-02 22:26:52,487 [WARNING] src.data.polymarket_fetcher: [Polymarket] No events returned or unexpected format
+2026-04-02 22:26:52,488 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (+1) — applying 20% bonus
+2026-04-02 22:26:52,488 [INFO] src.agents.orchestrator: [DEBATE] ETH: Pre-debate: 4 LONG / 0 SHORT / 6 FLAT | Post-debate: 5 LONG / 0 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 22:26:52,488 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 11.05s: dir=1 conf=0.641 scale=0.606 consensus=STRONG data_quality=1.00 audit=EXECUTE
+  [BYBIT:ETH] AGENTS RAW: CALL MODERATE (net=+0.30) | 11 agents | avg_conf=0.40
+2026-04-02 22:26:52,496 [INFO] src.monitoring.journal: Loaded 629 trades from journal
+  [DELTA:ETH] $2,063.25 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.40 | OB[imb=-0.10 sup=$2,048.00 res=$2,077.60]
+  [DELTA SLEEP] 8s
+  [BYBIT:ETH] UNIFIED LLM (1 call, 7 roles):
+    AGENTS: quality=7/10 conflicts=[]
+    BULL: Strong uptrend (slope=+3.092%), steep EMA slope (2.47%), and
+    BEAR: risk=4/10 | The trade could die at L1-L2 due to a flat/weak EMA slope (<
+    L-LEVEL PREDICTION: L3 | ENTER conf=0.65 size=3%
+    FACILITATOR: Proceed with caution. This trade has a realistic path to L3+ profit but carries 
+2026-04-02 22:26:55,790 [INFO] src.monitoring.journal: Loaded 1201 trades from journal
+  [BYBIT:ETH] BEAR AGENT: risk=6/10 | Late entry (2pts) and Long near resistance (1pt)
+  [BYBIT:ETH] BEAR OVERRIDE: risk 4 -> 6 (bear sees more danger)
+  [BYBIT:ETH] BEAR REDUCE: risk=6/10 (>=5) — size 3% -> 2%
+  [BYBIT:ETH] LLM DECISION: conf=0.65 size=2% risk=6/10 quality=7/10
+  [BYBIT:ETH] SIZING: 1% of $30,219 = $449 (max $2,000)
+  [BYBIT:ETH] Adjusted qty to minimum 0.01 ($1,001)
+  [BYBIT:ETH] CALL: BUY 0.010000 MARKET ($1,001 = 1% of $30,219)
+  [BYBIT:ETH] LIQUIDITY: spread=0.0% bids=7 asks=2
+  [BYBIT:ETH] LIQUIDITY OK: spread=0.00% bids=7 asks=2
+  [BYBIT:ETH] ORDER OK: c8e8636d-44f6-4b73-91dd-6edfdd17dec2 | SL L1=$98,091.33 (ATR) | OB imbalance=+0.86
+  [BYBIT SLEEP] 1s
+
+[BYBIT BAR 2] Equity: $30,214.79 | UPnL: $-0.07 | Cash: $27,214.40 | Return: -69.79% | Positions: 2 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $100,093.19 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7021.14 | OB[imb=+0.85]
+  [BYBIT:ETH] HOLD CALL @ $100,093.19 | Now: $100,093.19 | L1 SL=$98,091.33 | P&L: +0.00% |  | OB=+0.85
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 8] Equity: $159.06 | Cash: $138.43 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,085.20 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $153.16 | OB[imb=-0.24 sup=$67,094.10 res=$67,098.00]
+  [DELTA:BTC] STUCK SL -0.32% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.40 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.40 | OB[imb=-0.10 sup=$2,048.00 res=$2,077.75]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 3] Equity: $30,215.43 | UPnL: $-0.08 | Cash: $28,215.76 | Return: -69.78% | Positions: 2 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $100,065.17 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7024.82 | OB[imb=+0.75]
+  [BYBIT:ETH] STALE position cleared (not on exchange)
+  [BYBIT:ETH] OK PATTERN: score=6/10 (steep_slope=2.46%, trend_2bars, sep=3.65%) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 9] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,085.30 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.64 | OB[imb=-0.24 sup=$67,087.00 res=$67,090.90]
+  [DELTA:BTC] STUCK SL -0.32% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.50 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.09 sup=$2,050.10 res=$2,077.20]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 4] Equity: $30,214.71 | UPnL: $-0.05 | Cash: $28,215.05 | Return: -69.79% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $100,065.17 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7027.69 | OB[imb=+0.74]
+  [BYBIT:ETH] OK PATTERN: score=6/10 (steep_slope=2.46%, trend_2bars, sep=3.65%) trend=2bars
+
+[DELTA BAR 10] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 7s
+  [DELTA:BTC] $67,096.10 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.64 | OB[imb=-0.24 sup=$67,094.10 res=$67,098.00]
+  [DELTA:BTC] STUCK SL -0.33% (can't close — no liquidity)
+  [DELTA:ETH] $2,064.20 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.09 sup=$2,050.65 res=$2,077.75]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 5] Equity: $30,215.80 | UPnL: $-0.04 | Cash: $28,216.07 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $100,209.98 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7034.36 | OB[imb=+0.79]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=2.50%, trend_2bars, sep=3.76%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 11] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,096.30 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.64 | OB[imb=-0.24 sup=$67,093.20 res=$67,097.10]
+  [DELTA:BTC] STUCK SL -0.33% (can't close — no liquidity)
+  [DELTA:ETH] $2,064.30 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.09 sup=$2,050.65 res=$2,077.75]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 6] Equity: $30,217.13 | UPnL: $-0.04 | Cash: $28,217.31 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $100,259.95 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7037.69 | OB[imb=+0.77]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=2.50%, trend_2bars, sep=3.81%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 12] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,077.40 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.64 | OB[imb=-0.24 sup=$67,076.20 res=$67,080.10]
+  [DELTA:BTC] STUCK SL -0.30% (can't close — no liquidity)
+  [DELTA:ETH] $2,064.25 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.15 sup=$2,047.80]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 7] Equity: $30,216.11 | UPnL: $-0.06 | Cash: $28,216.38 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $100,309.92 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7044.35 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=2.52%, trend_2bars, sep=3.85%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 13] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,077.50 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.64 | OB[imb=-0.24 sup=$67,076.10 res=$67,080.00]
+  [DELTA:BTC] STUCK SL -0.30% (can't close — no liquidity)
+  [DELTA:ETH] $2,064.25 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.23 sup=$2,047.75]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 8] Equity: $30,214.26 | UPnL: $-0.05 | Cash: $28,214.63 | Return: -69.79% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $100,095.62 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7818.28 | OB[imb=+1.00]
+  [BYBIT:ETH] OK PATTERN: score=6/10 (steep_slope=1.55%, trend_2bars, sep=4.61%) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 14] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,081.60 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.64 | OB[imb=-0.24 sup=$67,084.50 res=$67,088.40]
+  [DELTA:BTC] STUCK SL -0.31% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.80 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.23 sup=$2,047.75]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 9] Equity: $30,216.20 | UPnL: $-0.06 | Cash: $28,216.47 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,358.49 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7835.01 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.00%, trend_2bars, sep=5.47%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 15] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,066.10 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.66 | OB[imb=-0.24 sup=$67,063.10 res=$67,067.00]
+  [DELTA:BTC] STUCK SL -0.29% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.05 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=+0.06 sup=$2,049.75 res=$2,078.30]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 10] Equity: $30,214.82 | UPnL: $-0.06 | Cash: $28,215.17 | Return: -69.79% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,537.16 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7858.83 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.05%, trend_2bars, sep=5.61%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 16] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,067.90 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.66 | OB[imb=-0.24 sup=$67,066.20 res=$67,070.10]
+  [DELTA:BTC] STUCK SL -0.29% (can't close — no liquidity)
+  [DELTA:ETH] $2,062.95 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=+0.05 sup=$2,049.65 res=$2,078.20]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 11] Equity: $30,214.20 | UPnL: $-0.04 | Cash: $28,214.57 | Return: -69.79% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,751.74 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7887.44 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.10%, trend_2bars, sep=5.78%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 17] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,073.90 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.66 | OB[imb=-0.24 sup=$67,086.40 res=$67,090.30]
+  [DELTA:BTC] STUCK SL -0.30% (can't close — no liquidity)
+  [DELTA:ETH] $2,062.95 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=+0.10 sup=$2,050.45 res=$2,078.95]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 12] Equity: $30,215.84 | UPnL: $-0.00 | Cash: $28,216.07 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,784.31 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7904.80 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.11%, trend_2bars, sep=5.80%, 3_green) trend=2bars
+
+[DELTA BAR 18] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 7s
+  [DELTA:BTC] $67,089.80 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.66 | OB[imb=-0.24 sup=$67,087.80 res=$67,091.70]
+  [DELTA:BTC] STUCK SL -0.32% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.80 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.19 sup=$2,050.45 res=$2,078.95]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 13] Equity: $30,214.76 | Cash: $28,215.05 | Return: -69.79% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,753.79 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7904.80 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.10%, trend_2bars, sep=5.78%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 19] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,089.70 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $159.66 | OB[imb=-0.24 sup=$67,088.00 res=$67,091.90]
+  [DELTA:BTC] STUCK SL -0.32% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.70 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.57 | OB[imb=-0.19 sup=$2,050.45 res=$2,078.95]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 14] Equity: $30,216.19 | UPnL: $-0.01 | Cash: $28,216.41 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,751.74 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7904.80 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.10%, trend_2bars, sep=5.78%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 20] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,081.50 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $161.22 | OB[imb=-0.24 sup=$67,077.40 res=$67,081.30]
+  [DELTA:BTC] STUCK SL -0.31% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.40 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.61 | OB[imb=-0.19 sup=$2,046.15 res=$2,075.70]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 15] Equity: $30,216.05 | UPnL: $-0.01 | Cash: $28,216.27 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,752.77 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7956.88 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.10%, trend_2bars, sep=5.78%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 21] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,080.00 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $161.22 | OB[imb=-0.24 sup=$67,079.00 res=$67,082.90]
+  [DELTA:BTC] STUCK SL -0.31% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.35 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.61 | OB[imb=+0.11 sup=$2,047.75 res=$2,077.95]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 16] Equity: $30,215.69 | UPnL: $-0.01 | Cash: $28,215.93 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,751.74 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7956.88 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.10%, trend_2bars, sep=5.78%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 22] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,080.00 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $161.22 | OB[imb=-0.24 sup=$67,077.40 res=$67,081.30]
+  [DELTA:BTC] STUCK SL -0.31% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.20 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.61 | OB[imb=+0.11 sup=$2,047.65 res=$2,077.85]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 17] Equity: $30,216.06 | UPnL: $-0.03 | Cash: $28,216.30 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,630.73 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7956.88 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.07%, trend_2bars, sep=5.68%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 23] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,066.50 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $161.22 | OB[imb=-0.24 sup=$67,061.40 res=$67,065.30]
+  [DELTA:BTC] STUCK SL -0.29% (can't close — no liquidity)
+  [DELTA:ETH] $2,062.50 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.61 | OB[imb=+0.10 sup=$2,047.65 res=$2,077.05]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 18] Equity: $30,215.87 | UPnL: $-0.04 | Cash: $28,216.13 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,622.57 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7956.88 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.07%, trend_2bars, sep=5.68%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 24] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,062.70 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $161.22 | OB[imb=-0.24 sup=$67,064.60 res=$67,068.50]
+  [DELTA:BTC] STUCK SL -0.28% (can't close — no liquidity)
+  [DELTA:ETH] $2,063.15 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.61 | OB[imb=+0.03 sup=$2,047.65 res=$2,077.60]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 19] Equity: $30,217.83 | UPnL: $-0.03 | Cash: $28,217.96 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $983915.22 RISING | Signal: BUY | ATR: $7607.62 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,622.57 (sig=$100,137.42) | EMA(5m): $95535.40 RISING | Signal: BUY | ATR: $7956.88 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=3.07%, trend_2bars, sep=5.68%, 3_green) trend=2bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 25] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,048.80 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $161.22 | OB[imb=-0.24 sup=$67,044.70 res=$67,048.60]
+  [DELTA:BTC] STUCK SL -0.26% (can't close — no liquidity)
+  [DELTA:ETH] $2,062.55 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.61 | OB[imb=+0.11 sup=$2,047.00 res=$2,076.75]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 20] Equity: $30,215.22 | UPnL: $-0.05 | Cash: $28,215.53 | Return: -69.78% | Positions: 1 | Bear: 0v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.27 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,623.61 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6896.10 | OB[imb=-1.00]
+  [BYBIT:ETH] EXCELLENT PATTERN: score=9/10 (steep_slope=2.93%, trend_3bars, sep=4.36%, 3_green) trend=3bars
+2026-04-02 22:30:09,832 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 22:30:09,843 [INFO] src.risk.evt_risk: EVT fit: xi=0.1164, sigma=0.0254, threshold=0.0488, exceedances=10
+2026-04-02 22:30:09,850 [INFO] src.models.hawkes_process: Hawkes fit: mu=0.6944, alpha=0.0001, beta=1.0000, branching=0.000
+2026-04-02 22:30:09,854 [INFO] src.models.fracdiff: FracDiff: min d=0.95 achieves stationarity (p=0.0006)
+
+[DELTA BAR 26] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,045.30 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $164.62 | OB[imb=-0.24 sup=$67,060.30 res=$67,064.20]
+  [DELTA:BTC] STUCK SL -0.26% (can't close — no liquidity)
+  [DELTA:ETH] $2,061.75 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.67 | OB[imb=+0.18 sup=$2,047.55 res=$2,080.20]
+  [DELTA SLEEP] 8s
+2026-04-02 22:30:21,019 [WARNING] src.data.base_fetcher: API call failed https://gamma-api.polymarket.com/events: HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /events?active=true&closed=false&limit=100 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000002E79D130F50>: Failed to establish a new connection: [Errno 11001] getaddrinfo failed'))
+2026-04-02 22:30:21,020 [WARNING] src.data.polymarket_fetcher: [Polymarket] No events returned or unexpected format
+2026-04-02 22:30:21,022 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (+1) — applying 20% bonus
+2026-04-02 22:30:21,022 [INFO] src.agents.orchestrator: [DEBATE] ETH: Pre-debate: 4 LONG / 0 SHORT / 6 FLAT | Post-debate: 5 LONG / 0 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 22:30:21,022 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 11.04s: dir=1 conf=0.641 scale=0.606 consensus=STRONG data_quality=1.00 audit=EXECUTE
+  [BYBIT:ETH] AGENTS RAW: CALL MODERATE (net=+0.30) | 11 agents | avg_conf=0.40
+2026-04-02 22:30:21,032 [INFO] src.monitoring.journal: Loaded 629 trades from journal
+
+[DELTA BAR 27] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [DELTA:BTC] $67,065.30 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $164.62 | OB[imb=-0.24 sup=$67,054.00 res=$67,057.90]
+  [DELTA:BTC] STUCK SL -0.29% (can't close — no liquidity)
+  [DELTA:ETH] $2,062.15 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.67 | OB[imb=+0.18 sup=$2,047.35 res=$2,079.80]
+  [DELTA SLEEP] 8s
+  [BYBIT:ETH] UNIFIED LLM (1 call, 7 roles):
+    AGENTS: quality=8/10 conflicts=[]
+    BULL: Strong uptrend (slope=+4.367%, 3 bars), steep EMA slope (2.9
+    BEAR: risk=4/10 | The trade could fail if the trend reverses, volume decreases
+    L-LEVEL PREDICTION: L4 | ENTER conf=0.65 size=3%
+    FACILITATOR: Proceed with caution. This trade has a realistic path to L4+ profit but carries 
+2026-04-02 22:30:27,013 [INFO] src.monitoring.journal: Loaded 1201 trades from journal
+  [BYBIT:ETH] BEAR AGENT: risk=8/10 | Late entry (2pts) as price is 5.68% from EMA. Reversal signs (2pts) due to REJECTION WICKS detected.
+  [BYBIT:ETH] BEAR OVERRIDE: risk 4 -> 8 (bear sees more danger)
+2026-04-02 22:30:28,514 [WARNING] src.trading.executor: [ETH] Bear agent error (proceeding without veto): 'charmap' codec can't encode character '\u274c' in position 14: character maps to <undefined>
+  [BYBIT:ETH] LLM DECISION: conf=0.65 size=3% risk=8/10 quality=8/10
+  [BYBIT:ETH] SIZING: 3% of $30,215 = $898 (max $2,000)
+  [BYBIT:ETH] Adjusted qty to minimum 0.01 ($1,026)
+  [BYBIT:ETH] CALL: BUY 0.010000 MARKET ($1,026 = 3% of $30,215)
+  [BYBIT:ETH] LIQUIDITY: spread=0.0% bids=8 asks=3
+  [BYBIT:ETH] LIQUIDITY OK: spread=0.00% bids=8 asks=3
+  [BYBIT:ETH] ORDER OK: 939706b5-bbf4-4ac1-9293-38ff4c146ed2 | SL L1=$100,570.64 (ATR) | OB imbalance=-1.00
+  [BYBIT SLEEP] 1s
+
+[BYBIT BAR 21] Equity: $30,216.05 | UPnL: $-0.05 | Cash: $27,190.14 | Return: -69.78% | Positions: 2 | Bear: 1v/2r
+
+[DELTA BAR 28] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.27 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,623.10 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6982.62 | OB[imb=-1.00]
+  [BYBIT:ETH] HOLD CALL @ $102,623.10 | Now: $102,623.10 | L1 SL=$100,570.64 | P&L: +0.00% |  | OB=-1.00
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $67,055.40 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $164.62 | OB[imb=-0.24 sup=$67,031.10 res=$67,035.00]
+  [DELTA:BTC] STUCK SL -0.27% (can't close — no liquidity)
+  [DELTA:ETH] $2,061.20 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.67 | OB[imb=+0.18 sup=$2,046.90 res=$2,079.35]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 22] Equity: $30,215.90 | UPnL: $-0.11 | Cash: $27,190.06 | Return: -69.78% | Positions: 2 | Bear: 1v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.27 | OB[imb=+0.00 sup=$999,999.00]
+
+[DELTA BAR 29] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,623.10 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6982.62 | OB[imb=-1.00]
+  [BYBIT:ETH] HOLD CALL @ $102,623.10 | Now: $102,623.10 | L1 SL=$100,570.64 | P&L: +0.00% |  | OB=-1.00
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $67,019.00 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $164.62 | OB[imb=-0.24 sup=$66,999.20 res=$67,003.10]
+  [DELTA:BTC] STUCK SL -0.22% (can't close — no liquidity)
+  [DELTA:ETH] $2,060.55 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.67 | OB[imb=-0.07 sup=$2,045.80 res=$2,074.35]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 23] Equity: $30,213.72 | Wallet: $30,214.74 | UPnL: $-1.02 | Cash: $27,188.92 | Return: -69.79% | Positions: 2 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+
+[DELTA BAR 30] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [BYBIT:ETH] $102,537.16 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6994.01 | OB[imb=-1.00]
+  [BYBIT:ETH] HOLD CALL @ $102,623.10 | Now: $102,537.16 | L1 SL=$100,570.64 | P&L: -0.08% |  | OB=-1.00
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $66,980.20 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $164.62 | OB[imb=-0.24 sup=$66,980.10 res=$66,984.00]
+  [DELTA:BTC] STUCK SL -0.16% (can't close — no liquidity)
+  [DELTA:ETH] $2,060.05 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.67 | OB[imb=-0.07 sup=$2,048.15 res=$2,074.00]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 24] Equity: $30,214.15 | Wallet: $30,215.16 | UPnL: $-1.01 | Cash: $27,189.30 | Return: -69.79% | Positions: 2 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,537.16 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6994.01 | OB[imb=-1.00]
+
+[DELTA BAR 31] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [BYBIT:ETH] HOLD CALL @ $102,623.10 | Now: $102,537.16 | L1 SL=$100,570.64 | P&L: -0.08% |  | OB=-1.00
+  [BYBIT SLEEP] 9s
+  [DELTA:BTC] $66,975.70 (sig=$67,137.70) | EMA(5m): $67024.57 RISING | Signal: NEUTRAL | ATR: $164.62 | OB[imb=-0.24 sup=$66,971.90 res=$66,975.80]
+  [DELTA:BTC] STUCK SL -0.15% (can't close — no liquidity)
+  [DELTA:ETH] $2,060.35 (sig=$2,065.90) | EMA(5m): $2062.90 RISING | Signal: NEUTRAL | ATR: $5.67 | OB[imb=-0.07 sup=$2,048.15 res=$2,074.40]
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 25] Equity: $30,214.38 | Wallet: $30,215.40 | UPnL: $-1.03 | Cash: $27,189.52 | Return: -69.79% | Positions: 2 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+
+[DELTA BAR 32] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1
+  [BYBIT:ETH] $102,537.16 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6994.01 | OB[imb=-1.00]
+  [DELTA:BTC] $66,968.20 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $155.56 | OB[imb=-0.24 sup=$66,958.00 res=$66,961.90]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,968.20 | L1 SL=$67,133.76 | P&L: -0.14% |  | OB=-0.24
+  [BYBIT:ETH] HOLD CALL @ $102,623.10 | Now: $102,537.16 | L1 SL=$100,570.64 | P&L: -0.08% |  | OB=-1.00
+  [BYBIT SLEEP] 8s
+  [DELTA:ETH] $2,059.60 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.27 | OB[imb=-0.12 sup=$2,047.55 res=$2,074.75]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+ | SLOPE CONFLICT: PUT but EMA slope=+0.011%
+2026-04-02 22:31:16,760 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 22:31:16,771 [INFO] src.risk.evt_risk: EVT fit: xi=-0.0778, sigma=0.0011, threshold=0.0021, exceedances=10
+2026-04-02 22:31:16,775 [INFO] src.models.hawkes_process: Hawkes fit: mu=0.0912, alpha=0.2203, beta=1.0000, branching=0.220
+2026-04-02 22:31:16,778 [INFO] src.models.fracdiff: FracDiff: min d=0.95 achieves stationarity (p=0.0023)
+2026-04-02 22:31:19,607 [WARNING] src.data.base_fetcher: API call failed https://gamma-api.polymarket.com/events: HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /events?active=true&closed=false&limit=100 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000002E79D130E10>: Failed to establish a new connection: [Errno 11001] getaddrinfo failed'))
+2026-04-02 22:31:19,608 [WARNING] src.data.polymarket_fetcher: [Polymarket] No events returned or unexpected format
+2026-04-02 22:31:19,609 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (-1) — applying 20% bonus
+2026-04-02 22:31:19,609 [INFO] src.agents.orchestrator: [DEBATE] ETH: Pre-debate: 0 LONG / 4 SHORT / 6 FLAT | Post-debate: 0 LONG / 5 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 22:31:19,610 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 2.71s: dir=-1 conf=0.641 scale=0.606 consensus=STRONG data_quality=1.00 audit=EXECUTE
+  [DELTA:ETH] AGENTS RAW: PUT MODERATE (net=-0.30) | 11 agents | avg_conf=0.40
+2026-04-02 22:31:19,617 [INFO] src.monitoring.journal: Loaded 629 trades from journal
+
+[BYBIT BAR 26] Equity: $30,215.44 | UPnL: $+0.10 | Cash: $27,189.46 | Return: -69.78% | Positions: 2 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [DELTA:ETH] UNIFIED LLM (1 call, 7 roles):
+    AGENTS: quality=3/10 conflicts=[]
+    BULL: Steep EMA slope and 1 trend bar indicate a weak entry. Howev
+    BEAR: risk=7/10 | The weak entry score, flat slope, and low volume suggest tha
+    L-LEVEL PREDICTION: L1 | REJECT conf=0.30 size=5%
+    FACILITATOR: SKIP
+  [DELTA:ETH] REJECTED: quality=3/10 risk=7/10 pred=L1 | SKIP
+  [DELTA SLEEP] 1s
+  [BYBIT:ETH] $103,272.54 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6994.01 | OB[imb=-1.00]
+  [BYBIT:ETH] SL L1->L2: $100,570.64 -> $102,623.10 | P&L: +0.63%
+  [BYBIT:ETH] HOLD CALL @ $102,623.10 | Now: $103,272.54 | L1->L2 SL=$102,623.10 | P&L: +0.63% | BREAKEVEN | OB=-1.00
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 33] Equity: $159.06 | Cash: $159.06 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,947.50 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $155.56 | OB[imb=-0.25 sup=$66,952.30 res=$66,956.20]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,947.50 | L1 SL=$67,133.76 | P&L: -0.11% |  | OB=-0.25
+  [DELTA:ETH] $2,058.90 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.27 | OB[imb=-0.13 sup=$2,044.45 res=$2,074.70]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+ | SLOPE CONFLICT: PUT but EMA slope=+0.011%
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 27] Equity: $30,213.29 | Wallet: $30,214.29 | UPnL: $-1.00 | Cash: $27,188.51 | Return: -69.79% | Positions: 2 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,537.16 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6994.01 | OB[imb=-1.00]
+  [BYBIT:ETH] STALE position cleared (not on exchange)
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.91%, trend_3bars, sep=4.29%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 34] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,951.90 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $155.56 | OB[imb=-0.25 sup=$66,940.40 res=$66,944.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,951.90 | L1 SL=$67,133.76 | P&L: -0.12% |  | OB=-0.25
+  [DELTA:ETH] $2,059.20 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.27 | OB[imb=-0.13 sup=$2,044.45 res=$2,074.10]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+ | SLOPE CONFLICT: PUT but EMA slope=+0.011%
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 28] Equity: $30,212.95 | UPnL: $-0.15 | Cash: $28,213.40 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $103,272.54 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6994.01 | OB[imb=-1.00]
+  [BYBIT:ETH] EXCELLENT PATTERN: score=9/10 (steep_slope=3.08%, trend_3bars, sep=4.87%, 3_green) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 35] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,936.40 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $155.56 | OB[imb=-0.25 sup=$66,946.50 res=$66,950.40]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,936.40 | L1 SL=$67,133.76 | P&L: -0.09% |  | OB=-0.25
+  [DELTA:ETH] $2,058.95 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.27 | OB[imb=-0.04 sup=$2,046.25 res=$2,074.10]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+ | SLOPE CONFLICT: PUT but EMA slope=+0.011%
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 29] Equity: $30,216.81 | UPnL: $-0.20 | Cash: $28,217.04 | Return: -69.78% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,537.84 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $6994.01 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.91%, trend_3bars, sep=4.29%) trend=3bars
+
+[DELTA BAR 36] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $66,903.60 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $155.56 | OB[imb=-0.25 sup=$66,899.90 res=$66,903.80]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,903.60 | L1 SL=$67,133.76 | P&L: -0.04% |  | OB=-0.25
+  [DELTA:ETH] $2,058.15 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.27 | OB[imb=-0.16 sup=$2,044.55]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.03%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+ | SLOPE CONFLICT: PUT but EMA slope=+0.011%
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 30] Equity: $30,210.96 | UPnL: $-0.21 | Cash: $28,211.60 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,395.13 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7019.29 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.88%, trend_3bars, sep=4.18%) trend=3bars
+
+[DELTA BAR 37] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $66,889.60 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $155.56 | OB[imb=-0.25 sup=$66,891.10 res=$66,895.00]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,889.60 | L1 SL=$67,133.76 | P&L: -0.02% |  | OB=-0.25
+  [DELTA:ETH] $2,057.60 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.58 | OB[imb=-0.16 sup=$2,044.20]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.06%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 31] Equity: $30,211.31 | UPnL: $-0.19 | Cash: $28,211.91 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,353.51 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7019.29 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.87%, trend_3bars, sep=4.15%) trend=3bars
+
+[DELTA BAR 38] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $66,885.90 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $166.12 | OB[imb=-0.26 sup=$66,873.30 res=$66,877.20]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,885.90 | L1 SL=$67,133.76 | P&L: -0.02% |  | OB=-0.26
+  [DELTA:ETH] $2,057.70 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.58 | OB[imb=-0.23 sup=$2,043.05]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.06%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 32] Equity: $30,213.08 | UPnL: $-0.24 | Cash: $28,213.60 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,350.53 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7019.29 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.87%, trend_3bars, sep=4.15%) trend=3bars
+
+[DELTA BAR 39] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $66,861.40 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $166.12 | OB[imb=-0.26 sup=$66,850.80 res=$66,854.70]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,861.40 | L1 SL=$67,133.76 | P&L: +0.02% |  | OB=-0.26
+  [DELTA:ETH] $2,056.55 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.58 | OB[imb=-0.23 sup=$2,041.85]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.06%, sep=0.25%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 33] Equity: $30,211.27 | UPnL: $-0.18 | Cash: $28,211.85 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $103,272.54 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7019.29 | OB[imb=-1.00]
+  [BYBIT:ETH] EXCELLENT PATTERN: score=9/10 (steep_slope=3.08%, trend_3bars, sep=4.87%, 3_green) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 40] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,870.70 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $166.12 | OB[imb=-0.26 sup=$66,870.60 res=$66,874.50]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,870.70 | L1 SL=$67,133.76 | P&L: +0.01% |  | OB=-0.26
+  [DELTA:ETH] $2,057.25 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.58 | OB[imb=-0.19 sup=$2,042.40 res=$2,070.55]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.06%, sep=0.21%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 34] Equity: $30,212.82 | UPnL: $-0.14 | Cash: $28,213.26 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,349.05 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7019.29 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.87%, trend_3bars, sep=4.15%) trend=3bars
+
+[DELTA BAR 41] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+  [DELTA:BTC] $66,884.90 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $166.12 | OB[imb=-0.26 sup=$66,881.60 res=$66,885.50]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,884.90 | L1 SL=$67,133.76 | P&L: -0.02% |  | OB=-0.26
+  [DELTA:ETH] $2,057.65 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.58 | OB[imb=-0.03 sup=$2,042.40 res=$2,075.70]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.06%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 35] Equity: $30,214.17 | UPnL: $-0.21 | Cash: $28,214.59 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $103,272.54 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7019.29 | OB[imb=-1.00]
+  [BYBIT:ETH] EXCELLENT PATTERN: score=9/10 (steep_slope=3.08%, trend_3bars, sep=4.87%, 3_green) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 42] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,829.00 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $166.12 | OB[imb=-0.28 sup=$66,847.30 res=$66,851.20]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,829.00 | L1 SL=$67,133.76 | P&L: +0.07% |  | OB=-0.28
+  [DELTA:ETH] $2,055.25 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.58 | OB[imb=-0.08 sup=$2,039.55 res=$2,073.20]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.06%, sep=0.31%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 36] Equity: $30,213.24 | UPnL: $-0.20 | Cash: $28,213.71 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,348.31 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7019.29 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.87%, trend_3bars, sep=4.15%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 43] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,819.50 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $174.27 | OB[imb=-0.28 sup=$66,813.20 res=$66,817.10]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,819.50 | L1 SL=$67,133.76 | P&L: +0.08% |  | OB=-0.28
+  [DELTA:ETH] $2,054.85 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.01 sup=$2,038.85 res=$2,070.45]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.09%, sep=0.30%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 37] Equity: $30,213.04 | UPnL: $-0.16 | Cash: $28,213.49 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,160.24 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7052.63 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.82%, trend_3bars, sep=4.00%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 44] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,836.40 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $174.27 | OB[imb=-0.28 sup=$66,851.60 res=$66,855.50]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,836.40 | L1 SL=$67,133.76 | P&L: +0.06% |  | OB=-0.28
+  [DELTA:ETH] $2,054.90 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=+0.03 sup=$2,039.45 res=$2,071.50]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.09%, sep=0.30%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 38] Equity: $30,212.54 | UPnL: $-0.11 | Cash: $28,212.98 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,101.47 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7052.63 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.81%, trend_3bars, sep=3.95%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 45] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,851.00 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $174.27 | OB[imb=-0.28 sup=$66,848.80 res=$66,852.70]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,851.00 | L1 SL=$67,133.76 | P&L: +0.03% |  | OB=-0.28
+  [DELTA:ETH] $2,055.50 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.09 sup=$2,043.85 res=$2,071.95]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.09%, sep=0.27%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 39] Equity: $30,212.95 | UPnL: $-0.10 | Cash: $28,213.35 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,129.34 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7052.63 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.82%, trend_3bars, sep=3.97%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 46] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,850.10 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $174.27 | OB[imb=-0.28 sup=$66,848.10 res=$66,852.00]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,850.10 | L1 SL=$67,133.76 | P&L: +0.04% |  | OB=-0.28
+  [DELTA:ETH] $2,055.80 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.22 sup=$2,043.85]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.09%, sep=0.26%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 40] Equity: $30,212.60 | UPnL: $-0.09 | Cash: $28,213.01 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,179.26 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7052.63 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.83%, trend_3bars, sep=4.01%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 47] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,839.40 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $174.27 | OB[imb=-0.28 sup=$66,849.50 res=$66,853.40]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,839.40 | L1 SL=$67,133.76 | P&L: +0.05% |  | OB=-0.28
+  [DELTA:ETH] $2,055.55 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.22 sup=$2,044.35]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.09%, sep=0.27%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 41] Equity: $30,213.44 | UPnL: $-0.03 | Cash: $28,213.74 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,229.17 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7052.63 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.84%, trend_3bars, sep=4.05%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 48] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,865.40 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $174.27 | OB[imb=-0.28 sup=$66,867.30 res=$66,871.20]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,865.40 | L1 SL=$67,133.76 | P&L: +0.01% |  | OB=-0.28
+  [DELTA:ETH] $2,056.60 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.15 sup=$2,042.65]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.09%, sep=0.22%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 42] Equity: $30,212.05 | UPnL: $-0.00 | Cash: $28,212.42 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,279.09 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7052.63 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.85%, trend_3bars, sep=4.09%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 49] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,871.40 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,867.40 res=$66,871.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,871.40 | L1 SL=$67,133.76 | P&L: +0.00% |  | OB=-0.28
+  [DELTA:ETH] $2,057.00 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.30 sup=$2,044.60]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.06%, sep=0.22%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 43] Equity: $30,212.71 | Cash: $28,213.04 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $1,000,000.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $1,000,000.00 | L1 SL=$988,588.77 | P&L: +0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,329.00 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7319.55 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.86%, trend_3bars, sep=4.13%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 50] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,870.10 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,881.60 res=$66,885.50]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,870.10 | L1 SL=$67,133.76 | P&L: +0.01% |  | OB=-0.28
+  [DELTA:ETH] $2,057.70 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.26 sup=$2,045.15 res=$2,071.55]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.06%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 44] Equity: $30,212.44 | UPnL: $-0.00 | Cash: $28,212.78 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,378.91 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7319.55 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.87%, trend_3bars, sep=4.17%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 51] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,883.60 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,857.80 res=$66,861.70]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,883.60 | L1 SL=$67,133.76 | P&L: -0.01% |  | OB=-0.28
+  [DELTA:ETH] $2,057.70 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.25 sup=$2,044.20 res=$2,070.55]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 3/10 (mild_slope=0.06%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 45] Equity: $30,213.98 | UPnL: $-0.00 | Cash: $28,214.22 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,428.82 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7319.55 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.89%, trend_3bars, sep=4.21%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 52] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,868.60 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,863.90 res=$66,867.80]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,868.60 | L1 SL=$67,133.76 | P&L: +0.01% |  | OB=-0.28
+  [DELTA:ETH] $2,056.65 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=+0.03 sup=$2,044.20 res=$2,071.80]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.06%, sep=0.24%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 46] Equity: $30,212.74 | UPnL: $-0.00 | Cash: $28,213.06 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,478.72 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7319.55 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.90%, trend_3bars, sep=4.25%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 53] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,886.10 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,876.70 res=$66,880.60]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,886.10 | L1 SL=$67,133.76 | P&L: -0.02% |  | OB=-0.28
+  [DELTA:ETH] $2,056.65 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=+0.03 sup=$2,044.85 res=$2,071.80]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.06%, sep=0.24%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 47] Equity: $30,213.35 | UPnL: $-0.00 | Cash: $28,213.63 | Return: -69.79% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] $999,999.00 (sig=$999,999.00) | EMA(5m): $987489.39 RISING | Signal: BUY | ATR: $6593.41 | OB[imb=+0.00 sup=$999,999.00]
+  [BYBIT:BTC] HOLD CALL @ $1,000,000.00 | Now: $999,999.00 | L1 SL=$988,588.77 | P&L: -0.00% |  | OB=+0.00
+  [BYBIT:ETH] $102,528.63 (sig=$102,622.57) | EMA(5m): $97110.33 RISING | Signal: BUY | ATR: $7319.55 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=2.91%, trend_3bars, sep=4.29%) trend=3bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 54] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,878.80 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,891.90 res=$66,895.80]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,878.80 | L1 SL=$67,133.76 | P&L: -0.01% |  | OB=-0.28
+  [DELTA:ETH] $2,056.55 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=+0.02 sup=$2,044.45 res=$2,071.70]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.06%, sep=0.25%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 48] Equity: $30,215.35 | UPnL: $-0.02 | Cash: $28,215.52 | Return: -69.78% | Positions: 1 | Bear: 1v/2r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:35:11,961 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $102,578.53 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $6674.66 | OB[imb=-1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=8/10 (steep_slope=2.22%, trend_4bars, sep=3.34%, 2_green) trend=4bars
+2026-04-02 22:35:13,303 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 22:35:13,313 [INFO] src.risk.evt_risk: EVT fit: xi=0.1164, sigma=0.0254, threshold=0.0488, exceedances=10
+2026-04-02 22:35:13,320 [INFO] src.models.hawkes_process: Hawkes fit: mu=0.6944, alpha=0.0001, beta=1.0000, branching=0.000
+2026-04-02 22:35:13,323 [INFO] src.models.fracdiff: FracDiff: min d=0.95 achieves stationarity (p=0.0000)
+
+[DELTA BAR 55] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,844.80 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,832.80 res=$66,836.70]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,844.80 | L1 SL=$67,133.76 | P&L: +0.04% |  | OB=-0.28
+  [DELTA:ETH] $2,055.00 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.33 sup=$2,042.95]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.07%, sep=0.31%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[DELTA BAR 56] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+2026-04-02 22:35:24,449 [WARNING] src.data.base_fetcher: API call failed https://gamma-api.polymarket.com/events: HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /events?active=true&closed=false&limit=100 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000002E79D130E10>: Failed to establish a new connection: [Errno 11001] getaddrinfo failed'))
+2026-04-02 22:35:24,449 [WARNING] src.data.polymarket_fetcher: [Polymarket] No events returned or unexpected format
+2026-04-02 22:35:24,451 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (+1) — applying 20% bonus
+2026-04-02 22:35:24,451 [INFO] src.agents.orchestrator: [DEBATE] ETH: Pre-debate: 4 LONG / 0 SHORT / 6 FLAT | Post-debate: 5 LONG / 0 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 22:35:24,451 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 11.05s: dir=1 conf=0.641 scale=0.606 consensus=STRONG data_quality=1.00 audit=EXECUTE
+  [BYBIT:ETH] AGENTS RAW: CALL MODERATE (net=+0.30) | 11 agents | avg_conf=0.40
+2026-04-02 22:35:24,459 [INFO] src.monitoring.journal: Loaded 630 trades from journal
+  [DELTA:BTC] $66,835.70 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,840.80 res=$66,844.70]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,835.70 | L1 SL=$67,133.76 | P&L: +0.06% |  | OB=-0.28
+  [DELTA:ETH] $2,054.65 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.33 sup=$2,042.70]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.07%, sep=0.33%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+  [BYBIT:ETH] UNIFIED LLM (1 call, 7 roles):
+    AGENTS: quality=8/10 conflicts=[]
+    BULL: Strong uptrend (slope=+3.901%, 4 bars), increasing volume, e
+    BEAR: risk=6/10 | The trade could be killed by a sudden reversal or consolidat
+    L-LEVEL PREDICTION: L4 | ENTER conf=0.75 size=2%
+    FACILITATOR: Enter long position with 2% of portfolio
+2026-04-02 22:35:30,092 [INFO] src.monitoring.journal: Loaded 1202 trades from journal
+  [BYBIT:ETH] BEAR AGENT: risk=5/10 | Late entry (4.34% from EMA), Long near resistance ($103,272.54, 0.7% away), Loss streak (5 losses in
+  [BYBIT:ETH] BEAR REDUCE: risk=6/10 (>=5) — size 2% -> 1%
+  [BYBIT:ETH] LLM DECISION: conf=0.75 size=1% risk=6/10 quality=8/10
+  [BYBIT:ETH] SIZING: 1% of $30,215 = $302 (max $2,000)
+  [BYBIT:ETH] Adjusted qty to minimum 0.01 ($1,026)
+  [BYBIT:ETH] CALL: BUY 0.010000 MARKET ($1,026 = 1% of $30,215)
+  [BYBIT:ETH] LIQUIDITY: spread=2.6% bids=4 asks=3
+  [BYBIT:ETH] LIQUIDITY OK: spread=2.58% bids=4 asks=3
+  [BYBIT:ETH] ORDER OK: 56516398-fb14-413c-9a14-5da21e04d060 | SL L1=$100,526.96 (ATR) | OB imbalance=-1.00
+  [BYBIT SLEEP] 1s
+
+[DELTA BAR 57] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+
+[BYBIT BAR 49] Equity: $30,185.63 | UPnL: $-0.00 | Cash: $28,185.98 | Return: -69.81% | Positions: 2 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:35:34,832 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [DELTA:BTC] $66,853.10 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.28 sup=$66,860.80 res=$66,864.70]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,853.10 | L1 SL=$67,133.76 | P&L: +0.03% |  | OB=-0.28
+  [BYBIT:ETH] $100,095.62 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $6687.97 | OB[imb=-0.43]
+  [BYBIT:ETH] STALE position cleared (not on exchange)
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=1.65%, trend_4bars, sep=1.40%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+  [DELTA:ETH] $2,055.40 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.33 sup=$2,043.15]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.07%, sep=0.29%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[DELTA BAR 58] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+
+[BYBIT BAR 50] Equity: $30,187.59 | UPnL: $-0.00 | Cash: $28,187.81 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:35:44,970 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [DELTA:BTC] $66,872.00 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.29 sup=$66,887.20 res=$66,891.10]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,872.00 | L1 SL=$67,133.76 | P&L: +0.00% |  | OB=-0.29
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+  [DELTA:ETH] $2,053.50 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.30 sup=$2,042.90 res=$2,069.90]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.07%, sep=0.38%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[DELTA BAR 59] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+
+[BYBIT BAR 51] Equity: $30,185.99 | UPnL: $-0.00 | Cash: $28,186.32 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [DELTA:BTC] $66,896.80 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.29 sup=$66,883.60 res=$66,887.50]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,896.80 | L1 SL=$67,133.76 | P&L: -0.03% |  | OB=-0.29
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:35:56,045 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [DELTA:ETH] $2,056.20 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.31 sup=$2,043.45 res=$2,070.60]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.07%, sep=0.25%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 8s
+
+[DELTA BAR 60] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,889.80 (sig=$67,046.70) | EMA(5m): $67029.49 RISING | Signal: NEUTRAL | ATR: $176.06 | OB[imb=-0.29 sup=$66,891.00 res=$66,894.90]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,889.80 | L1 SL=$67,133.76 | P&L: -0.02% |  | OB=-0.29
+
+[BYBIT BAR 52] Equity: $30,186.08 | UPnL: $-0.00 | Cash: $28,186.40 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:36:06,258 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [DELTA:ETH] $2,056.35 (sig=$2,062.55) | EMA(5m): $2062.82 FALLING | Signal: SELL | ATR: $5.94 | OB[imb=-0.31 sup=$2,043.30 res=$2,070.60]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 4/10 (mild_slope=0.07%, sep=0.25%, 3_red) | EARLY: only 1 trend bar(s), usually need 2+
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 61] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/0r
+  [DELTA:BTC] $66,892.30 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $161.75 | OB[imb=-0.29 sup=$66,891.10 res=$66,895.00]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,892.30 | L1 SL=$67,133.76 | P&L: -0.03% |  | OB=-0.29
+  [DELTA:ETH] $2,056.40 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.56 | OB[imb=-0.37 sup=$2,044.20]
+  [DELTA:ETH] OK PATTERN: score=5/10 (good_slope=0.12%, trend_2bars, 3_red) trend=2bars
+
+[BYBIT BAR 53] Equity: $30,186.29 | UPnL: $-0.00 | Cash: $28,186.60 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:36:16,937 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+2026-04-02 22:36:17,112 [WARNING] src.models.hmm_regime: Too few observations (99) for HMM fitting
+2026-04-02 22:36:17,122 [INFO] src.risk.evt_risk: EVT fit: xi=-0.0503, sigma=0.0010, threshold=0.0022, exceedances=10
+2026-04-02 22:36:17,125 [INFO] src.models.hawkes_process: Hawkes fit: mu=0.0912, alpha=0.2203, beta=1.0000, branching=0.220
+2026-04-02 22:36:17,128 [INFO] src.models.fracdiff: FracDiff: min d=0.95 achieves stationarity (p=0.0430)
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[BYBIT BAR 54] Equity: $30,188.61 | UPnL: $-0.00 | Cash: $28,188.77 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:36:27,018 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+2026-04-02 22:36:27,715 [WARNING] src.data.base_fetcher: API call failed https://gamma-api.polymarket.com/events: HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded with url: /events?active=true&closed=false&limit=100 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000002E79D130E10>: Failed to establish a new connection: [Errno 11001] getaddrinfo failed'))
+2026-04-02 22:36:27,715 [WARNING] src.data.polymarket_fetcher: [Polymarket] No events returned or unexpected format
+2026-04-02 22:36:27,717 [INFO] src.agents.debate_engine: [DEBATE] Unanimous consensus (-1) — applying 20% bonus
+2026-04-02 22:36:27,717 [INFO] src.agents.orchestrator: [DEBATE] ETH: Pre-debate: 0 LONG / 4 SHORT / 6 FLAT | Post-debate: 0 LONG / 5 SHORT / 6 FLAT | Consensus: STRENGTHENED | flipped=0 | strengthened=0
+2026-04-02 22:36:27,717 [INFO] src.agents.orchestrator: [AgentOrchestrator] Cycle complete in 10.50s: dir=-1 conf=0.641 scale=0.606 consensus=STRONG data_quality=1.00 audit=EXECUTE
+  [DELTA:ETH] AGENTS RAW: PUT MODERATE (net=-0.30) | 11 agents | avg_conf=0.40
+2026-04-02 22:36:27,724 [INFO] src.monitoring.journal: Loaded 630 trades from journal
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+  [DELTA:ETH] UNIFIED LLM (1 call, 7 roles):
+    AGENTS: quality=7/10 conflicts=[]
+    BULL: Strong uptrend with steep EMA slope and multiple trend bars.
+    BEAR: risk=6/10 | The EMA is falling, suggesting a downtrend. The current pric
+    L-LEVEL PREDICTION: L1 | REJECT conf=0.45 size=5%
+    FACILITATOR: SKIP
+  [DELTA:ETH] REJECTED: quality=7/10 risk=6/10 pred=L1 | SKIP
+  [DELTA SLEEP] 1s
+
+[DELTA BAR 62] Equity: $159.05 | Cash: $138.44 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,903.90 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $161.75 | OB[imb=-0.28 sup=$66,925.50 res=$66,929.40]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,903.90 | L1 SL=$67,133.76 | P&L: -0.04% |  | OB=-0.28
+  [DELTA:ETH] $2,055.90 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.56 | OB[imb=-0.34 sup=$2,045.25]
+  [DELTA:ETH] OK PATTERN: score=6/10 (good_slope=0.12%, trend_2bars, sep=0.21%, 3_red) trend=2bars
+
+[BYBIT BAR 55] Equity: $30,185.90 | UPnL: $-0.00 | Cash: $28,186.23 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:36:37,441 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 63] Equity: $159.02 | Cash: $71.40 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,920.20 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $161.75 | OB[imb=-0.28 sup=$66,917.40 res=$66,921.30]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,920.20 | L1 SL=$67,133.76 | P&L: -0.07% |  | OB=-0.28
+  [DELTA:ETH] $2,057.45 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.56 | OB[imb=+0.02 sup=$2,044.10 res=$2,067.85]
+  [DELTA:ETH] OK PATTERN: score=5/10 (good_slope=0.12%, trend_2bars, 3_red) trend=2bars
+
+[BYBIT BAR 56] Equity: $30,187.77 | UPnL: $-0.00 | Cash: $28,187.98 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:36:47,934 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 64] Equity: $159.02 | Cash: $71.40 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,918.90 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $161.75 | OB[imb=-0.28 sup=$66,923.00 res=$66,926.90]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,918.90 | L1 SL=$67,133.76 | P&L: -0.07% |  | OB=-0.28
+  [DELTA:ETH] $2,057.70 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.56 | OB[imb=+0.08 sup=$2,044.10 res=$2,067.85]
+  [DELTA:ETH] OK PATTERN: score=5/10 (good_slope=0.12%, trend_2bars, 3_red) trend=2bars
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 57] Equity: $30,187.14 | UPnL: $-0.00 | Cash: $28,187.39 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:36:58,551 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $96,208.80 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7206.21 | OB[imb=+1.00]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.76%, trend_4bars, sep=1.67%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 65] Equity: $159.01 | Cash: $50.79 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,943.60 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $161.75 | OB[imb=-0.28 sup=$66,941.20 res=$66,945.10]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,943.60 | L1 SL=$67,133.76 | P&L: -0.10% |  | OB=-0.28
+  [DELTA:ETH] $2,059.00 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.88 | OB[imb=-0.02 sup=$2,045.40 res=$2,071.65]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 2/10 (mild_slope=0.09%, trend_2bars)
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 58] Equity: $30,188.25 | UPnL: $-0.00 | Cash: $28,188.43 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:37:08,756 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $94,322.36 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7457.74 | OB[imb=+1.00 sup=$92,472.91]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.33%, trend_4bars, sep=3.19%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 66] Equity: $159.01 | Cash: $50.79 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,959.10 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $167.57 | OB[imb=-0.28 sup=$66,919.20 res=$66,923.10]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,959.10 | L1 SL=$67,133.76 | P&L: -0.13% |  | OB=-0.28
+  [DELTA:ETH] $2,058.85 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.88 | OB[imb=+0.05 sup=$2,044.10 res=$2,074.00]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 2/10 (mild_slope=0.09%, trend_2bars)
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 59] Equity: $30,189.85 | UPnL: $-0.00 | Cash: $28,189.93 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:37:19,009 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $94,322.36 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7457.74 | OB[imb=+1.00 sup=$92,472.91]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.33%, trend_4bars, sep=3.19%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 67] Equity: $159.01 | Cash: $50.79 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,916.80 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $167.57 | OB[imb=-0.28 sup=$66,903.10 res=$66,907.00]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,916.80 | L1 SL=$67,133.76 | P&L: -0.06% |  | OB=-0.28
+  [DELTA:ETH] $2,059.00 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.88 | OB[imb=+0.05 sup=$2,043.95 res=$2,074.00]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 2/10 (mild_slope=0.09%, trend_2bars)
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 8s
+
+[BYBIT BAR 60] Equity: $30,187.59 | UPnL: $-0.00 | Cash: $28,187.81 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:37:29,786 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $94,322.36 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7457.74 | OB[imb=+1.00 sup=$92,472.91]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.33%, trend_4bars, sep=3.19%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 68] Equity: $159.01 | Cash: $50.79 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,905.40 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $167.57 | OB[imb=-0.28 sup=$66,893.60 res=$66,897.50]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,905.40 | L1 SL=$67,133.76 | P&L: -0.05% |  | OB=-0.28
+  [DELTA:ETH] $2,058.95 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.88 | OB[imb=+0.12 sup=$2,043.35 res=$2,073.10]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 2/10 (mild_slope=0.09%, trend_2bars)
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 61] Equity: $30,188.34 | UPnL: $-0.00 | Cash: $28,188.52 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:37:40,614 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $94,322.36 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7457.74 | OB[imb=+1.00 sup=$92,472.91]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.33%, trend_4bars, sep=3.19%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 69] Equity: $159.01 | Cash: $50.79 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,910.90 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $167.57 | OB[imb=-0.28 sup=$66,915.70 res=$66,919.60]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,910.90 | L1 SL=$67,133.76 | P&L: -0.05% |  | OB=-0.28
+  [DELTA:ETH] $2,058.90 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.88 | OB[imb=+0.15 sup=$2,044.85 res=$2,075.95]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 2/10 (mild_slope=0.09%, trend_2bars)
+  [DELTA:ETH] DEDUP: waiting for next 5m candle
+  [DELTA SLEEP] 7s
+
+[BYBIT BAR 62] Equity: $30,187.74 | UPnL: $-0.00 | Cash: $28,187.95 | Return: -69.81% | Positions: 1 | Bear: 1v/3r
+  [BYBIT:BTC] ERROR: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+2026-04-02 22:37:50,837 [ERROR] src.trading.executor: Error processing BTC
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1052, in _run_live
+    self._process_asset(asset)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1118, in _process_asset
+    print(f"  [{self._ex_tag}:{asset}] \u26a0 STALE DATA: last 10 candles all ${last_10[-1]:,.2f} — reconnecting")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 14: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\logging\__init__.py", line 1154, in emit
+    stream.write(msg + self.terminator)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 380: character maps to <undefined>
+Call stack:
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1044, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1082, in _bootstrap_inner
+    self._context.run(self.run)
+  File "C:\Users\convo\AppData\Local\Python\pythoncore-3.14-64\Lib\threading.py", line 1024, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\convo\trade\src\main.py", line 32, in run_exchange
+    executor.run()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 993, in run
+    self._run_live()
+  File "C:\Users\convo\trade\src\trading\executor.py", line 1055, in _run_live
+    logger.exception(f"Error processing {asset}")
+Message: 'Error processing BTC'
+Arguments: ()
+  [BYBIT:ETH] $94,322.36 (sig=$102,528.63) | EMA(5m): $98314.39 RISING | Signal: BUY | ATR: $7457.74 | OB[imb=+1.00 sup=$92,472.91]
+  [BYBIT:ETH] STRONG PATTERN: score=7/10 (steep_slope=0.33%, trend_4bars, sep=3.19%) trend=4bars
+  [BYBIT:ETH] DEDUP: waiting for next 5m candle
+  [BYBIT SLEEP] 9s
+
+[DELTA BAR 70] Equity: $159.01 | Cash: $50.79 | Return: -99.84% | Positions: 1 | Bear: 1v/1r
+  [DELTA:BTC] $66,916.30 (sig=$66,893.60) | EMA(5m): $66999.29 FALLING | Signal: SELL | ATR: $167.57 | OB[imb=-0.28 sup=$66,918.50 res=$66,922.40]
+  [DELTA:BTC] HOLD PUT @ $66,874.30 | Now: $66,916.30 | L1 SL=$67,133.76 | P&L: -0.06% |  | OB=-0.28
+  [DELTA:ETH] $2,059.50 (sig=$2,056.55) | EMA(5m): $2061.43 FALLING | Signal: SELL | ATR: $5.88 | OB[imb=+0.15 sup=$2,044.85 res=$2,075.95]
+  [DELTA:ETH] WARNINGS (LLM decides): WEAK entry score 2/10 (mild_slope=0.09%, trend_2bars)

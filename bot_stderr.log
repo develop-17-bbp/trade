@@ -1,0 +1,19 @@
+2026-04-03 00:45:23,227 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-04-03 00:45:23,227 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-04-03 00:45:24,722 [INFO] src.data.fetcher: [BYBIT] Time offset: 0ms
+2026-04-03 00:45:25,631 [INFO] src.data.fetcher: [DELTA] Connected to TESTNET
+2026-04-03 00:45:25,631 [INFO] src.data.fetcher: [DELTA] USD: 157.69
+2026-04-03 00:45:26,181 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-03 00:45:26,186 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-03 00:45:26,187 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-04-03 00:45:26,697 [INFO] src.monitoring.journal: Loaded 1208 trades from journal
+2026-04-03 00:45:26,709 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-03 00:45:26,710 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+2026-04-03 00:45:29,642 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-04-03 00:45:29,643 [INFO] src.data.fetcher: [BYBIT] USDT: 29,958.28 | BTC: 0.000000
+2026-04-03 00:45:29,738 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-03 00:45:29,738 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-03 00:45:29,739 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-04-03 00:45:29,945 [INFO] src.monitoring.journal: Loaded 1208 trades from journal
+2026-04-03 00:45:29,947 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-03 00:45:29,947 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents

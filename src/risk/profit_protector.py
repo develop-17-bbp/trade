@@ -207,7 +207,7 @@ class ProfitProtector:
             if trade_quality.confidence < 0.70:
                 return False, f"Down {profit_status['underwater_pct']:.1f}% from peak and low confidence"
         
-        return True, f"✅ Trade approved: {trade_quality.recommendation} (Quality {trade_quality.quality_score:.0f}/100)"
+        return True, f"Trade approved: {trade_quality.recommendation} (Quality {trade_quality.quality_score:.0f}/100)"
     
     def log_trade_result(self, entry_price: float, exit_price: float, 
                          confidence: float, position_size: float = 1.0):

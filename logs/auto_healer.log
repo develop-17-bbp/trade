@@ -1,24 +1,94 @@
-2026-04-02 00:28:03,090 [WARNING] Failed to get diagnosis for error: 2026-04-01 21:55:15,697 [WARNING] src.trading.executor: [BTC] Bear agent failed:
-2026-04-02 00:28:04,570 [INFO] [DIAGNOSIS] critical | The error occurred because the 'NoneType' value was passed to a function expecting a string or real 
-2026-04-02 00:28:04,571 [INFO] [FIX] applied=False | null_guard | Low severity, monitoring only
-2026-04-02 00:28:06,134 [INFO] [DIAGNOSIS] critical | The error occurred because the `facilitator` function in `src/trading/executor.py` expects a string 
-2026-04-02 00:28:06,135 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
-2026-04-02 00:28:08,366 [INFO] [DIAGNOSIS] critical | The error occurred because the 'facilitator' parameter in the trading executor is being passed a Non
-2026-04-02 00:28:08,367 [INFO] [FIX] applied=False | null_guard | Low severity, monitoring only
-2026-04-02 00:28:10,376 [INFO] [DIAGNOSIS] critical | The error occurred because the 'NoneType' value was passed to a function expecting a string or real 
-2026-04-02 00:28:10,376 [INFO] [FIX] applied=False | null_guard | Low severity, monitoring only
-2026-04-02 00:30:47,148 [INFO] [DIAGNOSIS] critical | The error indicates an issue with the Bear agent in the BTC market. It seems there's extra data caus
-2026-04-02 00:30:47,149 [INFO] [FIX] applied=False | exchange_api | Low severity, monitoring only
-2026-04-02 00:30:49,367 [INFO] [DIAGNOSIS] critical | The error occurs due to a NoneType being passed where a real number is expected in the facilitator f
-2026-04-02 00:30:49,367 [INFO] [FIX] applied=False | exchange_api | Low severity, monitoring only
-2026-04-02 00:30:51,595 [INFO] [DIAGNOSIS] critical | The error occurs because a NoneType is being passed to the float() function where a real number or s
-2026-04-02 00:30:51,596 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
-2026-04-02 00:30:53,662 [INFO] [DIAGNOSIS] critical | The error occurs because a NoneType is being passed to the float() function where it expects a strin
-2026-04-02 00:30:53,662 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
-2026-04-02 00:30:55,800 [INFO] [DIAGNOSIS] critical | The error occurs because a NoneType is being passed to the float() function where a string or real n
-2026-04-02 00:30:55,801 [INFO] [FIX] applied=False | type_cast_guard | Low severity, monitoring only
-2026-04-02 00:38:10,880 [INFO] [FIX] applied=False | logging_improvement | Known transient issue
-2026-04-02 00:38:10,882 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
-2026-04-02 00:38:10,884 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
-2026-04-02 00:38:10,886 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
-2026-04-02 00:38:10,888 [INFO] [FIX] applied=False | type_cast_guard | Known transient issue
+  [HEALER] GPU LLM: mistral:latest @ https://spas-inclusive-breaking-frontier.trycloudflare.com
+  [HEALER] Auto-fix: ON | Max 5/hr
+============================================================
+  AUTO-HEALER DAEMON
+  LLM: mistral:latest @ https://spas-inclusive-breaking-frontier.trycloudflare.com
+  Watching: C:\Users\convo\trade\logs\system_output.log
+  Scan interval: 120s
+  Auto-fix: ON
+============================================================
+  [HEALER] Starting from end of log (2907251 bytes)
+
+  [PERF] Performance Issues Detected:
+    - LOW WIN RATE: 0% (0W/20L in last 20 trades)
+  [PERF] Market: unclear
+  [PERF] Pause: YES
+  [PERF] Notes: The current strategy seems to have a high confidence threshold and aggressive stop loss levels, whic
+
+  [HEALER] Scanning... (21:15:33 UTC)
+  [HEALER] Found 1 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:15:29,834 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+
+  [HEALER] Scanning... (21:17:33 UTC)
+  [HEALER] Found 1 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:15:49,367 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+
+  [HEALER] Scanning... (21:19:33 UTC)
+  [HEALER] 2 lines scanned — no errors found.
+
+  [HEALER] Scanning... (21:21:33 UTC)
+  [HEALER] Found 2 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:20:21,419 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:20:38,010 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+
+  [HEALER] Scanning... (21:23:33 UTC)
+  [HEALER] No new log lines.
+
+  [HEALER] Scanning... (21:25:33 UTC)
+  [HEALER] Found 1 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:25:20,160 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+
+  [HEALER] Scanning... (21:27:33 UTC)
+  [HEALER] No new log lines.
+
+  [HEALER] Scanning... (21:29:33 UTC)
+  [HEALER] No new log lines.
+
+  [HEALER] Scanning... (21:31:33 UTC)
+  [HEALER] Found 2 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:30:37,304 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:31:03,309 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+
+  [HEALER] Scanning... (21:33:33 UTC)
+  [HEALER] Found 4 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:32:18,558 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:32:18,558 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:32:39,398 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:32:39,399 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+
+  [PERF] Performance Issues Detected:
+    - LOW WIN RATE: 0% (0W/20L in last 20 trades)
+  [PERF] Market: unclear
+  [PERF] Pause: YES
+  [PERF] Notes: The strategy seems to be sensitive to market conditions. Consider implementing a more robust risk ma
+
+  [HEALER] Scanning... (21:35:37 UTC)
+  [HEALER] 4 lines scanned — no errors found.
+
+  [HEALER] Scanning... (21:37:37 UTC)
+  [HEALER] Found 2 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:36:32,353 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:36:52,805 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+
+  [HEALER] Scanning... (21:39:37 UTC)
+  [HEALER] Found 3 new error(s)
+  [HEALER] Analyzing: 2026-04-02 21:37:46,302 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:38:07,254 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+  [HEALER] Analyzing: 2026-04-02 21:38:07,255 [WARNING] src.data.base_fetcher: API call failed https:/
+  [TIER1] Transient (no fix needed): Transient network error. System will retry next poll cycle automatically.
+2026-04-02 21:39:37,273 [INFO] [FIX] applied=False | retry_logic | Transient issue
