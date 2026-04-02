@@ -50,12 +50,14 @@ class TradeJournal:
         order_type: str = "market",
         duration_minutes: float = 0.0,
         order_id: str = "",
+        exchange: str = "",
         extra: Optional[Dict] = None,
     ) -> dict:
         """Append a single trade record as one JSON line."""
         record = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "asset": asset,
+            "exchange": exchange,
             "action": action,
             "entry_price": entry_price,
             "exit_price": exit_price,
@@ -87,10 +89,10 @@ class TradeJournal:
     # Read
     # ------------------------------------------------------------------
 
-    def load_trades(self, asset: Optional[str] = None) -> List[dict]:
+    def load_trades(self, asset: Optional[str] = None, exchange: Optional[str] = None) -> List[dict]:
         """
         Read all trade records from the JSONL file.
-        Optionally filter by asset.
+        Optionally filter by asset and/or exchange.
         """
         trades: List[dict] = []
 
@@ -106,8 +108,13 @@ class TradeJournal:
                         continue
                     try:
                         record = json.loads(line)
-                        if asset is None or record.get("asset") == asset:
-                            trades.append(record)
+                        if asset is not None and record.get("asset") != asset:
+                            continue
+                        if exchange is not None and record.get("exchange", "") != "":
+                            # Only filter if record HAS exchange tag (backward compat with old entries)
+                            if record.get("exchange") != exchange:
+                                continue
+                        trades.append(record)
                     except json.JSONDecodeError as e:
                         logger.warning("Skipping malformed line %d: %s", lineno, e)
         except Exception as e:

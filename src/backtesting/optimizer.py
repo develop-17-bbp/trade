@@ -163,7 +163,7 @@ def run_optimization(asset: str = 'BTC', n_trials: int = 100, metric: str = 'sha
             print(f"    ✓ Strategy is profitable across ALL folds — low overfit risk")
         else:
             profitable = sum(1 for p in pnls if p > 0)
-            print(f"    ⚠ Profitable in {profitable}/{len(pnls)} folds — some overfit risk")
+            print(f"    WARNING: Profitable in {profitable}/{len(pnls)} folds - some overfit risk")
 
     # Save best params
     output = {

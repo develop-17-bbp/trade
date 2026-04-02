@@ -611,6 +611,37 @@ class DeltaClient:
                     'private': 'https://cdn-ind.testnet.deltaex.org',
                 }
 
+            # Sync clock with Delta server to prevent expired_signature errors
+            # Delta rejects if client timestamp > server timestamp (even by a few seconds)
+            # CCXT load_time_difference doesn't work for Delta (returns 0), so we
+            # measure drift using the HTTP Date header from any Delta API response.
+            try:
+                import requests as _req
+                from email.utils import parsedate_to_datetime
+                base_url = 'https://cdn-ind.testnet.deltaex.org' if testnet else 'https://api.delta.exchange'
+                local_before = time.time()
+                resp = _req.get(f"{base_url}/v2/settings", timeout=5)
+                local_after = time.time()
+                server_date = resp.headers.get('Date', '')
+                if server_date:
+                    server_ts = parsedate_to_datetime(server_date).timestamp()
+                    local_mid = (local_before + local_after) / 2
+                    drift_s = local_mid - server_ts  # positive = client ahead
+                    if drift_s > 1.0:
+                        # Client is ahead — apply negative offset with 2s safety margin
+                        self.exchange.timeOffset = -int((drift_s + 2) * 1000)
+                        logger.info(f"[DELTA] Clock drift: client {drift_s:.1f}s ahead — applying offset {self.exchange.timeOffset}ms")
+                    else:
+                        logger.info(f"[DELTA] Clock OK (drift {drift_s:.1f}s)")
+                else:
+                    # No Date header — apply conservative offset
+                    self.exchange.timeOffset = -10000
+                    logger.warning("[DELTA] No Date header — applying -10s offset")
+            except Exception as e:
+                # Last resort: apply conservative negative offset (client usually ahead)
+                self.exchange.timeOffset = -10000
+                logger.warning(f"[DELTA] Time sync failed ({e}) — applying -10s offset")
+
             # Verify auth
             balance = self.exchange.fetch_balance()
             usd = float(balance.get('USD', {}).get('total', 0) or 0)
