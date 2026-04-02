@@ -1,6 +1,8 @@
 # ── General Settings ──
 # paper/testnet: non-live execution. With BYBIT_DEMO=true + Bybit only, orders go to Bybit demo API (not Bybit testnet).
 mode: paper
+# Poll: max delay AFTER a signal-timeframe candle closes before the bot sees it (~poll_interval).
+# For 15m signals, prefer 10–15s if you want entries/exits closer to the bar (still bounded by "confirmed bar" logic for entries).
 poll_interval: 30             # how often the engine wakes: refetch prices, OHLCV, order book (~30s)
 trade_cooldown_seconds: 30    # spec §4.4: min seconds between trades per asset
 
@@ -29,6 +31,10 @@ adaptive:
   # spec §4.1 pre-LLM pattern score (0–10): min 3, min 1 confirmed EMA trend bar
   entry_pattern_min_score: 3
   entry_min_trend_bars: 1
+  # EMA slope deceleration → FALLING_STABILIZING / RISING_STABILIZING (logs + LLM + optional crossover skip)
+  trend_stabilize_decel_ratio: 0.55   # |1-bar slope| < this × |avg 3-bar slope| ⇒ stabilising
+  trend_stabilize_atr_k: 0.06         # flat-threshold scales with ATR/prev_EMA (capped)
+  entry_block_stabilizing_crossover: false  # if true, skip EMA crossover BUY/SELL when phase is *_STABILIZING
 
 # ── Risk (minimal — daily loss limit only) ──
 risk:
@@ -55,7 +61,7 @@ ai:
   bear_agent_enabled: true        # Risk scoring inside unified LLM (spec §6)
   bear_veto_threshold: 10         # spec §6.2: risk_score >= 10 → VETO
   bear_reduce_threshold: 8        # spec §6.2: risk_score >= 8 → reduce size 50%
-  llm_min_confidence: 0.60        # Bull confidence gate (was 0.80 per spec §5.3)
+  llm_min_confidence: 0.70        # Bull confidence gate (was 0.80 per spec §5.3)
   llm_fallback_confidence: 0.75   # spec §5.3 when unified LLM call fails
   llm_fallback_confidence_gate: 0.75  # pass gate on LLM failure if conf >= this
   # spec §1 / §5: math agents inform context; do not veto entries or dilute LLM confidence
@@ -86,8 +92,15 @@ execution:
   entry_type: "market"
   exit_type: "market"
   bybit_hedge_mode: true
-  # signal_timeframe: trade decisions — EMA(8), ATR, entries, dedup (confirmed bars). Use 30m or 1h for slower, stabler signals.
+  # signal_timeframe: EMA/signal/entries use the last CLOSED bar only — direction updates at candle close (not mid-bar).
+  # Shorter TF (e.g. 5m) = faster signals, more noise. Longer = slower entries by design.
   signal_timeframe: "15m"
+  # Trailing SL: confirmed_close = exit only after closed bar's close crosses SL (can feel "end of candle").
+  # intrabar_wick = exit when live price OR current bar wick on signal TF hits SL (faster; more wick stop-outs).
+  sl_exit_mode: "confirmed_close"
+  # after_llm = one unified LLM call per closed signal candle (reject blocks until next bar).
+  # after_order = re-run LLM each poll until an order fills or the candle changes (fixes improving pattern + DEDUP lockout; more Ollama load).
+  entry_dedup_scope: "after_order"
   # Shorter TF for optional momentum filter (should be one of analysis_timeframes, usually 1m).
   context_timeframe: "1m"
   # Every poll: fetch each TF below and compute EMA(8) trend (for logs + unified LLM). Reuses signal TF data (no double fetch).
@@ -96,3 +109,20 @@ execution:
   mtf_confluence_min: 0
   # If true, skip LONG when context_timeframe momentum is down / SHORT when up (see executor logs).
   require_context_alignment: true
+  # Position sizing: dynamic blends LLM % with conviction (confidence, trade_quality, MTF align, inverse risk).
+  # Larger caps increase both profit potential and loss size vs fees. conservative ≈ old ~5% / $2k caps for equity ≥ $500.
+  sizing:
+    mode: dynamic
+    small_account_equity_usd: 500
+    max_pct_small_account: 25
+    max_pct: 28
+    min_pct: 2
+    conviction_power: 1.15
+    llm_weight: 0.32
+    max_trade_usd: 5000
+    max_equity_fraction: 0.42
+    # Daily ramp vs session PnL (realized + unrealized): goal = wins × $/win (default 10 × $20 = $200).
+    target_successful_trades_per_day: 10
+    target_profit_usd_per_trade: 20
+    # daily_profit_target_usd: 300   # optional; if set > 0, overrides the product above
+    daily_ramp_max_mult: 1.45
