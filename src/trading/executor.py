@@ -371,6 +371,10 @@ class TradingExecutor:
         self.last_signal_candle: Dict[str, float] = {}  # Track candle timestamp to avoid re-entry on same candle
         self.failed_close_assets: Dict[str, float] = {}  # Assets that failed to close — skip until manual resolution
 
+        # LightGBM auto-retrain counter
+        self._lgbm_trades_since_retrain: int = 0
+        self._lgbm_retrain_interval: int = 50  # Retrain every 50 closed trades
+
         # Bear/Risk veto agent
         self.bear_enabled: bool = ai_cfg.get('bear_agent_enabled', True)
         self.bear_veto_threshold: int = ai_cfg.get('bear_veto_threshold', 7)
@@ -1767,7 +1771,18 @@ class TradingExecutor:
         import datetime
         utc_hour = datetime.datetime.utcnow().hour
         if utc_hour < 6 or utc_hour >= 18:
-            math_filter_warnings.append(f"TIME: overnight session (UTC {utc_hour}:00) — historically weaker")
+            math_filter_warnings.append(f"TIME: overnight session (UTC {utc_hour}:00) -- historically weaker")
+
+        # ── JOURNAL-LEARNED: Dangerous hours hard block ──
+        # Data: Hours 19-04 lose money consistently (L1 death rate 60%+)
+        # Profitable hours: 06-13 (WR 57%, net +$1,164)
+        dangerous_hours = self.config.get('filters', {}).get('dangerous_hours', [19, 20, 21, 22, 23, 0, 1, 2, 3, 4])
+        if utc_hour in dangerous_hours and self.config.get('filters', {}).get('block_dangerous_hours', False):
+            print(f"  [{self._ex_tag}:{asset}] HOUR BLOCK: UTC {utc_hour}:00 is a high-loss hour (journal data)")
+            return
+
+        # Flag for position sizing: reduce size during off-hours
+        self._is_profitable_hour = utc_hour in [6, 7, 8, 9, 10, 12, 13, 16]
 
         # ══════════════════════════════════════════════════════════
         # MULTI-TIMEFRAME TREND ALIGNMENT FILTER
@@ -2761,6 +2776,14 @@ class TradingExecutor:
         if asset not in self.bear_veto_stats:
             self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
         self.bear_veto_stats[asset]['passed'] += 1
+
+        # ── Off-hour size reduction (journal-learned) ──
+        if not getattr(self, '_is_profitable_hour', True):
+            reduce_factor = self.config.get('filters', {}).get('reduce_size_off_hours', 0.5)
+            if reduce_factor < 1.0:
+                old_size = size_pct
+                size_pct = size_pct * reduce_factor
+                print(f"  [{self._ex_tag}:{asset}] OFF-HOUR: UTC {datetime.datetime.utcnow().hour}:00 -- size {old_size:.0f}% -> {size_pct:.0f}% (journal pattern)")
 
         # ── Edge Positioning: adjust size by historical win rate ──
         if self.edge_enabled and asset in self.edge_stats:
@@ -3808,6 +3831,22 @@ class TradingExecutor:
                         exit_price=price,
                         bars_held=bars_held,
                     )
+                # Auto-retrain after N trades
+                self._lgbm_trades_since_retrain += 1
+                if self._lgbm_trades_since_retrain >= self._lgbm_retrain_interval:
+                    try:
+                        print(f"  [{self._ex_tag}] LGBM AUTO-RETRAIN: {self._lgbm_trades_since_retrain} trades accumulated")
+                        self._lgbm.retrain_from_log(max_examples=500)
+                        self._lgbm_trades_since_retrain = 0
+                        # Save updated model
+                        import os as _os
+                        model_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models')
+                        _os.makedirs(model_dir, exist_ok=True)
+                        if self._lgbm._lgb_model:
+                            self._lgbm._lgb_model.save_model(_os.path.join(model_dir, 'lgbm_latest.txt'))
+                            print(f"  [{self._ex_tag}] LGBM: Retrained model saved")
+                    except Exception as re:
+                        logger.warning(f"LightGBM retrain error: {re}")
             except Exception as e:
                 logger.debug(f"LightGBM log_trade error: {e}")
 
