@@ -47,7 +47,7 @@ ai:
   claude_model: "claude-haiku-4-5" # Cost-effective for trade decisions (~$0.001/call)
   use_llm_trade_decider: true
   llm_trade_decider_mode: "primary"
-  llm_trade_conf_threshold: 0.40
+  llm_trade_conf_threshold: 0.60
   rate_limit_calls_per_minute: 15
   fallback_on_quota_error: true
   use_local_on_failure: true
@@ -74,6 +74,8 @@ monitor:
 max_hold_minutes: 360             # Close stale/losing positions after 6 hours
 
 # ── Order Execution ──
+# LIMIT preferred: places at best bid/ask for instant fill + slippage protection
+# Market orders pay the spread and can slip badly on thin testnet books
 execution:
-  entry_type: "market"
-  exit_type: "market"
+  entry_type: "limit"
+  exit_type: "limit"

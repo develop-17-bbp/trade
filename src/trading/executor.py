@@ -84,6 +84,20 @@ try:
 except Exception:
     PROFIT_PROTECTOR_AVAILABLE = False
 
+# VPIN Guard — Volume-synchronous Probability of Informed Trading (adverse selection)
+try:
+    from src.risk.vpin_guard import VPINGuard
+    VPIN_AVAILABLE = True
+except Exception:
+    VPIN_AVAILABLE = False
+
+# Hurst Exponent — regime detection (trending vs mean-reverting vs random walk)
+try:
+    from src.models.hurst import HurstExponent
+    HURST_AVAILABLE = True
+except Exception:
+    HURST_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -143,7 +157,7 @@ class TradingExecutor:
             self._use_claude = False
 
         # Quality gates — bear veto handles dangerous trades, so confidence bar can be lower
-        self.min_confidence: float = 0.40  # Enter when LLM sees directional edge (bear veto catches bad ones)
+        self.min_confidence: float = 0.60  # Data: conf >= 0.7 is profitable. 0.6 gives brain some room.
         self.min_atr_ratio: float = 0.0003
         self.trade_cooldown: float = 300.0       # 5 min between any trades (was 120 — caused churning)
         self.post_close_cooldown: float = 600.0   # 10 min after closing before new entry (was 180 — too short)
@@ -240,6 +254,27 @@ class TradingExecutor:
                 print(f"  [PP] Profit Protector ACTIVE — trade quality rating for LLM")
             except Exception as e:
                 print(f"  [PP] Profit Protector init failed ({e})")
+
+        # ── VPIN Guard (adverse selection / toxic flow detection) ──
+        self._vpin_guards: Dict[str, Any] = {}
+        if VPIN_AVAILABLE:
+            try:
+                for asset in self.assets:
+                    # BTC: larger bucket (1.0), ETH: smaller (10.0 contracts)
+                    bucket = 1.0 if asset == 'BTC' else 10.0
+                    self._vpin_guards[asset] = VPINGuard(bucket_size=bucket, window_buckets=50, threshold=0.7)
+                print(f"  [VPIN] VPIN Guard ACTIVE — toxic flow detection for {list(self._vpin_guards.keys())}")
+            except Exception as e:
+                print(f"  [VPIN] VPIN Guard init failed ({e})")
+
+        # ── Hurst Exponent (regime detection: trending vs random vs mean-reverting) ──
+        self._hurst = None
+        if HURST_AVAILABLE:
+            try:
+                self._hurst = HurstExponent(min_window=20)
+                print(f"  [HURST] Hurst Exponent ACTIVE — regime detection (H>0.55=trend, H<0.45=revert)")
+            except Exception as e:
+                print(f"  [HURST] Hurst init failed ({e})")
 
         # Set leverage to 1x (prevent amplified losses)
         try:
@@ -1242,6 +1277,19 @@ class TradingExecutor:
                 self._try_reconnect(asset)
                 return
 
+        # ── TESTNET PRICE SANITY: reject insane candle jumps (>8% between candles) ──
+        # Bybit testnet BTC swings from $110K to $922K — these aren't real prices
+        # Real BTC moves ~0.1% per 5min candle, not 50%
+        if len(closes) >= 3:
+            for i in range(-2, 0):
+                prev_c = closes[i - 1]
+                curr_c = closes[i]
+                if prev_c > 0:
+                    jump_pct = abs(curr_c - prev_c) / prev_c * 100
+                    if jump_pct > 8.0:
+                        print(f"  [{self._ex_tag}:{asset}] PRICE JUMP: {jump_pct:.1f}% between candles (${prev_c:,.0f} -> ${curr_c:,.0f}) — skipping unreliable data")
+                        return
+
         # ══════════════════════════════════════════════════════════════
         # HIGHER TIMEFRAME TREND ALIGNMENT (1h + 4h)
         # Fetch 1h and 4h candles, compute EMA(8) direction on each
@@ -1401,6 +1449,17 @@ class TradingExecutor:
         except Exception:
             ob_levels = {'bid_wall': 0, 'ask_wall': 0, 'bid_walls': [], 'ask_walls': [], 'imbalance': 0, 'bid_depth_usd': 0, 'ask_depth_usd': 0}
 
+        # ── Feed VPIN guard with recent candle volume ──
+        if asset in self._vpin_guards and len(closes) >= 3:
+            try:
+                for i in range(-3, -1):  # Last 2 confirmed candles
+                    idx = len(closes) + i
+                    c, o, v = closes[idx], opens[idx], volumes[idx]
+                    side = 'buy' if c >= o else 'sell'
+                    self._vpin_guards[asset].add_trade(c, v, side)
+            except Exception:
+                pass
+
         # ── Signal from 5m EMA crossover (CONFIRMED candles only) ──
         signal = "NEUTRAL"
 
@@ -1474,32 +1533,14 @@ class TradingExecutor:
             if not price_falling:
                 signal = "BUY"
 
-        # CASE 2: REVERSAL signals — counter-trend on exhaustion
-        # PUT in uptrend: price far ABOVE EMA + declining volume + rejection wicks + price falling
-        if signal == "NEUTRAL" and ema_direction == "RISING" and price > current_ema:
-            exhaustion_signs = sum([
-                ema_separation > 3.0,      # overextended above EMA
-                vol_declining,              # volume dying
-                has_rejection_wicks,        # sellers fighting back
-                price_falling,              # last candles turning down
-            ])
-            if exhaustion_signs >= 3:
-                signal = "SELL"  # PUT — short the exhausted uptrend
-                is_reversal_signal = True
-                print(f"  [{self._ex_tag}:{asset}] REVERSAL PUT: uptrend exhausted ({exhaustion_signs}/4 signs) — shorting at {ema_separation:.1f}% above EMA")
-
-        # CALL in downtrend: price far BELOW EMA + declining volume + rejection wicks + price rising
-        if signal == "NEUTRAL" and ema_direction == "FALLING" and price < current_ema:
-            exhaustion_signs = sum([
-                ema_separation > 3.0,      # overextended below EMA
-                vol_declining,              # selling pressure dying
-                has_rejection_wicks,        # buyers fighting back
-                price_rising,              # last candles turning up
-            ])
-            if exhaustion_signs >= 3:
-                signal = "BUY"  # CALL — long the exhausted downtrend
-                is_reversal_signal = True
-                print(f"  [{self._ex_tag}:{asset}] REVERSAL CALL: downtrend exhausted ({exhaustion_signs}/4 signs) — buying at {ema_separation:.1f}% below EMA")
+        # CASE 2: REVERSAL signals — DISABLED
+        # Data analysis: ALL profitable trades were trend-following (L3→L46 runners).
+        # Counter-trend reversals fight the market and die at L1.
+        # Keeping the code for future use but not generating reversal signals.
+        # if signal == "NEUTRAL" and ema_direction == "RISING" and price > current_ema:
+        #     ... reversal PUT logic disabled ...
+        # if signal == "NEUTRAL" and ema_direction == "FALLING" and price < current_ema:
+        #     ... reversal CALL logic disabled ...
 
         ob_imb = ob_levels.get('imbalance', 0)
         ob_bid = ob_levels.get('bid_wall', 0)
@@ -1556,6 +1597,17 @@ class TradingExecutor:
         # Only trade when there's a signal (BUY/SELL from crossover or strong trend)
         if signal == "NEUTRAL":
             return
+
+        # Initialize math filter warnings list (used throughout evaluation)
+        math_filter_warnings = []
+
+        # ── TIME-OF-DAY CONTEXT (informational, not a block) ──
+        # Data analysis: 06:00-17:00 UTC = profitable, overnight = losing
+        # Passed to LLM as context but NOT blocking — user wants 24/7 trading
+        import datetime
+        utc_hour = datetime.datetime.utcnow().hour
+        if utc_hour < 6 or utc_hour >= 18:
+            math_filter_warnings.append(f"TIME: overnight session (UTC {utc_hour}:00) — historically weaker")
 
         # ══════════════════════════════════════════════════════════
         # MULTI-TIMEFRAME TREND ALIGNMENT FILTER
@@ -1690,7 +1742,6 @@ class TradingExecutor:
         is_overextended = ema_separation > 10.0
 
         # ── Math context for LLM (informational — LLM decides what matters) ──
-        math_filter_warnings = []
         # Only warn on genuinely concerning conditions, not routine
         if entry_score <= 2:
             math_filter_warnings.append(f"LOW score {entry_score}/10 ({', '.join(score_reasons) or 'no momentum'})")
@@ -1892,6 +1943,42 @@ class TradingExecutor:
                 if range_pct < 0.3:
                     print(f"  [{self._ex_tag}:{asset}] RANGING: {range_pct:.2f}% range over 10 candles — sitting out")
                     return
+
+        # ── HURST REGIME GATE ──
+        # If market is random walk or mean-reverting, EMA trend signals get stopped at L1
+        # Only block when confidence is HIGH that regime is anti-trend (R^2 > 0.7)
+        hurst_regime = 'unknown'
+        hurst_value = 0.5
+        if self._hurst and len(closes) >= 50:
+            try:
+                import numpy as _np
+                hurst_result = self._hurst.compute(_np.array(closes), window=min(200, len(closes)))
+                hurst_value = hurst_result['hurst']
+                hurst_regime = hurst_result['regime']
+                hurst_conf = hurst_result['r_squared']
+
+                if hurst_regime == 'mean_reverting' and hurst_conf > 0.7:
+                    # Market is actively mean-reverting — trend signals will fail
+                    print(f"  [{self._ex_tag}:{asset}] HURST BLOCK: H={hurst_value:.2f} ({hurst_regime}) R2={hurst_conf:.2f} — trend signals unreliable")
+                    return
+                elif hurst_regime == 'random' and hurst_conf > 0.7:
+                    # Random walk — add warning but don't block (weaker signal)
+                    math_filter_warnings.append(f"HURST: H={hurst_value:.2f} random walk — trend may not persist")
+            except Exception:
+                pass
+
+        # ── VPIN TOXIC FLOW CHECK ──
+        # If order flow is one-sided (informed traders), our entries get front-run
+        vpin_status = None
+        if asset in self._vpin_guards:
+            try:
+                vpin_status = self._vpin_guards[asset].is_flow_toxic()
+                if vpin_status['is_toxic']:
+                    math_filter_warnings.append(f"VPIN: {vpin_status['vpin']:.2f} TOXIC flow — informed traders detected")
+                elif vpin_status['risk_action'] == 'REDUCE':
+                    math_filter_warnings.append(f"VPIN: {vpin_status['vpin']:.2f} elevated — watch for adverse selection")
+            except Exception:
+                pass
 
         # Quality gate: ATR ratio
         atr_ratio = current_atr / price if price > 0 else 0
@@ -2106,11 +2193,29 @@ class TradingExecutor:
             except Exception as e:
                 logger.debug(f"Profit Protector error for {asset}: {e}")
 
-        # Append institutional + protector data to candle text for LLM
+        # ── Hurst + VPIN regime context for LLM ──
+        regime_context = ""
+        regime_lines = []
+        if hurst_regime != 'unknown':
+            regime_lines.append(f"  Hurst exponent: H={hurst_value:.2f} ({hurst_regime})")
+            if hurst_regime == 'trending':
+                regime_lines.append(f"  -> Market IS trending — EMA crossover signals are reliable")
+            elif hurst_regime == 'random':
+                regime_lines.append(f"  -> Market is random walk — trend may not persist, tighter targets")
+        if vpin_status:
+            regime_lines.append(f"  VPIN: {vpin_status['vpin']:.2f} (threshold: {vpin_status['threshold']}) action: {vpin_status['risk_action']}")
+            if vpin_status['is_toxic']:
+                regime_lines.append(f"  -> TOXIC flow detected — informed traders active, reduce size or skip")
+        if regime_lines:
+            regime_context = chr(10) + "REGIME ANALYSIS:" + chr(10) + chr(10).join(regime_lines)
+
+        # Append institutional + protector + regime data to candle text for LLM
         if institutional_context:
             candle_text = candle_text + chr(10) + institutional_context
         if profit_protector_context:
             candle_text = candle_text + chr(10) + profit_protector_context
+        if regime_context:
+            candle_text = candle_text + chr(10) + regime_context
 
         if self._brain:
             # ── BRAIN v2: full 7-layer evaluation ──
@@ -2231,9 +2336,15 @@ class TradingExecutor:
             self.bear_veto_stats[asset]['reduced'] += 1
             print(f"  [{self._ex_tag}:{asset}] BEAR REDUCE: risk={risk_score}/10 (>={self.bear_reduce_threshold}) — size {old_size:.0f}% -> {size_pct:.0f}%")
 
+        # ── VPIN toxic flow → reduce position ──
+        if vpin_status and vpin_status['is_toxic']:
+            old_size = size_pct
+            size_pct = size_pct * 0.5
+            print(f"  [{self._ex_tag}:{asset}] VPIN REDUCE: toxic flow {vpin_status['vpin']:.2f} — size {old_size:.0f}% -> {size_pct:.0f}%")
+
         # LLM IS THE BRAIN — its confidence is the final confidence
         # No more Python-side blending or overriding
-        print(f"  [{self._ex_tag}:{asset}] LLM DECISION: conf={confidence:.2f} size={size_pct:.0f}% risk={risk_score}/10 quality={unified.get('trade_quality', 0)}/10")
+        print(f"  [{self._ex_tag}:{asset}] LLM DECISION: conf={confidence:.2f} size={size_pct:.0f}% risk={risk_score}/10 quality={unified.get('trade_quality', 0)}/10 hurst={hurst_value:.2f}")
 
         # Direction from EMA signal (always)
         action = "LONG" if signal == "BUY" else "SHORT"
@@ -2320,12 +2431,33 @@ class TradingExecutor:
         # Determine order side and price
         side = 'buy' if action == 'LONG' else 'sell'
 
-        # Execution type from config
-        entry_type = self.config.get('execution', {}).get('entry_type', 'market')
+        # Execution type from config — LIMIT preferred (better fills, no spread cost)
+        entry_type = self.config.get('execution', {}).get('entry_type', 'limit')
 
         if entry_type == 'limit':
-            order_price = current_ema
-            print(f"  [{self._ex_tag}:{asset}] {direction_label}: {side.upper()} {qty:.6f} LIMIT@${order_price:,.2f} (${notional:,.0f} = {size_pct:.0f}% of ${self.equity:,.0f})")
+            # Smart limit: place slightly inside the spread for fast fill
+            # BUY → place at best ask (or slightly below) to get filled as taker
+            # SELL → place at best bid (or slightly above) to get filled as taker
+            try:
+                ob_snap = self.price_source.fetch_order_book(self._get_symbol(asset), limit=5)
+                best_ask = float(ob_snap['asks'][0][0]) if ob_snap.get('asks') else price * 1.001
+                best_bid = float(ob_snap['bids'][0][0]) if ob_snap.get('bids') else price * 0.999
+                spread_pct = (best_ask - best_bid) / best_bid * 100 if best_bid > 0 else 0
+
+                if side == 'buy':
+                    # Place at best ask — guarantees immediate fill like market order
+                    # but protects against slippage beyond this level
+                    order_price = best_ask
+                else:
+                    # Place at best bid — same logic for sells
+                    order_price = best_bid
+
+                print(f"  [{self._ex_tag}:{asset}] {direction_label}: {side.upper()} {qty:.6f} LIMIT@${order_price:,.2f} spread={spread_pct:.3f}% (${notional:,.0f} = {size_pct:.0f}% of ${self.equity:,.0f})")
+            except Exception:
+                # Fallback to market if OB fetch fails
+                entry_type = 'market'
+                order_price = None
+                print(f"  [{self._ex_tag}:{asset}] {direction_label}: {side.upper()} {qty:.6f} MARKET-fallback (${notional:,.0f} = {size_pct:.0f}% of ${self.equity:,.0f})")
         else:
             order_price = None  # CRITICAL: market orders must NOT have a price
             print(f"  [{self._ex_tag}:{asset}] {direction_label}: {side.upper()} {qty:.6f} MARKET (${notional:,.0f} = {size_pct:.0f}% of ${self.equity:,.0f})")
@@ -2446,9 +2578,9 @@ class TradingExecutor:
 
             # Compute initial stop-loss (L1) using ORDER BOOK + ATR
             # Priority: order book wall > ATR-based > percentage fallback
-            sl_distance = current_atr * 2.5  # ATR-based SL (wider = fewer false stops, room to reach L4+)
-            sl_distance = max(sl_distance, price * 0.01)   # minimum 1.0%
-            sl_distance = min(sl_distance, price * 0.035)  # maximum 3.5% (room before hard stop)
+            sl_distance = current_atr * 1.5  # ATR-based SL (was 2.5 — too wide, L1 deaths lost $243K)
+            sl_distance = max(sl_distance, price * 0.005)  # minimum 0.5% (was 1.0%)
+            sl_distance = min(sl_distance, price * 0.02)   # maximum 2.0% (was 3.5% — way too wide)
 
             sl_source = "ATR"
             if action == 'LONG':
@@ -2496,6 +2628,11 @@ class TradingExecutor:
                 'entry_time': time.time(),
                 'confidence': confidence,
                 'reasoning': reasoning,
+                'predicted_l_level': unified.get('predicted_l_level', '?'),
+                'risk_score': risk_score,
+                'bear_risk': risk_score if self.bear_enabled else 0,
+                'hurst': hurst_value,
+                'hurst_regime': hurst_regime,
                 'breakeven_moved': False,
                 'is_reversal': is_reversal_signal,  # reversal trades get tighter ratchet
                 'agent_votes': orch_result.get('agent_votes', {}) if orch_result else {},
@@ -2551,7 +2688,7 @@ class TradingExecutor:
 
         # ── 2. HARD STOP: max loss — non-negotiable ──
         # Bybit testnet has inflated prices → use wider stop to avoid noise hits
-        hard_stop_pct = -4.0 if self._exchange_name == 'bybit' else -3.0
+        hard_stop_pct = -2.5 if self._exchange_name == 'bybit' else -2.0  # Was -4/-3 — too much capital destroyed per trade
         # But if asset is blacklisted (stuck, can't close), just log and skip
         is_stuck = asset in self.failed_close_assets
         if pnl_pct <= hard_stop_pct:
@@ -2686,17 +2823,19 @@ class TradingExecutor:
             ]
             min_age_for_breakeven = 300  # 5min for reversals (faster)
         else:
-            # Trend-following: give room to breathe, progressive ratchet
+            # Trend-following: move to breakeven FAST, then progressive ratchet
+            # Data shows: trades that survive past L2 are 64%+ winners
+            # Key: protect capital early, then let runners run
             ratchet_levels = [
-                (0.8,  0.0,  2.0, "BREAKEVEN"),    # +0.8% → move to entry (after 8min)
-                (1.2,  0.10, 1.8, "LOCK-10%"),     # +1.2% → lock 10% of profit (NEW: early safety)
-                (1.5,  0.15, 1.6, "LOCK-15%"),     # +1.5% → lock 15%
-                (2.0,  0.25, 1.5, "LOCK-25%"),     # +2.0% → lock 25% (was 30% jump — now smoother)
-                (2.5,  0.30, 1.3, "LOCK-30%"),     # +2.5% → lock 30%
-                (3.0,  0.40, 1.2, "LOCK-40%"),     # +3.0% → lock 40%
-                (4.0,  0.50, 1.0, "LOCK-50%"),     # +4.0% → lock 50%
-                (5.0,  0.55, 0.9, "LOCK-55%"),     # +5.0% → lock 55%
-                (7.0,  0.60, 0.8, "LOCK-60%"),     # +7.0% → lock 60%
+                (0.3,  0.0,  1.5, "BREAKEVEN"),    # +0.3% → move to entry FAST (was 0.8% — too slow)
+                (0.6,  0.10, 1.4, "LOCK-10%"),     # +0.6% → lock 10% of profit
+                (1.0,  0.20, 1.3, "LOCK-20%"),     # +1.0% → lock 20%
+                (1.5,  0.30, 1.2, "LOCK-30%"),     # +1.5% → lock 30%
+                (2.0,  0.40, 1.1, "LOCK-40%"),     # +2.0% → lock 40%
+                (3.0,  0.50, 1.0, "LOCK-50%"),     # +3.0% → lock 50%
+                (4.0,  0.55, 0.9, "LOCK-55%"),     # +4.0% → lock 55%
+                (5.0,  0.60, 0.8, "LOCK-60%"),     # +5.0% → lock 60%
+                (7.0,  0.65, 0.7, "LOCK-65%"),     # +7.0% → lock 65%
                 (10.0, 0.65, 0.7, "LOCK-65%"),     # +10%  → lock 65%
                 (15.0, 0.70, 0.6, "LOCK-70%"),     # +15%  → lock 70%
             ]
@@ -3086,9 +3225,22 @@ class TradingExecutor:
             pnl_usd = (entry - price) * qty * cs
 
         sl_chain = '->'.join(pos.get('sl_levels', ['L1']))
+        actual_l_count = len(pos.get('sl_levels', ['L1']))
+        actual_l_level = f"L{actual_l_count}"
+        predicted_l = pos.get('predicted_l_level', '?')
         duration_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
 
-        print(f"  [{self._ex_tag}:{asset}] CLOSED: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason}")
+        # L-Level prediction accuracy tracking
+        pred_hit = "?"
+        if predicted_l != '?':
+            try:
+                pred_num = int(''.join(c for c in predicted_l if c.isdigit()) or '0')
+                if pred_num > 0:
+                    pred_hit = "HIT" if actual_l_count >= pred_num else "MISS"
+            except Exception:
+                pass
+
+        print(f"  [{self._ex_tag}:{asset}] CLOSED: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} | predicted={predicted_l} actual={actual_l_level} [{pred_hit}]")
 
         # Track realized PnL for drawdown limits
         self.session_realized_pnl += pnl_usd
@@ -3127,7 +3279,7 @@ class TradingExecutor:
             s = self.edge_stats[asset]
             s['win_rate'] = s['wins'] / s['total'] if s['total'] > 0 else 0.5
 
-        # Log to journal
+        # Log to journal (with prediction tracking)
         try:
             self.journal.log_trade(
                 asset=asset,
@@ -3145,6 +3297,15 @@ class TradingExecutor:
                 duration_minutes=duration_min,
                 order_id=pos.get('order_id', ''),
                 exchange=self._ex_tag.lower(),
+                extra={
+                    'predicted_l_level': predicted_l,
+                    'actual_l_level': actual_l_level,
+                    'prediction_hit': pred_hit,
+                    'risk_score': pos.get('risk_score', 0),
+                    'bear_risk': pos.get('bear_risk', 0),
+                    'hurst': pos.get('hurst', 0.5),
+                    'hurst_regime': pos.get('hurst_regime', 'unknown'),
+                },
             )
         except Exception as e:
             logger.warning(f"Journal log failed: {e}")
