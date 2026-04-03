@@ -409,6 +409,7 @@ class AgentOrchestrator:
                 new_weight = current_weight - alpha * current_weight
             new_weight = max(0.1, min(2.0, new_weight))  # clamp [0.1, 2.0]
             agent._current_weight = new_weight
+            agent._total_calls = getattr(agent, '_total_calls', 0) + 1
 
         # Persist updated weights
         self._save_all_states()
