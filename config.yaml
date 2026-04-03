@@ -92,9 +92,13 @@ execution:
   entry_type: "market"
   exit_type: "market"
   bybit_hedge_mode: true
-  # signal_timeframe: EMA/signal/entries use the last CLOSED bar only — direction updates at candle close (not mid-bar).
+  # signal_timeframe: default EMA signal uses last CLOSED bar; early_ema_switch_entry can fire on the forming bar (see executor).
   # Shorter TF (e.g. 5m) = faster signals, more noise. Longer = slower entries by design.
   signal_timeframe: "15m"
+  # Enter on the present (forming) candle when prior closed bar touched EMA and price commits vs live EMA (P1-style).
+  early_ema_switch_entry: true
+  # Multiplier on LLM position_size_pct for those early-switch entries (capped by sizing.max_pct / max_trade_usd).
+  early_switch_size_mult: 1.35
   # Trailing SL: confirmed_close = exit only after closed bar's close crosses SL (can feel "end of candle").
   # intrabar_wick = exit when live price OR current bar wick on signal TF hits SL (faster; more wick stop-outs).
   sl_exit_mode: "confirmed_close"

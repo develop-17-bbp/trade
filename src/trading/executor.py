@@ -62,6 +62,61 @@ def _signal_bar_open_utc(ts_ms: Any) -> str:
         return "?"
 
 
+def _early_ema_p1_switch_signal(
+    closes: List[float],
+    highs: List[float],
+    lows: List[float],
+    ema_vals: List[float],
+    tick_price: float,
+    ema_period: int,
+    *,
+    overextension_pct: float = 10.0,
+    signal_trend_phase: str = "",
+    price_falling: bool = False,
+    price_rising: bool = False,
+    entry_block_stabilizing: bool = False,
+) -> Optional[str]:
+    """
+    P1-style entry on the forming candle: previous CLOSED bar had EMA touch the range;
+    current bar (live) is entirely on one side of EMA and live EMA vs prior bar EMA
+    shows the turn. Mirrors TRADING_SYSTEM_PROMPT but uses tick-updated EMA on [-1].
+    """
+    if len(closes) < 3 or len(highs) < 3 or len(lows) < 3 or len(ema_vals) < 3:
+        return None
+    ema_prev_bar = float(ema_vals[-2])
+    low2, high2 = float(lows[-2]), float(highs[-2])
+    if not (low2 <= ema_prev_bar <= high2):
+        return None
+
+    closes_live = list(closes[:-1]) + [float(tick_price)]
+    ema_live = ema(closes_live, ema_period)
+    ema_now = float(ema_live[-1])
+    if ema_now <= 0:
+        return None
+
+    sep = abs(float(tick_price) - ema_now) / ema_now * 100.0
+    if sep > overextension_pct:
+        return None
+
+    # LONG: bar fully above EMA, EMA turning up vs value anchored at prior close
+    if float(lows[-1]) > ema_now and ema_now > ema_prev_bar:
+        if price_falling:
+            return None
+        if entry_block_stabilizing and signal_trend_phase == "RISING_STABILIZING":
+            return None
+        return "BUY"
+
+    # SHORT: bar fully below EMA, EMA turning down vs prior bar
+    if float(highs[-1]) < ema_now and ema_now < ema_prev_bar:
+        if price_rising:
+            return None
+        if entry_block_stabilizing and signal_trend_phase == "FALLING_STABILIZING":
+            return None
+        return "SELL"
+
+    return None
+
+
 def _pred_l_level_chop_zone(pred_l: str) -> bool:
     """
     True when predicted_l_level implies exit at L1/L2 only (no L4+ runway).
@@ -130,6 +185,10 @@ class TradingExecutor:
         # after_order = only lock after a successful order; LLM re-runs each poll if rejected (higher Ollama load).
         _eds = str(_exec.get('entry_dedup_scope', 'after_llm') or 'after_llm').strip().lower()
         self.entry_dedup_scope: str = _eds if _eds in ('after_llm', 'after_order') else 'after_llm'
+        # Intrabar P1: if classic signal is still NEUTRAL, allow entry when forming bar completes
+        # the crossover pattern vs live EMA (previous closed bar must have touched EMA).
+        self.early_ema_switch_entry: bool = bool(_exec.get('early_ema_switch_entry', False))
+        self.early_switch_size_mult: float = max(1.0, float(_exec.get('early_switch_size_mult', 1.3)))
 
         # Position sizing — % of equity + USD cap; dynamic scales with conviction + optional daily target
         _sz = _exec.get('sizing') if isinstance(_exec.get('sizing'), dict) else {}
@@ -1587,6 +1646,40 @@ class TradingExecutor:
             if not price_falling and signal_trend_phase != "RISING_STABILIZING":
                 signal = "BUY"
 
+        # Intrabar P1: previous CLOSED bar touched EMA; forming bar commits + live EMA turn (spec), before next close.
+        entry_size_mult = 1.0
+        dedup_candle_ts_override: Optional[float] = None
+        early_ema_entry = False
+        if (
+            self.early_ema_switch_entry
+            and signal == "NEUTRAL"
+            and ema_separation <= 10.0
+        ):
+            early_sig = _early_ema_p1_switch_signal(
+                closes,
+                highs,
+                lows,
+                ema_vals,
+                tick_price,
+                self.ema_period,
+                overextension_pct=10.0,
+                signal_trend_phase=signal_trend_phase,
+                price_falling=price_falling,
+                price_rising=price_rising,
+                entry_block_stabilizing=self.entry_block_stabilizing_crossover,
+            )
+            if early_sig:
+                _ts_early = ohlcv.get('timestamps') or []
+                if len(_ts_early) >= 1:
+                    signal = early_sig
+                    entry_size_mult = self.early_switch_size_mult
+                    dedup_candle_ts_override = float(_ts_early[-1])
+                    early_ema_entry = True
+                    print(
+                        f"  [{self._ex_tag}:{asset}] EARLY_EMA_SWITCH: {early_sig} "
+                        f"(forming {self.signal_timeframe} vs prior bar EMA touch) | size x{entry_size_mult:.2f}"
+                    )
+
         ob_imb = ob_levels.get('imbalance', 0)
         ob_bid = ob_levels.get('bid_wall', 0)
         ob_ask = ob_levels.get('ask_wall', 0)
@@ -1651,7 +1744,7 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        # ── Position management uses LIVE price, entry uses CONFIRMED price ──
+        # ── Position management uses LIVE price; entries execute at tick, signals often reference last close ──
         if asset in self.positions:
             self._manage_position(asset, tick_price, ohlcv, ema_vals, atr_vals, ema_direction, signal, ob_levels)
         else:
@@ -1672,6 +1765,9 @@ class TradingExecutor:
                 current_atr,
                 ob_levels,
                 signal_trend_phase=signal_trend_phase,
+                dedup_candle_ts_override=dedup_candle_ts_override,
+                entry_size_mult=entry_size_mult,
+                early_ema_entry=early_ema_entry,
             )
 
     # ------------------------------------------------------------------
@@ -1695,9 +1791,13 @@ class TradingExecutor:
         current_atr: float,
         ob_levels: dict = None,
         signal_trend_phase: str = "",
+        dedup_candle_ts_override: Optional[float] = None,
+        entry_size_mult: float = 1.0,
+        early_ema_entry: bool = False,
     ):
 
         ob_levels = ob_levels or {}
+        entry_size_mult = max(1.0, float(entry_size_mult or 1.0))
 
         # Only trade when there's a signal (BUY/SELL from crossover or strong trend)
         if signal == "NEUTRAL":
@@ -1773,6 +1873,10 @@ class TradingExecutor:
                     entry_score += 1
                     score_reasons.append("2_red")
 
+        if early_ema_entry:
+            entry_score += 4
+            score_reasons.append("early_ema_switch+4")
+
         # ── RANGE DETECTION ──
         # Only block if TRULY flat — allow trades when EMA has clear direction
         if len(closes) >= 20:
@@ -1820,13 +1924,14 @@ class TradingExecutor:
         if entry_score < min_score:
             print(f"  [{self._ex_tag}:{asset}] WEAK: score={entry_score}/10 ({', '.join(score_reasons) or 'no momentum'}) -- need {min_score}+")
             return
-        elif min_trend_bars < min_trend_need:
+        elif min_trend_bars < min_trend_need and not early_ema_entry:
             print(f"  [{self._ex_tag}:{asset}] TOO EARLY: only {min_trend_bars} trend bars -- need {min_trend_need}+")
             return
 
         # ── HARD GATE: EMA slope must agree with signal direction ──
         # Prevents LLM from confirming LONG when EMA is falling (or SHORT when rising)
-        if len(ema_vals) >= 4:
+        # Skipped for intrabar EMA-switch entries (slope uses forming bar; live turn already checked)
+        if not early_ema_entry and len(ema_vals) >= 4:
             slope_pct = (ema_vals[-1] - ema_vals[-4]) / ema_vals[-4] * 100 if ema_vals[-4] > 0 else 0
             if signal == "BUY" and slope_pct < -0.01:
                 print(f"  [{self._ex_tag}:{asset}] SLOPE REJECT: CALL but EMA slope={slope_pct:+.3f}% (negative) — skip")
@@ -1934,14 +2039,17 @@ class TradingExecutor:
         except Exception as e:
             logger.debug(f"Exchange position check failed: {e}")
 
-        # CANDLE DEDUP: only one LLM/orchestrator attempt per confirmed signal-timeframe candle.
+        # CANDLE DEDUP: default = last CLOSED signal bar (-2). Intrabar early entries use forming bar open (-1).
         # Timestamp is recorded only after pre-LLM gates pass (see below) — not here — so context/ATR
         # skips do not burn the candle and incorrectly show DEDUP on every later poll.
         timestamps = ohlcv.get('timestamps', [])
-        confirmed_candle_ts: Optional[float] = None
-        if len(timestamps) >= 2:
-            confirmed_candle_ts = float(timestamps[-2])
-            if asset in self.last_signal_candle and self.last_signal_candle[asset] == confirmed_candle_ts:
+        dedup_candle_ts: Optional[float] = None
+        if dedup_candle_ts_override is not None:
+            dedup_candle_ts = float(dedup_candle_ts_override)
+        elif len(timestamps) >= 2:
+            dedup_candle_ts = float(timestamps[-2])
+        if dedup_candle_ts is not None:
+            if asset in self.last_signal_candle and self.last_signal_candle[asset] == dedup_candle_ts:
                 print(
                     f"  [{self._ex_tag}:{asset}] DEDUP: waiting for next "
                     f"{self.signal_timeframe} candle"
@@ -2030,8 +2138,8 @@ class TradingExecutor:
         # ══════════════════════════════════════════════════════════
         if self.orchestrator_entry_veto and orch_result and orch_result.get('veto'):
             print(f"  [{self._ex_tag}:{asset}] AGENTS VETO: consensus={orch_result['consensus']} — skipping trade")
-            if confirmed_candle_ts is not None:
-                self.last_signal_candle[asset] = confirmed_candle_ts
+            if dedup_candle_ts is not None:
+                self.last_signal_candle[asset] = dedup_candle_ts
             return
 
         # Build P&L history string for context
@@ -2063,8 +2171,8 @@ class TradingExecutor:
             mtf_stabilizing_count=_mtf_stab,
         )
 
-        if self.entry_dedup_scope == 'after_llm' and confirmed_candle_ts is not None:
-            self.last_signal_candle[asset] = confirmed_candle_ts
+        if self.entry_dedup_scope == 'after_llm' and dedup_candle_ts is not None:
+            self.last_signal_candle[asset] = dedup_candle_ts
 
         # Extract unified decision
         if not unified.get('proceed', False):
@@ -2085,7 +2193,7 @@ class TradingExecutor:
 
         # Trade approved — extract parameters
         confidence = unified.get('confidence', 0.5)
-        size_pct = unified.get('position_size_pct', 3)
+        size_pct = unified.get('position_size_pct', 3) * entry_size_mult
         reasoning = str(unified.get('facilitator_verdict', ''))[:120]
         risk_score = unified.get('risk_score', 5)
 
@@ -2307,8 +2415,8 @@ class TradingExecutor:
 
         if result.get('status') == 'success':
             order_id = result.get('order_id', 'unknown')
-            if self.entry_dedup_scope == 'after_order' and confirmed_candle_ts is not None:
-                self.last_signal_candle[asset] = confirmed_candle_ts
+            if self.entry_dedup_scope == 'after_order' and dedup_candle_ts is not None:
+                self.last_signal_candle[asset] = dedup_candle_ts
 
             # Get ACTUAL fill price from exchange (not signal price)
             # Testnet has thin liquidity — market fills can be far from expected price
