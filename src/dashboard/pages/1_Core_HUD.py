@@ -19,9 +19,10 @@ from src.dashboard.data import (
     load_dashboard_state,
     load_journal_trades,
     compute_today_pnl,
+    trade_realized_pnl_usd,
+    is_closed_trade,
 )
 from src.api.state import DashboardState
-from src.dashboard.data import compute_today_pnl
 from src.dashboard.theme import (
     MARKETEDGE_CSS, metric_card, plotly_layout, radar_chart, calendar_heatmap_html,
     source_badge, GREEN, RED, BLUE, AMBER, CYAN, PURPLE, WHITE, MUTED,
@@ -51,12 +52,9 @@ def _parse_ts(ts) -> str:
 
 
 def _safe_pnl(t: dict) -> float:
-    """Coerce trade pnl to float; return 0 on missing or invalid."""
+    """Journal uses pnl_usd; legacy rows use pnl — must match exchange-side realized when logged correctly."""
     try:
-        v = t.get('pnl')
-        if v is None:
-            return 0.0
-        return float(v)
+        return trade_realized_pnl_usd(t)
     except (TypeError, ValueError):
         return 0.0
 
@@ -147,10 +145,7 @@ def _compute_daily_pnl(trades):
         iso = _parse_ts(ts)
         day = iso[:10] if len(iso) >= 10 else ''
         if day:
-            try:
-                daily[day] += float(t.get('pnl', 0) or 0)
-            except (TypeError, ValueError):
-                pass
+            daily[day] += _safe_pnl(t)
     return dict(daily)
 
 
@@ -221,8 +216,13 @@ _all_closed = [t for t in trades if isinstance(t, dict) and (
 )]
 _total_realized = sum(_safe_pnl(t) for t in _all_closed)
 _total_wins = sum(1 for t in _all_closed if _safe_pnl(t) > 0)
-today_wins = len([t for t in today_trades if isinstance(t, dict)
-                  and t.get('status') == 'CLOSED' and (float(t.get('pnl', 0) or 0) > 0)])
+today_wins = len(
+    [
+        t
+        for t in today_trades
+        if isinstance(t, dict) and is_closed_trade(t) and trade_realized_pnl_usd(t) > 0
+    ]
+)
 
 g1, g2 = st.columns([3, 2])
 with g1:
@@ -385,6 +385,10 @@ with tab_live:
 
     # ── Open Positions ──
     st.markdown('<div class="section-title">Open Positions</div>', unsafe_allow_html=True)
+    st.caption(
+        "Unrealized $ is from dashboard state (often mark/mid). Realized P&L after close includes "
+        "exchange fees and fill prices — Trade History is authoritative for cash."
+    )
     if open_positions:
         pos_cols = st.columns(min(len(open_positions), 4))
         for idx, (pos_asset, pos) in enumerate(open_positions.items()):
@@ -451,10 +455,7 @@ with tab_live:
         recent = (_closed_sorted + _open_sorted)[:12]
         if recent:
             for t in recent:
-                try:
-                    pnl_v = float(t.get('pnl') or 0)
-                except (TypeError, ValueError):
-                    pnl_v = 0.0
+                pnl_v = trade_realized_pnl_usd(t)
                 status = t.get('status', 'OPEN')
                 cls = 'trade-win' if (status == 'CLOSED' and pnl_v > 0) else ('trade-loss' if (status == 'CLOSED' and pnl_v < 0) else '')
                 pnl_c = GREEN if pnl_v > 0 else (RED if pnl_v < 0 else MUTED)

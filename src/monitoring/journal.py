@@ -61,7 +61,10 @@ class TradeJournal:
             "exit_price": exit_price,
             "qty": qty,
             "pnl_usd": round(pnl_usd, 2),
+            # Alias for dashboards / legacy readers that expect `pnl` (see trade_realized_pnl_usd).
+            "pnl": round(pnl_usd, 2),
             "pnl_pct": round(pnl_pct, 4),
+            "status": "CLOSED",
             "sl_progression": sl_progression,
             "exit_reason": exit_reason,
             "llm_reasoning": llm_reasoning,

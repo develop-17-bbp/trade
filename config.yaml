@@ -3,7 +3,7 @@
 mode: paper
 # Poll: max delay AFTER a signal-timeframe candle closes before the bot sees it (~poll_interval).
 # For 15m signals, prefer 10–15s if you want entries/exits closer to the bar (still bounded by "confirmed bar" logic for entries).
-poll_interval: 30             # how often the engine wakes: refetch prices, OHLCV, order book (~30s)
+poll_interval: 5             # how often the engine wakes: refetch prices, OHLCV, order book (~30s)
 trade_cooldown_seconds: 30    # spec §4.4: min seconds between trades per asset
 
 # ── Exchange Configuration ──
@@ -43,6 +43,12 @@ risk:
   risk_per_trade_pct: 0.5
   atr_stop_mult: 1.5
   atr_tp_mult: 4.5
+  # Max loss if initial SL fills ≈ this % of account equity at entry (then tightened to fit).
+  max_loss_per_trade_equity_pct: 1.0
+  # If order-book SL or strong bid/ask imbalance suggests absorption / bounce, allow wider SL up to this × the % above.
+  bounce_loss_relief_mult: 1.25
+  # Emergency market close if unrealized loss exceeds (capped SL $ loss) × this (slippage / gap buffer).
+  hard_stop_loss_slippage_mult: 1.15
 
 # ── AI / LLM ──
 # Local Ollama: same host/model as `ollama serve` + `ollama run qwen2.5:3b` (see also OLLAMA_HOST / OLLAMA_MODEL in .env)
@@ -59,8 +65,11 @@ ai:
   fallback_on_quota_error: true
   use_local_on_failure: true
   bear_agent_enabled: true        # Risk scoring inside unified LLM (spec §6)
-  bear_veto_threshold: 10         # spec §6.2: risk_score >= 10 → VETO
-  bear_reduce_threshold: 8        # spec §6.2: risk_score >= 8 → reduce size 50%
+  # Set bear_veto_threshold to 11 to disable veto (LLM risk_score is 0–10). Only used if confidence_only_gates is false.
+  bear_veto_threshold: 11         # was 10: VETO when risk_score >= threshold
+  bear_reduce_threshold: 8        # halve size when 8 ≤ risk < veto (skipped if confidence_only_gates)
+  # When true: gate entries mainly on LLM confidence; skip server tq/chop/conf tampering and bear size halving / edge sizing.
+  confidence_only_gates: true
   llm_min_confidence: 0.70        # Bull confidence gate (was 0.80 per spec §5.3)
   llm_fallback_confidence: 0.75   # spec §5.3 when unified LLM call fails
   llm_fallback_confidence_gate: 0.75  # pass gate on LLM failure if conf >= this
@@ -69,7 +78,7 @@ ai:
   orchestrator_blend_confidence: false
   facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
   risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
-  edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
+  edge_positioning_enabled: false  # off when using confidence_only_gates / LLM-sized notionals
   orchestrator_enabled: true      # 10 math agents + adversarial debate → feeds LLM
 
 # ── Auto-Healer Monitor ──
@@ -92,16 +101,19 @@ execution:
   entry_type: "market"
   exit_type: "market"
   bybit_hedge_mode: true
-  # signal_timeframe: default EMA signal uses last CLOSED bar; early_ema_switch_entry can fire on the forming bar (see executor).
-  # Shorter TF (e.g. 5m) = faster signals, more noise. Longer = slower entries by design.
-  signal_timeframe: "15m"
+  # USDT linear: margin ≈ notional/leverage. Notional = (equity × position_size_pct% as margin) × leverage.
+  leverage: 10
+  # signal_timeframe: bar size for EMA on the signal chart. With signal_timing: live, the current tick replaces the forming bar's close (no wait for bar close).
+  # Shorter TF (e.g. 5m) = faster updates; longer = smoother EMA.
+  signal_timeframe: "5m"
+  # confirmed = EMA/crossover from last CLOSED signal bar only. live = same rules but current tick is the forming bar's close; SL exits use intrabar_wick automatically.
+  signal_timing: live
   # Enter on the present (forming) candle when prior closed bar touched EMA and price commits vs live EMA (P1-style).
   early_ema_switch_entry: true
   # Multiplier on LLM position_size_pct for those early-switch entries (capped by sizing.max_pct / max_trade_usd).
   early_switch_size_mult: 1.35
-  # Trailing SL: confirmed_close = exit only after closed bar's close crosses SL (can feel "end of candle").
-  # intrabar_wick = exit when live price OR current bar wick on signal TF hits SL (faster; more wick stop-outs).
-  sl_exit_mode: "confirmed_close"
+  # Trailing SL: confirmed_close = exit only after closed bar's close crosses SL. intrabar_wick = live price / bar wick (required when signal_timing: live; forced in code).
+  sl_exit_mode: "intrabar_wick"
   # after_llm = one unified LLM call per closed signal candle (reject blocks until next bar).
   # after_order = re-run LLM each poll until an order fills or the candle changes (fixes improving pattern + DEDUP lockout; more Ollama load).
   entry_dedup_scope: "after_order"
@@ -113,18 +125,34 @@ execution:
   mtf_confluence_min: 0
   # If true, skip LONG when context_timeframe momentum is down / SHORT when up (see executor logs).
   require_context_alignment: true
-  # Position sizing: dynamic blends LLM % with conviction (confidence, trade_quality, MTF align, inverse risk).
-  # Larger caps increase both profit potential and loss size vs fees. conservative ≈ old ~5% / $2k caps for equity ≥ $500.
+  # Dynamic trailing SL + early giveback: push SL with price; in the first minutes, bank profit if uPnL melts off peak.
+  trailing:
+    early_window_seconds: 150          # first ~2.5 min: faster BE, tighter ATR trail, giveback rules
+    early_breakeven_min_pct: 0.18      # move stop to entry after this tiny green move (in early window only)
+    profit_floor_start_pct: 1.0        # start locking % of peak + ATR trail (was hard-coded 1.5%)
+    early_window_atr_mult_scale: 0.68 # multiply ATR trail distance by this in early window (tighter = lock more)
+    giveback_min_mfe_price_pct: 0.22  # need at least this favorable % move before giveback logic applies
+    giveback_mfe_fraction: 0.38       # gave back this share of the spike from peak → tighten SL to lock MFE×ratio below
+    giveback_lock_of_mfe_ratio: 0.62  # on tighten, SL locks ~62% of peak-vs-entry excursion
+    giveback_close_mfe_fraction: 0.58 # deeper giveback of spike → market-close to bank (early window only)
+    close_on_early_giveback: true     # set false to only tighten SL, never auto-close on giveback
+    peak_usd_giveback_close_frac: 0.42 # close if uPnL drops more than this fraction from session peak uPnL (early window)
+    min_sl_move_usd: 0.35             # SL tick noise filter (smaller when in profit via in_profit_min_move_scale)
+    min_sl_move_price_pct: 0.0001
+    in_profit_min_move_scale: 0.40    # multiply min SL step by this while P&L > 0.35% (trail updates more often)
+  # Position sizing: llm_direct uses LLM position_size_pct only (still capped by max_pct / equity×lev / max_trade_usd).
+  # dynamic = blend with conviction + optional daily ramp. conservative = small legacy caps.
   sizing:
-    mode: dynamic
+    mode: llm_direct
     small_account_equity_usd: 500
-    max_pct_small_account: 25
-    max_pct: 28
-    min_pct: 2
+    max_pct_small_account: 90
+    max_pct: 90
+    min_pct: 5
     conviction_power: 1.15
     llm_weight: 0.32
-    max_trade_usd: 5000
-    max_equity_fraction: 0.42
+    # null or ≤0 = no extra USD ceiling (only equity × max_equity_fraction × leverage).
+    max_trade_usd: null
+    max_equity_fraction: 0.95
     # Daily ramp vs session PnL (realized + unrealized): goal = wins × $/win (default 10 × $20 = $200).
     target_successful_trades_per_day: 10
     target_profit_usd_per_trade: 20

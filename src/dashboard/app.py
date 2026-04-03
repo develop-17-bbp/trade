@@ -74,8 +74,12 @@ st.markdown(MARKETEDGE_CSS, unsafe_allow_html=True)
 
 # ── Shared data (cached — no duplicate disk reads) ──
 from src.dashboard.data import (
-    load_dashboard_state, load_journal_trades,
-    compute_today_pnl, compute_trade_summary, filter_closed,
+    load_dashboard_state,
+    load_journal_trades,
+    compute_today_pnl,
+    compute_trade_summary,
+    filter_closed,
+    trade_realized_pnl_usd,
 )
 
 state = load_dashboard_state()
@@ -165,7 +169,7 @@ if _recent_closed:
     for t in reversed(_recent_closed):
         _asset = t.get('asset', '?')
         _side = t.get('side', '?').upper()
-        _t_pnl = t.get('pnl', 0)
+        _t_pnl = trade_realized_pnl_usd(t)
         _t_color = GREEN if _t_pnl > 0 else RED
         _ts = str(t.get('exit_time') or t.get('timestamp', ''))[:16]
         st.sidebar.markdown(f"""

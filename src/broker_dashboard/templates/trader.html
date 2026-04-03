@@ -118,7 +118,7 @@
         <div class="card"><div class="k">Total account value<br/><span style="opacity:.7">Equity from broker</span></div><div class="v" id="o-equity">—</div></div>
         <div class="card"><div class="k">Available to trade<br/><span style="opacity:.7">Free margin</span></div><div class="v" id="o-cash">—</div></div>
         <div class="card"><div class="k">Open P&amp;L<br/><span style="opacity:.7">Unrealized on positions</span></div><div class="v" id="o-upnl">—</div></div>
-        <div class="card"><div class="k">Session profit / loss<br/><span style="opacity:.7">Since bot connected</span></div><div class="v" id="o-spnl">—</div></div>
+        <div class="card"><div class="k">Session profit / loss<br/><span style="opacity:.7">Equity vs bot connect (includes open unrealized)</span></div><div class="v" id="o-spnl">—</div></div>
         <div class="card"><div class="k">Session %</div><div class="v" id="o-spct">—</div></div>
         <div class="card"><div class="k">Session started at</div><div class="v sm" id="o-sbase">—</div></div>
       </div>
@@ -132,7 +132,7 @@
     </section>
 
     <section class="panel" id="panel-positions">
-      <p class="explain">Live futures positions from the exchange. Long means you profit if price goes up; short means you profit if price goes down.</p>
+      <p class="explain">Live futures positions from the exchange. <strong>Unrealized</strong> uses the broker&rsquo;s <em>mark-to-market</em> (often mark price). It can look <span class="pos">green</span> right before you close, while the <strong>filled</strong> close (Bybit &ldquo;Trade&rdquo; / realized P&amp;L) is lower after <strong>fees</strong>, <strong>funding</strong>, and <strong>slippage</strong> on market exits — so you can see a profit on this row and a loss on the exchange trade list for the same idea.</p>
       <div class="section-title">Open positions</div>
       <div id="positions-empty" style="color:var(--text2);font-size:0.9rem;display:none;">No open positions right now.</div>
       <div style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);">
@@ -143,7 +143,7 @@
     </section>
 
     <section class="panel" id="panel-trades">
-      <p class="explain">Recent closes the bot wrote to your journal. Use this to review what happened, not as a tax report.</p>
+      <p class="explain">Recent closes the bot wrote to your journal (model P&amp;L in USDT, fees usually not subtracted). Numbers here should align with the Performance charts; they can still differ slightly from Bybit&rsquo;s &ldquo;Trade&rdquo; column for the same exit.</p>
       <div class="section-title">Recent trades</div>
       <div style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);max-height:520px;overflow-y:auto;">
         <table class="data" id="tbl-trades"><thead><tr>
@@ -153,7 +153,7 @@
     </section>
 
     <section class="panel" id="panel-performance">
-      <p class="explain">Daily realized profit or loss from the journal, and a running total over time.</p>
+      <p class="explain">These charts sum <strong>closed</strong> trades from the bot&rsquo;s journal (<code>pnl_usd</code>), not mark-to-market while a position was open. They exclude exchange fees unless we add them later — use Bybit&rsquo;s trade history for the final cash outcome. If the cumulative line looked &ldquo;up&rdquo; while individual closes were red, you were likely comparing to <strong>session</strong> or <strong>unrealized</strong> on the Overview tab (which include open P&amp;L).</p>
       <div class="chart-card"><h3>Each day (realized)</h3><canvas id="ch-daily" height="120"></canvas></div>
       <div class="chart-card"><h3>Running total (realized)</h3><canvas id="ch-cum" height="120"></canvas></div>
     </section>
@@ -261,8 +261,9 @@
       document.getElementById('tbl-positions').style.display = pos.length ? 'table' : 'none';
       pos.forEach((p) => {
         const tr = document.createElement('tr');
-        const upl = parseFloat(p.unrealized_pl);
-        tr.innerHTML = '<td>' + (p.symbol || '') + '</td><td>' + (p.side || '') + '</td><td>' + p.qty + '</td><td>' + p.avg_entry_price + '</td><td>' + p.current_price + '</td><td class="' + (upl >= 0 ? 'pos' : 'neg') + '">' + signedMoney(upl) + '</td>';
+        const upl = Number(p.unrealized_pnl != null ? p.unrealized_pnl : p.unrealized_pl);
+        const uplOk = !Number.isNaN(upl);
+        tr.innerHTML = '<td>' + (p.symbol || '') + '</td><td>' + (p.side || '') + '</td><td>' + p.qty + '</td><td>' + p.avg_entry_price + '</td><td>' + p.current_price + '</td><td class="' + (!uplOk ? '' : (upl >= 0 ? 'pos' : 'neg')) + '">' + (uplOk ? signedMoney(upl) : '—') + '</td>';
         pt.appendChild(tr);
       });
       if (d.positions_error) {

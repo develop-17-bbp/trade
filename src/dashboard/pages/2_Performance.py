@@ -16,9 +16,13 @@ from datetime import datetime
 from typing import Dict, List, Any
 import plotly.graph_objects as go
 
-from src.dashboard.data import compute_today_pnl
 from src.dashboard.theme import MARKETEDGE_CSS, metric_card, plotly_layout
-from src.dashboard.data import load_dashboard_state, load_journal_trades, compute_today_pnl
+from src.dashboard.data import (
+    load_dashboard_state,
+    load_journal_trades,
+    compute_today_pnl,
+    trade_realized_pnl_usd,
+)
 
 st.markdown(MARKETEDGE_CSS, unsafe_allow_html=True)
 
@@ -390,8 +394,10 @@ _closed_journal = [t for t in journal if isinstance(t, dict) and (
     t.get('status') == 'CLOSED' or
     ('exit_price' in t and t.get('exit_price') and t.get('status') != 'OPEN')
 )]
-_journal_win_rate = (sum(1 for t in _closed_journal if (t.get('pnl') or 0) > 0) / len(_closed_journal)) if _closed_journal else 0.0
-_journal_total_pnl = sum(t.get('pnl', 0) for t in _closed_journal)
+_journal_win_rate = (
+    sum(1 for t in _closed_journal if trade_realized_pnl_usd(t) > 0) / len(_closed_journal)
+) if _closed_journal else 0.0
+_journal_total_pnl = sum(trade_realized_pnl_usd(t) for t in _closed_journal)
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:

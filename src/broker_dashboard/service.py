@@ -185,13 +185,18 @@ def fetch_open_positions() -> Tuple[List[Dict[str, Any]], Optional[str]]:
                 q = 0.0
             if q <= 0:
                 continue
+            try:
+                _upl = float(p.get("unrealized_pl", 0) or 0)
+            except (TypeError, ValueError):
+                _upl = 0.0
             out.append({
                 "symbol": p.get("symbol", ""),
                 "side": p.get("side", ""),
                 "qty": q,
                 "avg_entry_price": p.get("avg_entry_price", "0"),
                 "current_price": p.get("current_price", "0"),
-                "unrealized_pl": p.get("unrealized_pl", "0"),
+                "unrealized_pl": _upl,
+                "unrealized_pnl": _upl,
                 "market_value": p.get("market_value", "0"),
             })
         return out, None
@@ -246,13 +251,19 @@ def _normalize_positions(raw: List[dict]) -> List[Dict[str, Any]]:
             q = 0.0
         if q <= 0:
             continue
+        try:
+            _raw_u = p.get("unrealized_pl", p.get("unrealizedPnl", 0))
+            _upl = float(_raw_u or 0)
+        except (TypeError, ValueError):
+            _upl = 0.0
         out.append({
             "symbol": p.get("symbol", ""),
             "side": p.get("side", ""),
             "qty": q,
             "avg_entry_price": p.get("avg_entry_price", "0"),
             "current_price": p.get("current_price", "0"),
-            "unrealized_pl": p.get("unrealized_pl", "0"),
+            "unrealized_pl": _upl,
+            "unrealized_pnl": _upl,
             "market_value": p.get("market_value", "0"),
         })
     return out
@@ -337,3 +348,78 @@ def build_full_state() -> Dict[str, Any]:
 def build_summary() -> Dict[str, Any]:
     """Alias for full state (backward compatible)."""
     return build_full_state()
+
+
+def _legacy_dashboard_asset_key(symbol: str) -> str:
+    """Map CCXT / Bybit symbols to BTC/USDT-style keys for legacy dashboard clients."""
+    s = (symbol or "").strip()
+    if not s:
+        return ""
+    if ":USDT" in s or ":USD" in s:
+        s = s.split(":")[0]
+    if "/" in s:
+        return s
+    su = s.upper()
+    if su.endswith("USDT") and len(su) > 4:
+        return f"{su[:-4]}/USDT"
+    return f"{su}/USDT"
+
+
+def build_legacy_dashboard_data_payload() -> Dict[str, Any]:
+    """
+    JSON shape expected by clients of GET /api/dashboard-data (legacy dashboard_server).
+    Filled from broker snapshot where possible; agentic fields empty if unavailable.
+    """
+    state = build_full_state()
+    cfg = state.get("config") or {}
+    raw_assets = cfg.get("assets") or []
+    assets_out: Dict[str, str] = {}
+    for sym in raw_assets:
+        if not sym:
+            continue
+        key = _legacy_dashboard_asset_key(str(sym))
+        if key:
+            assets_out[key] = "FLAT"
+    for p in state.get("positions") or []:
+        if not isinstance(p, dict):
+            continue
+        key = _legacy_dashboard_asset_key(str(p.get("symbol") or ""))
+        if not key:
+            continue
+        side = str(p.get("side") or "").upper()
+        if side in ("LONG", "BUY", "B"):
+            assets_out[key] = "LONG"
+        elif side in ("SHORT", "SELL", "S"):
+            assets_out[key] = "SHORT"
+        else:
+            assets_out[key] = "FLAT"
+
+    wr = state.get("win_rate")
+    trend_strength = float(wr) if wr is not None else 0.5
+    sp = state.get("session_pnl_pct")
+    volatility = min(0.05, max(0.005, abs(float(sp or 0)) / 100.0))
+
+    return {
+        "reasoning_log": [],
+        "memory_vault": [],
+        "assets": assets_out,
+        "sentiment": {},
+        "factors": {},
+        "attribution": {},
+        "veto": {},
+        "features": {},
+        "sent_hist": {},
+        "ohlc": {},
+        "decisions": {},
+        "effectiveness": {},
+        "layers": {},
+        "sources": {},
+        "regime": "TRENDING",
+        "volatility": volatility,
+        "trend_strength": trend_strength,
+        "broker_summary": {
+            "equity": (state.get("broker") or {}).get("equity"),
+            "session_pnl_usd": state.get("session_pnl_usd"),
+            "session_pnl_pct": state.get("session_pnl_pct"),
+        },
+    }

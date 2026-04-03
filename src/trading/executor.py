@@ -8,6 +8,7 @@ Dynamic trailing stop-loss L1 -> L2 -> L3 -> L4 ...
 import os
 import re
 import json
+import math
 import time
 import logging
 import requests
@@ -137,6 +138,58 @@ def _pred_l_level_chop_zone(pred_l: str) -> bool:
     return False
 
 
+def _linear_qty_multiplier(qty: float, contract_size: float) -> float:
+    """USDT linear PnL scale: Bybit qty in coin → mult=qty; Delta qty in contracts → qty×contract_size."""
+    if contract_size and contract_size > 0:
+        return float(qty) * float(contract_size)
+    return float(qty)
+
+
+def _loss_usd_at_price(
+    direction: str,
+    entry: float,
+    exit_price: float,
+    qty: float,
+    contract_size: float = 0.0,
+) -> float:
+    """Positive USD loss vs entry if flat at exit_price (ignores fees)."""
+    if entry <= 0 or qty <= 0:
+        return 0.0
+    m = _linear_qty_multiplier(qty, contract_size)
+    if direction == 'LONG':
+        return max(0.0, m * (entry - exit_price))
+    return max(0.0, m * (exit_price - entry))
+
+
+def _unrealized_pnl_usd(
+    direction: str,
+    entry: float,
+    mark: float,
+    qty: float,
+    contract_size: float = 0.0,
+) -> float:
+    m = _linear_qty_multiplier(qty, contract_size)
+    if direction == 'LONG':
+        return m * (mark - entry)
+    return m * (entry - mark)
+
+
+def _bounce_relief_from_ob(action: str, ob_levels: Optional[dict], sl_source: str) -> bool:
+    """
+    Wider loss cap when book suggests absorption (support for longs, resistance for shorts).
+    """
+    if sl_source and ('OB_BID_WALL' in sl_source or 'OB_ASK_WALL' in sl_source):
+        return True
+    if not ob_levels:
+        return False
+    imb = float(ob_levels.get('imbalance', 0) or 0)
+    if action == 'LONG' and imb >= 0.07:
+        return True
+    if action == 'SHORT' and imb <= -0.07:
+        return True
+    return False
+
+
 class TradingExecutor:
     """EMA(8) crossover strategy with LLM confirmation on Bybit testnet."""
 
@@ -177,10 +230,16 @@ class TradingExecutor:
             x for x in self.analysis_timeframes if not (x in _seen or _seen.add(x))
         ]
         self.mtf_confluence_min: int = max(0, int(_exec.get('mtf_confluence_min', 0)))
+        # signal_timing: confirmed = EMA/crossover from last CLOSED signal bar (wait for bar close).
+        # live = treat current tick as the forming bar's close for EMA/signals; no candle-close wait for entries.
+        _stg = str(_exec.get('signal_timing', 'confirmed') or 'confirmed').strip().lower()
+        self.signal_timing: str = _stg if _stg in ('confirmed', 'live') else 'confirmed'
         # Trailing SL: confirmed_close = only when last CLOSED bar's close crosses SL (slow, fewer wicks).
         # intrabar_wick = exit when live tick OR current (forming) bar low/high on signal TF touches SL (faster).
         _sem = str(_exec.get('sl_exit_mode', 'confirmed_close') or 'confirmed_close').strip().lower()
         self.sl_exit_mode: str = _sem if _sem in ('confirmed_close', 'intrabar_wick') else 'confirmed_close'
+        if self.signal_timing == 'live':
+            self.sl_exit_mode = 'intrabar_wick'
         # Entry dedup: after_llm = one LLM+orchestrator run per closed signal bar (reject locks the bar).
         # after_order = only lock after a successful order; LLM re-runs each poll if rejected (higher Ollama load).
         _eds = str(_exec.get('entry_dedup_scope', 'after_llm') or 'after_llm').strip().lower()
@@ -189,20 +248,44 @@ class TradingExecutor:
         # the crossover pattern vs live EMA (previous closed bar must have touched EMA).
         self.early_ema_switch_entry: bool = bool(_exec.get('early_ema_switch_entry', False))
         self.early_switch_size_mult: float = max(1.0, float(_exec.get('early_switch_size_mult', 1.3)))
+        # USDT linear: exchange leverage sets IM ≈ notional/leverage; we size notional as margin% × equity × leverage.
+        self._order_leverage: float = max(1.0, float(_exec.get('leverage', 1) or 1))
+
+        # Trailing SL: early-window giveback protection + dynamic ATR trail (see _manage_position)
+        _tr = _exec.get('trailing') if isinstance(_exec.get('trailing'), dict) else {}
+        self._trail_early_window_sec: float = max(0.0, float(_tr.get('early_window_seconds', 150)))
+        self._trail_early_breakeven_pct: float = max(0.0, float(_tr.get('early_breakeven_min_pct', 0.18)))
+        self._trail_profit_floor_start_pct: float = max(0.1, float(_tr.get('profit_floor_start_pct', 1.0)))
+        self._trail_early_atr_scale: float = max(0.45, min(1.0, float(_tr.get('early_window_atr_mult_scale', 0.68))))
+        self._trail_giveback_mfe_frac: float = max(0.05, min(0.95, float(_tr.get('giveback_mfe_fraction', 0.38))))
+        self._trail_giveback_lock_ratio: float = max(0.1, min(0.95, float(_tr.get('giveback_lock_of_mfe_ratio', 0.62))))
+        self._trail_giveback_min_mfe_pct: float = max(0.05, float(_tr.get('giveback_min_mfe_price_pct', 0.22)))
+        self._trail_close_on_early_giveback: bool = bool(_tr.get('close_on_early_giveback', True))
+        self._trail_giveback_close_mfe_frac: float = max(0.15, min(0.98, float(_tr.get('giveback_close_mfe_fraction', 0.58))))
+        self._trail_peak_usd_pullback: float = max(0.1, min(0.95, float(_tr.get('peak_usd_giveback_close_frac', 0.42))))
+        self._trail_min_sl_move_usd: float = max(0.01, float(_tr.get('min_sl_move_usd', 0.50)))
+        self._trail_min_sl_move_pct: float = max(1e-6, float(_tr.get('min_sl_move_price_pct', 0.0001)))
+        self._trail_in_profit_min_move_scale: float = max(0.15, min(1.0, float(_tr.get('in_profit_min_move_scale', 0.40))))
 
         # Position sizing — % of equity + USD cap; dynamic scales with conviction + optional daily target
         _sz = _exec.get('sizing') if isinstance(_exec.get('sizing'), dict) else {}
         _sm = str(_sz.get('mode', 'dynamic') or 'dynamic').strip().lower()
-        self._sizing_mode: str = _sm if _sm in ('dynamic', 'conservative') else 'dynamic'
+        self._sizing_mode: str = (
+            _sm if _sm in ('dynamic', 'conservative', 'llm_direct') else 'dynamic'
+        )
         self._sizing_small_threshold: float = float(_sz.get('small_account_equity_usd', 500))
         self._sizing_max_pct_small: float = float(_sz.get('max_pct_small_account', 25))
         self._sizing_max_pct: float = float(_sz.get('max_pct', 28))
         self._sizing_min_pct: float = float(_sz.get('min_pct', 2))
         self._sizing_conviction_power: float = float(_sz.get('conviction_power', 1.15))
         self._sizing_llm_weight: float = max(0.0, min(1.0, float(_sz.get('llm_weight', 0.32))))
-        self._sizing_max_trade_usd: float = max(100.0, float(_sz.get('max_trade_usd', 15000)))
+        _mtu = _sz.get('max_trade_usd', 15000)
+        if _mtu is None or (isinstance(_mtu, (int, float)) and float(_mtu) <= 0):
+            self._sizing_max_trade_usd = float('inf')
+        else:
+            self._sizing_max_trade_usd = max(0.0, float(_mtu))
         self._sizing_max_equity_fraction: float = max(
-            0.05, min(0.95, float(_sz.get('max_equity_fraction', 0.42)))
+            0.05, min(1.0, float(_sz.get('max_equity_fraction', 0.42)))
         )
         self._sizing_target_trades: int = max(1, int(_sz.get('target_successful_trades_per_day', 10)))
         self._sizing_target_profit_per_trade_usd: float = max(
@@ -223,6 +306,19 @@ class TradingExecutor:
         # Risk settings
         risk = config.get('risk', {})
         self.daily_loss_limit_pct: float = risk.get('daily_loss_limit_pct', 3.0)
+        self.atr_stop_mult: float = float(risk.get('atr_stop_mult', 1.5))
+        # If SL fills, target max loss ≈ this % of account equity at entry (before bounce relief).
+        self.max_loss_per_trade_equity_pct: float = float(
+            risk.get('max_loss_per_trade_equity_pct', 1.0)
+        )
+        # When OB shows bid/ask wall SL or strong imbalance, allow this × equity loss budget for SL placement.
+        self.bounce_loss_relief_mult: float = max(
+            1.0, float(risk.get('bounce_loss_relief_mult', 1.25))
+        )
+        # Flat position if unrealized loss exceeds (capped SL loss USD) × this (gap/slippage buffer).
+        self.hard_stop_loss_slippage_mult: float = max(
+            1.0, float(risk.get('hard_stop_loss_slippage_mult', 1.15))
+        )
 
         # AI / LLM settings — local Ollama first (OLLAMA_HOST / BASE), then tunnel (OLLAMA_REMOTE_URL)
         ai_cfg = config.get('ai', {})
@@ -285,6 +381,8 @@ class TradingExecutor:
         self.llm_fallback_confidence_gate: float = float(
             ai_cfg.get('llm_fallback_confidence_gate', self.llm_fallback_confidence)
         )
+        # When true: do not apply server-side LLM overrides (tq chop, size halving, conf boost/cap) — gate on confidence only.
+        self._confidence_only_gates: bool = bool(ai_cfg.get('confidence_only_gates', False))
         self.min_atr_ratio: float = 0.0003
         self.trade_cooldown: float = float(config.get('trade_cooldown_seconds', 30))
         self.post_close_cooldown: float = 180.0   # spec §4.4: 180s after close
@@ -312,14 +410,17 @@ class TradingExecutor:
         # Exchange tag for output (prevents interleaved confusion in multi-exchange mode)
         self._ex_tag: str = config.get('exchange', {}).get('name', 'bybit').upper()
 
-        # Set leverage to 1x (prevent amplified losses)
         try:
             if self._exchange_client:
+                _lev = int(round(min(self._order_leverage, 125)))
                 for asset in self.assets:
                     sym = self._get_symbol(asset)  # Uses correct format per exchange
                     try:
-                        self._exchange_client.exchange.set_leverage(1, sym)
-                        print(f"  [{self._ex_tag}:{asset}] Leverage set to 1x on {self._exchange_name}")
+                        self._exchange_client.exchange.set_leverage(_lev, sym)
+                        print(
+                            f"  [{self._ex_tag}:{asset}] Leverage set to {_lev}x on {self._exchange_name} "
+                            f"(config execution.leverage)"
+                        )
                     except Exception:
                         pass
         except Exception:
@@ -929,16 +1030,21 @@ class TradingExecutor:
     def _sizing_effective_caps(self) -> Tuple[float, float, float]:
         """One new entry: (max_pct_of_equity, max_notional_usd, equity_fraction for cap)."""
         eq = max(self.equity, 0.0)
+        lev = max(1.0, float(self._order_leverage))
         if self._sizing_mode == 'conservative':
             max_pct = 20.0 if eq < self._sizing_small_threshold else 5.0
-            max_usd = min(2000.0, eq * 0.25)
+            max_usd = min(2000.0, eq * 0.25 * lev)
             return max_pct, max_usd, 0.25
         max_pct = (
             self._sizing_max_pct_small
             if eq < self._sizing_small_threshold
             else self._sizing_max_pct
         )
-        max_usd = min(self._sizing_max_trade_usd, eq * self._sizing_max_equity_fraction)
+        cap_from_eq = eq * self._sizing_max_equity_fraction * lev
+        if math.isinf(self._sizing_max_trade_usd):
+            max_usd = cap_from_eq
+        else:
+            max_usd = min(self._sizing_max_trade_usd, cap_from_eq)
         return max_pct, max_usd, self._sizing_max_equity_fraction
 
     def _conviction_score(self, unified: dict) -> float:
@@ -963,11 +1069,18 @@ class TradingExecutor:
         conservative mode: only clamps llm_pct to legacy-style caps (no conviction curve).
         """
         max_pct, _, _ = self._sizing_effective_caps()
-        mn = max(1.0, self._sizing_min_pct) if self._sizing_mode == 'dynamic' else 1.0
+        mn = (
+            max(1.0, self._sizing_min_pct)
+            if self._sizing_mode in ('dynamic', 'llm_direct')
+            else 1.0
+        )
         llm_pct = float(llm_pct)
         if self._sizing_mode == 'conservative':
             out = max(1.0, min(max_pct, llm_pct))
             return out, "conservative (LLM % only)"
+        if self._sizing_mode == 'llm_direct':
+            out = max(mn, min(max_pct, llm_pct))
+            return out, "llm_direct (LLM position_size_pct; caps + leverage apply)"
 
         conv = self._conviction_score(unified)
         power = max(0.5, min(3.0, self._sizing_conviction_power))
@@ -1185,13 +1298,24 @@ class TradingExecutor:
             f"Signal: {self.signal_timeframe} | Context: {self.context_timeframe} | "
             f"MTF stack: {', '.join(self.analysis_timeframes)}"
         )
-        print(f"  SL exit: {self.sl_exit_mode} (entries still use last closed {self.signal_timeframe} bar)")
+        _sig_note = (
+            f"live tick as forming {self.signal_timeframe} close"
+            if self.signal_timing == 'live'
+            else f"last closed {self.signal_timeframe} bar"
+        )
+        print(f"  Signal timing: {self.signal_timing} ({_sig_note}) | SL exit: {self.sl_exit_mode}")
         print(f"  Entry dedup: {self.entry_dedup_scope}")
         _mxp, _mxu, _mxf = self._sizing_effective_caps()
-        _cap_note = f"${_mxu:,.0f}" if self.equity > 0 else f"≤${self._sizing_max_trade_usd:,.0f} (after connect)"
+        if self.equity > 0:
+            _cap_note = "∞" if math.isinf(_mxu) else f"${_mxu:,.0f}"
+        elif math.isinf(self._sizing_max_trade_usd):
+            _cap_note = "∞ max_trade (equity×lev cap after connect)"
+        else:
+            _cap_note = f"≤${self._sizing_max_trade_usd:,.0f} (after connect)"
         print(
-            f"  Sizing: {self._sizing_mode} | max {_mxp:.0f}% equity / "
-            f"{_cap_note} notional cap ({_mxf:.0%} of equity)"
+            f"  Leverage: {self._order_leverage:.0f}x (execution.leverage) | "
+            f"Sizing: {self._sizing_mode} | max {_mxp:.0f}% margin / "
+            f"{_cap_note} notional cap ({_mxf:.0%} equity × {self._order_leverage:.0f}x)"
             + (
                 (
                     f" | daily plan ramp ${self._sizing_daily_target_usd:,.0f} "
@@ -1364,29 +1488,46 @@ class TradingExecutor:
         highs: list,
         lows: list,
         atr_hint: Optional[float] = None,
+        *,
+        style: str = "confirmed",
     ) -> Optional[Dict[str, Any]]:
-        """Per-timeframe trend stats aligned with signal TF semantics (confirmed bars)."""
+        """Per-timeframe trend stats. style=confirmed uses last closed bar; style=live uses forming bar (last close)."""
         need = max(self.ema_period + 5, 20)
         if len(closes) < need:
             return None
         ema_vals = ema(closes, self.ema_period)
         if len(ema_vals) < 5:
             return None
-        cur_e = ema_vals[-2]
-        prev_e = ema_vals[-3]
+        live = style == "live"
+        if live:
+            cur_e = ema_vals[-1]
+            prev_e = ema_vals[-2]
+            sig_close = closes[-1]
+            ema_term = ema_vals[-1]
+            slope_ref = ema_vals[-1]
+            c1, c2, c3 = closes[-1], closes[-2], closes[-3]
+            atr_idx = -1
+        else:
+            cur_e = ema_vals[-2]
+            prev_e = ema_vals[-3]
+            sig_close = closes[-2]
+            ema_term = ema_vals[-1]
+            slope_ref = ema_vals[-2]
+            c1, c2, c3 = closes[-2], closes[-3], closes[-4]
+            atr_idx = -2
         direction = "RISING" if cur_e > prev_e else "FALLING"
         if atr_hint is None and len(highs) >= 15 and len(lows) >= 15:
             av = atr(highs, lows, closes, 14)
-            atr_hint = float(av[-2]) if av and len(av) >= 2 else 0.0
+            if av and len(av) >= abs(atr_idx):
+                atr_hint = float(av[atr_idx])
+            else:
+                atr_hint = 0.0
         trend_phase = self._classify_trend_phase(ema_vals, atr_hint or 0.0)
         base = ema_vals[-5] if abs(ema_vals[-5]) > 1e-12 else cur_e
-        slope_pct = ((ema_vals[-2] - base) / base * 100) if base else 0.0
-        sig_close = closes[-2]
-        ema_term = ema_vals[-1]
+        slope_pct = ((slope_ref - base) / base * 100) if base else 0.0
         sep_pct = (
             abs(sig_close - ema_term) / ema_term * 100 if ema_term > 0 else 0.0
         )
-        c1, c2, c3 = closes[-2], closes[-3], closes[-4]
         if c1 > c2 and c1 > c3:
             mom = "up"
         elif c1 < c2 and c1 < c3:
@@ -1410,6 +1551,8 @@ class TradingExecutor:
         signal_lows: list,
         signal_ema_direction: str,
         signal_atr: float = 0.0,
+        *,
+        signal_snapshot_style: str = "confirmed",
     ) -> Tuple[str, int, int, Dict[str, Dict[str, Any]]]:
         """
         On every poll: refresh each analysis timeframe. Reuses signal TF OHLCV when tf matches.
@@ -1421,7 +1564,9 @@ class TradingExecutor:
             try:
                 if tf == self.signal_timeframe:
                     cl, hi, lo = signal_closes, signal_highs, signal_lows
-                    snap = self._tf_snapshot(cl, hi, lo, atr_hint=signal_atr)
+                    snap = self._tf_snapshot(
+                        cl, hi, lo, atr_hint=signal_atr, style=signal_snapshot_style
+                    )
                 else:
                     raw = self.price_source.fetch_ohlcv(
                         symbol, timeframe=tf, limit=120
@@ -1500,38 +1645,58 @@ class TradingExecutor:
             return
 
         # ══════════════════════════════════════════════════════════════
-        # USE CONFIRMED CANDLES for signal — last candle may be incomplete
-        # Signal analysis: use closes[:-1] (confirmed candles only)
-        # Position management: use live price from ticker for SL checks
+        # Tick for execution/SL; signal EMA uses either last CLOSED bar (confirmed)
+        # or the same logic with current tick as the forming bar's close (live).
         # ══════════════════════════════════════════════════════════════
-        # Get live tick price for position management (SL needs real-time)
         try:
             ticker = self.price_source.exchange.fetch_ticker(symbol) if self.price_source.exchange else {}
             live_price = float(ticker.get('last', 0)) if ticker.get('last') else closes[-1]
         except Exception:
             live_price = closes[-1]
 
-        # For signal generation, use the LAST CONFIRMED candle close
-        # The final element in OHLCV may be an incomplete candle
-        price = closes[-2]  # Last confirmed close (signal reference)
-        tick_price = live_price  # Real-time price (execution/SL)
+        tick_price = live_price
+        closes_sig = list(closes)
+        highs_sig = list(highs)
+        lows_sig = list(lows)
+        if self.signal_timing == 'live':
+            closes_sig[-1] = float(tick_price)
+            highs_sig[-1] = max(float(highs_sig[-1]), float(tick_price))
+            lows_sig[-1] = min(float(lows_sig[-1]), float(tick_price))
 
-        # Compute EMA(8) and ATR(14) on signal-timeframe candles (incl. forming bar for freshness)
-        ema_vals = ema(closes, self.ema_period)
-        atr_vals = atr(highs, lows, closes, 14)
+        if self.signal_timing == 'confirmed' and len(closes) >= 2:
+            price = float(closes[-2])
+        else:
+            price = float(tick_price)
 
-        # Use confirmed candle EMA for signal direction
-        current_ema = ema_vals[-2]  # EMA at last confirmed candle
-        prev_ema = ema_vals[-3] if len(ema_vals) >= 3 else current_ema
+        ema_vals = ema(closes_sig, self.ema_period)
+        atr_vals = atr(highs_sig, lows_sig, closes_sig, 14)
         current_atr = atr_vals[-1] if atr_vals else 0
-        signal_atr_confirmed = (
-            float(atr_vals[-2]) if len(atr_vals) >= 2 else float(current_atr)
-        )
-        ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
-        signal_trend_phase = self._classify_trend_phase(ema_vals, signal_atr_confirmed)
 
+        if self.signal_timing == 'live':
+            current_ema = ema_vals[-1]
+            prev_ema = ema_vals[-2] if len(ema_vals) >= 2 else current_ema
+            signal_atr_for_phase = (
+                float(atr_vals[-1]) if atr_vals else float(current_atr)
+            )
+        else:
+            current_ema = ema_vals[-2]
+            prev_ema = ema_vals[-3] if len(ema_vals) >= 3 else current_ema
+            signal_atr_for_phase = (
+                float(atr_vals[-2]) if len(atr_vals) >= 2 else float(current_atr)
+            )
+
+        ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
+        signal_trend_phase = self._classify_trend_phase(ema_vals, signal_atr_for_phase)
+
+        _snap_style = "live" if self.signal_timing == "live" else "confirmed"
         mtf_block, mtf_aligned, mtf_n, mtf_snaps = self._collect_mtf_analysis(
-            symbol, closes, highs, lows, ema_direction, signal_atr=signal_atr_confirmed
+            symbol,
+            closes_sig,
+            highs_sig,
+            lows_sig,
+            ema_direction,
+            signal_atr=signal_atr_for_phase,
+            signal_snapshot_style=_snap_style,
         )
         self._mtf_block_for_llm = mtf_block
         self._mtf_aligned = mtf_aligned
@@ -1578,31 +1743,30 @@ class TradingExecutor:
         except Exception:
             ob_levels = {'bid_wall': 0, 'ask_wall': 0, 'bid_walls': [], 'ask_walls': [], 'imbalance': 0, 'bid_depth_usd': 0, 'ask_depth_usd': 0}
 
-        # ── Signal from signal_timeframe EMA crossover (CONFIRMED candles only) ──
+        # ── Signal from signal_timeframe EMA crossover (confirmed bar vs live tick as forming close) ──
         signal = "NEUTRAL"
 
-        # Check if EMA crossed through recent CONFIRMED candles (skip last incomplete)
         ema_crossed = False
-        for i in range(2, min(5, len(highs))):  # Start at -2 (last confirmed)
-            h = highs[-i]
-            l = lows[-i]
+        _cross_start = 1 if self.signal_timing == 'live' else 2
+        for i in range(_cross_start, min(5, len(highs_sig))):
+            h = highs_sig[-i]
+            l = lows_sig[-i]
             e = ema_vals[-i] if i <= len(ema_vals) else 0
             if l <= e <= h:
                 ema_crossed = True
                 break
 
-        # PRICE MOMENTUM CHECK — detect reversals before EMA catches up
-        # If last 3 confirmed candles are making lower closes, price is falling
-        # even if EMA still says RISING (EMA lags on fast reversals)
         price_falling = False
         price_rising = False
-        if len(closes) >= 5:
-            c1, c2, c3 = closes[-2], closes[-3], closes[-4]  # last 3 confirmed
-            # Use <= to handle stale testnet prices (same close repeated)
+        if len(closes_sig) >= 5:
+            if self.signal_timing == 'live':
+                c1, c2, c3 = float(tick_price), float(closes_sig[-2]), float(closes_sig[-3])
+            else:
+                c1, c2, c3 = closes_sig[-2], closes_sig[-3], closes_sig[-4]
             if c1 < c2 and c1 < c3:
-                price_falling = True  # latest confirmed is lower than previous 2
+                price_falling = True
             elif c1 > c2 and c1 > c3:
-                price_rising = True   # latest confirmed is higher than previous 2
+                price_rising = True
 
         # OVEREXTENSION CHECK — if price is >10% from EMA, it's parabolic
         # Don't enter LONG at the top of a parabolic move or SHORT at the bottom
@@ -1651,7 +1815,8 @@ class TradingExecutor:
         dedup_candle_ts_override: Optional[float] = None
         early_ema_entry = False
         if (
-            self.early_ema_switch_entry
+            self.signal_timing != 'live'
+            and self.early_ema_switch_entry
             and signal == "NEUTRAL"
             and ema_separation <= 10.0
         ):
@@ -1659,7 +1824,7 @@ class TradingExecutor:
                 closes,
                 highs,
                 lows,
-                ema_vals,
+                ema(closes, self.ema_period),
                 tick_price,
                 self.ema_period,
                 overextension_pct=10.0,
@@ -1715,13 +1880,21 @@ class TradingExecutor:
             )
 
         _ts_ohlcv = ohlcv.get('timestamps') or []
-        _sig_open = _ts_ohlcv[-2] if len(_ts_ohlcv) >= 2 else None
-        _bar_open = _signal_bar_open_utc(_sig_open) if _sig_open is not None else "?"
         _rise_fall = "RISE" if ema_direction == "RISING" else "FALL"
-        print(
-            f"  [{self._ex_tag}:{asset}] SIGNAL CANDLE: last CLOSED {self.signal_timeframe} "
-            f"bar OPEN={_bar_open} | EMA({self.ema_period}) vs prior bar → {_rise_fall} ({ema_direction})"
-        )
+        if self.signal_timing == 'live':
+            _fo = _ts_ohlcv[-1] if len(_ts_ohlcv) >= 1 else None
+            _bar_open = _signal_bar_open_utc(_fo) if _fo is not None else "?"
+            print(
+                f"  [{self._ex_tag}:{asset}] SIGNAL (live): forming {self.signal_timeframe} "
+                f"bar OPEN={_bar_open} | tick as close | EMA({self.ema_period}) vs prior → {_rise_fall} ({ema_direction})"
+            )
+        else:
+            _sig_open = _ts_ohlcv[-2] if len(_ts_ohlcv) >= 2 else None
+            _bar_open = _signal_bar_open_utc(_sig_open) if _sig_open is not None else "?"
+            print(
+                f"  [{self._ex_tag}:{asset}] SIGNAL CANDLE: last CLOSED {self.signal_timeframe} "
+                f"bar OPEN={_bar_open} | EMA({self.ema_period}) vs prior bar → {_rise_fall} ({ema_direction})"
+            )
         if asset in self.positions:
             _ps = self.positions[asset].get("direction", "?")
             print(f"  [{self._ex_tag}:{asset}] FINAL DECISION (trade): HOLD {_ps}")
@@ -1744,9 +1917,20 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        # ── Position management uses LIVE price; entries execute at tick, signals often reference last close ──
+        ohlcv_manage = ohlcv
+        if self.signal_timing == 'live':
+            _cm = list(closes)
+            _hm = list(highs)
+            _lm = list(lows)
+            _cm[-1] = float(tick_price)
+            _hm[-1] = max(float(_hm[-1]), float(tick_price))
+            _lm[-1] = min(float(_lm[-1]), float(tick_price))
+            ohlcv_manage = {**ohlcv, 'closes': _cm, 'highs': _hm, 'lows': _lm}
+
         if asset in self.positions:
-            self._manage_position(asset, tick_price, ohlcv, ema_vals, atr_vals, ema_direction, signal, ob_levels)
+            self._manage_position(
+                asset, tick_price, ohlcv_manage, ema_vals, atr_vals, ema_direction, signal, ob_levels
+            )
         else:
             self._evaluate_entry(
                 asset,
@@ -1756,9 +1940,9 @@ class TradingExecutor:
                 atr_vals,
                 ema_direction,
                 signal,
-                closes,
-                highs,
-                lows,
+                closes_sig,
+                highs_sig,
+                lows_sig,
                 opens,
                 volumes,
                 current_ema,
@@ -1847,8 +2031,11 @@ class TradingExecutor:
                 entry_score += 1
                 score_reasons.append(f"trend_{consec}bars")
 
-            # 3. PRICE vs EMA SEPARATION (0-2 points) — spec §4.1 / §2.4: price = closes[-2], EMA term = ema_vals[-1]
-            sig_close = closes[-2] if len(closes) >= 2 else price
+            # 3. PRICE vs EMA SEPARATION (0-2 points) — confirmed: last closed close; live: forming close (= tick)
+            if self.signal_timing == 'live' and len(closes) >= 1:
+                sig_close = float(closes[-1])
+            else:
+                sig_close = closes[-2] if len(closes) >= 2 else price
             separation = abs(sig_close - ema_vals[-1]) / ema_vals[-1] * 100 if ema_vals[-1] > 0 else 0
             if separation > 0.5:
                 entry_score += 2
@@ -2017,21 +2204,42 @@ class TradingExecutor:
                                     print(f"  [{self._ex_tag}:{asset}] WARNING: exchange pos ${pos_notional:,.0f} >> max ${max_notional:,.0f} — NOT syncing (close manually)")
                                     return
 
-                                sl_dist = current_atr * 1.5 if current_atr > 0 else price * 0.01
+                                sl_dist = current_atr * self.atr_stop_mult if current_atr > 0 else price * 0.01
                                 if pos_side == 'long':
                                     sync_sl = entry_p - sl_dist
                                 else:
                                     sync_sl = entry_p + sl_dist
+                                _sync_cs = 0.0
+                                if self._exchange_name == 'delta':
+                                    _sync_cs = {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001)
+                                _eqs = max(float(self.equity), 1.0)
+                                _max_l = _eqs * (self.max_loss_per_trade_equity_pct / 100.0)
+                                _ls = _loss_usd_at_price(
+                                    synced_direction, entry_p, sync_sl, contracts, _sync_cs
+                                )
+                                if _ls > _max_l > 0 and contracts > 0:
+                                    _qm = _linear_qty_multiplier(contracts, _sync_cs)
+                                    if _qm > 0:
+                                        _md = _max_l / _qm
+                                        if synced_direction == 'LONG':
+                                            sync_sl = entry_p - _md
+                                        else:
+                                            sync_sl = entry_p + _md
                                 self.positions[asset] = {
                                     'direction': synced_direction,
                                     'side': 'buy' if pos_side == 'long' else 'sell',
                                     'entry_price': entry_p,
                                     'qty': contracts,
+                                    'contract_size': _sync_cs,
                                     'sl': sync_sl, 'sl_levels': ['L1'],
                                     'sl_order_id': None,
                                     'peak_price': price, 'entry_time': time.time(),
                                     'confidence': 0, 'reasoning': 'synced from exchange',
                                     'breakeven_moved': False,
+                                    'risk_equity_ref': _eqs,
+                                    'max_loss_usd_cap': _max_l,
+                                    'bounce_loss_relief': False,
+                                    'peak_upnl_usd': 0.0,
                                 }
                                 print(f"  [{self._ex_tag}:{asset}] SYNCED {pos_side} position ({contracts}) ${pos_notional:,.0f} | SL=${sync_sl:,.2f}")
                             # Don't return — let _manage_position handle it
@@ -2046,7 +2254,7 @@ class TradingExecutor:
         dedup_candle_ts: Optional[float] = None
         if dedup_candle_ts_override is not None:
             dedup_candle_ts = float(dedup_candle_ts_override)
-        elif len(timestamps) >= 2:
+        elif len(timestamps) >= 2 and self.signal_timing != 'live':
             dedup_candle_ts = float(timestamps[-2])
         if dedup_candle_ts is not None:
             if asset in self.last_signal_candle and self.last_signal_candle[asset] == dedup_candle_ts:
@@ -2217,8 +2425,11 @@ class TradingExecutor:
         action = "LONG" if signal == "BUY" else "SHORT"
         direction_label = "CALL" if signal == "BUY" else "PUT"
 
-        # spec §6.2: elevated risk → halve size (veto already handled via proceed=false)
-        if self.bear_reduce_threshold <= risk_score < self.bear_veto_threshold:
+        # spec §6.2: elevated risk → halve size (skipped when ai.confidence_only_gates)
+        if (
+            not self._confidence_only_gates
+            and self.bear_reduce_threshold <= risk_score < self.bear_veto_threshold
+        ):
             size_pct *= 0.5
             print(f"  [{self._ex_tag}:{asset}] BEAR REDUCE: risk={risk_score} >= {self.bear_reduce_threshold} — size halved")
             if asset not in self.bear_veto_stats:
@@ -2244,7 +2455,11 @@ class TradingExecutor:
         self.bear_veto_stats[asset]['passed'] += 1
 
         # ── Edge Positioning: adjust size by historical win rate ──
-        if self.edge_enabled and asset in self.edge_stats:
+        if (
+            self.edge_enabled
+            and not self._confidence_only_gates
+            and asset in self.edge_stats
+        ):
             edge = self.edge_stats[asset]
             if edge['total'] >= 5:
                 mult = edge['edge_multiplier']
@@ -2262,18 +2477,24 @@ class TradingExecutor:
             print(f"  [{self._ex_tag}:{asset}] SKIP: no equity available")
             return
 
-        notional = self.equity * (size_pct / 100.0)
+        margin_alloc = self.equity * (size_pct / 100.0)
+        notional = margin_alloc * self._order_leverage
         notional = min(notional, max_trade)
 
-        if abs(size_pct - pre_dyn) > 0.05 or self._sizing_mode == 'dynamic':
+        if (
+            abs(size_pct - pre_dyn) > 0.05
+            or self._sizing_mode in ('dynamic', 'llm_direct')
+        ):
+            _cap_s = "∞" if math.isinf(max_trade) else f"${max_trade:,.0f}"
             print(
-                f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.1f}% of ${self.equity:,.0f} "
-                f"= ${notional:,.0f} (cap ${max_trade:,.0f}) | {sizing_note}"
+                f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.1f}% margin of ${self.equity:,.0f} "
+                f"× {self._order_leverage:.0f}x → ${notional:,.0f} notional (cap {_cap_s}) | {sizing_note}"
             )
         else:
+            _cap_s = "∞" if math.isinf(max_trade) else f"${max_trade:,.0f}"
             print(
-                f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.0f}% of ${self.equity:,.0f} "
-                f"= ${notional:,.0f} (cap ${max_trade:,.0f})"
+                f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.0f}% margin × {self._order_leverage:.0f}x "
+                f"→ ${notional:,.0f} notional (cap {_cap_s})"
             )
 
         qty = notional / price if price > 0 else 0
@@ -2293,11 +2514,14 @@ class TradingExecutor:
             qty = max(1, int(notional / contract_value))  # number of contracts
             actual_notional = qty * contract_value
             print(f"  [{self._ex_tag}:{asset}] DELTA: {qty} contracts x ${contract_value:,.2f} = ${actual_notional:,.2f} notional")
-            # Safety: don't exceed 50% of equity (except minimum 1 contract)
-            if actual_notional > self.equity * 0.50 and qty > 1:
-                qty = max(1, int(self.equity * 0.50 / contract_value))
+            _max_n = self.equity * self._sizing_max_equity_fraction * self._order_leverage
+            if actual_notional > _max_n + 1e-9 and qty > 1:
+                qty = max(1, int(_max_n / contract_value))
                 actual_notional = qty * contract_value
-                print(f"  [{self._ex_tag}:{asset}] CAPPED to {qty} contracts (${actual_notional:,.2f})")
+                print(
+                    f"  [{self._ex_tag}:{asset}] CAPPED to {qty} contracts (${actual_notional:,.2f}) "
+                    f"(max notional vs equity×lev cap)"
+                )
             min_qty = {'BTC': 1, 'ETH': 1}
         else:
             # Bybit: coin-based sizing
@@ -2305,7 +2529,7 @@ class TradingExecutor:
 
         asset_min = min_qty.get(asset, 1 if self._exchange_name == 'delta' else 0.001)
         if qty < asset_min:
-            if self._sizing_mode == 'dynamic':
+            if self._sizing_mode in ('dynamic', 'llm_direct'):
                 max_pct = max(
                     0.12, min(0.30, self._sizing_max_equity_fraction * 0.65)
                 )
@@ -2439,16 +2663,17 @@ class TradingExecutor:
 
             # Compute initial stop-loss (L1) using ORDER BOOK + ATR
             # Priority: order book wall > ATR-based > percentage fallback
-            sl_distance = current_atr * 1.5  # ATR fallback
+            sl_distance = current_atr * self.atr_stop_mult
             sl_distance = max(sl_distance, price * 0.003)  # minimum 0.3%
             sl_distance = min(sl_distance, price * 0.02)   # maximum 2%
 
             sl_source = "ATR"
+            _obl = ob_levels or {}
             if action == 'LONG':
                 sl_price = price - sl_distance
                 # Use order book bid wall as support-based SL if available
                 # Place SL just below the strongest bid wall (support)
-                bid_wall = ob_levels.get('bid_wall', 0)
+                bid_wall = _obl.get('bid_wall', 0)
                 if bid_wall > 0 and bid_wall < price:
                     ob_sl = bid_wall * 0.999  # 0.1% below the wall
                     # Only use if within reasonable range (0.3% to 2% from entry)
@@ -2460,7 +2685,7 @@ class TradingExecutor:
                 sl_price = price + sl_distance
                 # Use order book ask wall as resistance-based SL
                 # Place SL just above the strongest ask wall (resistance)
-                ask_wall = ob_levels.get('ask_wall', 0)
+                ask_wall = _obl.get('ask_wall', 0)
                 if ask_wall > 0 and ask_wall > price:
                     ob_sl = ask_wall * 1.001  # 0.1% above the wall
                     ob_dist_pct = (ob_sl - price) / price * 100
@@ -2468,7 +2693,31 @@ class TradingExecutor:
                         sl_price = ob_sl
                         sl_source = f"OB_ASK_WALL@${ask_wall:,.2f}"
 
-            imb = ob_levels.get('imbalance', 0)
+            # Cap loss at SL to max % of equity (wider cap when book suggests bounce/absorption).
+            eq_ref = max(float(self.equity), 1.0)
+            bounce_ok = _bounce_relief_from_ob(action, _obl, sl_source)
+            relief = self.bounce_loss_relief_mult if bounce_ok else 1.0
+            max_loss_usd = eq_ref * (self.max_loss_per_trade_equity_pct / 100.0) * relief
+            _pos_cs = 0.0
+            if self._exchange_name == 'delta':
+                _pos_cs = {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001)
+            loss_sl = _loss_usd_at_price(action, price, sl_price, qty, _pos_cs)
+            if loss_sl > max_loss_usd > 0 and qty > 0:
+                qm = _linear_qty_multiplier(qty, _pos_cs)
+                if qm > 0:
+                    max_dist = max_loss_usd / qm
+                    if action == 'LONG':
+                        sl_price = price - max_dist
+                    else:
+                        sl_price = price + max_dist
+                    print(
+                        f"  [{self._ex_tag}:{asset}] RISK CAP: SL tightened to keep loss ≤ "
+                        f"{self.max_loss_per_trade_equity_pct:.2f}% equity"
+                        f"{' × ' + str(round(relief, 2)) + ' bounce relief' if bounce_ok else ''} "
+                        f"(~${max_loss_usd:,.0f} @ SL)"
+                    )
+
+            imb = _obl.get('imbalance', 0)
             print(f"  [{self._ex_tag}:{asset}] ORDER OK: {order_id} | SL L1=${sl_price:,.2f} ({sl_source}) | OB imbalance={imb:+.2f}")
             print(
                 f"  [{self._ex_tag}:{asset}] FINAL DECISION (trade): OPEN {action} / {direction_label}"
@@ -2484,6 +2733,7 @@ class TradingExecutor:
                 'side': side,
                 'entry_price': price,
                 'qty': qty,
+                'contract_size': _pos_cs,
                 'order_id': order_id,
                 'sl': sl_price,
                 'sl_order_id': sl_order_id,
@@ -2494,6 +2744,12 @@ class TradingExecutor:
                 'reasoning': reasoning,
                 'breakeven_moved': False,
                 'agent_votes': orch_result.get('agent_votes', {}) if orch_result else {},
+                'risk_equity_ref': eq_ref,
+                'max_loss_usd_cap': max_loss_usd,
+                'bounce_loss_relief': bounce_ok,
+                'peak_upnl_usd': max(
+                    0.0, _unrealized_pnl_usd(action, price, price, qty, _pos_cs)
+                ),
             }
             self.last_trade_time[asset] = time.time()
         else:
@@ -2515,6 +2771,7 @@ class TradingExecutor:
         sl = pos['sl']
         sl_levels = pos['sl_levels']
         peak = pos['peak_price']
+        qty = float(pos.get('qty', 0) or 0)
 
         closes = ohlcv['closes']
         highs = ohlcv['highs']
@@ -2537,15 +2794,110 @@ class TradingExecutor:
         # OB imbalance — tracked for display only (testnet OB too unreliable for exits)
         ob_imbalance = ob_levels.get('imbalance', 0)
 
-        # ── 2. HARD STOP: max -2% loss — non-negotiable ──
-        # But if asset is blacklisted (stuck, can't close), just log and skip
+        age_sec = time.time() - float(pos.get('entry_time', time.time()))
+        in_early = self._trail_early_window_sec > 0 and age_sec < self._trail_early_window_sec
+        _pcs = float(pos.get('contract_size', 0) or 0)
+        upnl_usd = _unrealized_pnl_usd(direction, entry, price, qty, _pcs)
+        _pku = float(pos.get('peak_upnl_usd', 0) or 0)
+        if upnl_usd > _pku:
+            pos['peak_upnl_usd'] = upnl_usd
+            _pku = upnl_usd
+
+        extra_sl_long_floor: Optional[float] = None
+        extra_sl_short_ceiling: Optional[float] = None
         is_stuck = asset in self.failed_close_assets
-        if pnl_pct <= -2.0:
-            if is_stuck:
-                print(f"  [{self._ex_tag}:{asset}] STUCK {pnl_pct:+.2f}% (can't close — no liquidity)")
+
+        # ── 1b. Early window: giveback from peak → tighten SL or cash out before uPnL fades ──
+        if in_early and not is_stuck and qty > 0:
+            if (
+                self._trail_close_on_early_giveback
+                and _pku > 1e-9
+                and upnl_usd > 0
+                and upnl_usd <= _pku * (1.0 - self._trail_peak_usd_pullback)
+            ):
+                print(
+                    f"  [{self._ex_tag}:{asset}] EARLY uPnL GIVEBACK: ${upnl_usd:,.0f} vs peak ${_pku:,.0f} "
+                    f"(>{self._trail_peak_usd_pullback:.0%} off peak @ {age_sec:.0f}s) — banking profit"
+                )
+                self._close_position(
+                    asset,
+                    price,
+                    f"Early uPnL giveback (${upnl_usd:,.0f} <= {(1-self._trail_peak_usd_pullback):.0%} of peak ${_pku:,.0f})",
+                )
                 return
-            print(f"  [{self._ex_tag}:{asset}] HARD STOP at ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
-            self._close_position(asset, price, f"Hard stop {pnl_pct:+.1f}%")
+            if direction == 'LONG' and peak > entry:
+                mfe = peak - entry
+                mfe_pct = (mfe / entry) * 100.0
+                if mfe > 0 and mfe_pct >= self._trail_giveback_min_mfe_pct:
+                    retr = peak - price
+                    frac = retr / mfe
+                    if (
+                        frac >= self._trail_giveback_close_mfe_frac
+                        and self._trail_close_on_early_giveback
+                        and pnl_pct > 0
+                    ):
+                        print(
+                            f"  [{self._ex_tag}:{asset}] EARLY MFE GIVEBACK: retraced {frac:.0%} of spike "
+                            f"({age_sec:.0f}s) — cash out @ P&L {pnl_pct:+.2f}%"
+                        )
+                        self._close_position(
+                            asset,
+                            price,
+                            f"Early MFE giveback ({frac:.0%} of favorable excursion)",
+                        )
+                        return
+                    if frac >= self._trail_giveback_mfe_frac:
+                        extra_sl_long_floor = entry + mfe * self._trail_giveback_lock_ratio
+            elif direction == 'SHORT' and peak < entry:
+                mfe = entry - peak
+                mfe_pct = (mfe / entry) * 100.0
+                if mfe > 0 and mfe_pct >= self._trail_giveback_min_mfe_pct:
+                    retr = price - peak
+                    frac = retr / mfe
+                    if (
+                        frac >= self._trail_giveback_close_mfe_frac
+                        and self._trail_close_on_early_giveback
+                        and pnl_pct > 0
+                    ):
+                        print(
+                            f"  [{self._ex_tag}:{asset}] EARLY MFE GIVEBACK: retraced {frac:.0%} of dip "
+                            f"({age_sec:.0f}s) — cash out @ P&L {pnl_pct:+.2f}%"
+                        )
+                        self._close_position(
+                            asset,
+                            price,
+                            f"Early MFE giveback ({frac:.0%} of favorable excursion)",
+                        )
+                        return
+                    if frac >= self._trail_giveback_mfe_frac:
+                        extra_sl_short_ceiling = entry - mfe * self._trail_giveback_lock_ratio
+
+        # ── 2. HARD STOP: max loss vs equity at entry (+ slippage buffer) — USD-based ──
+        eq_ref = float(pos.get('risk_equity_ref', self.equity) or self.equity)
+        max_loss_cap = pos.get('max_loss_usd_cap')
+        if max_loss_cap is None or float(max_loss_cap) <= 0:
+            max_loss_cap = eq_ref * (self.max_loss_per_trade_equity_pct / 100.0)
+        else:
+            max_loss_cap = float(max_loss_cap)
+        emergency_usd = max_loss_cap * self.hard_stop_loss_slippage_mult
+        if upnl_usd <= -emergency_usd:
+            if is_stuck:
+                print(
+                    f"  [{self._ex_tag}:{asset}] STUCK hard-stop zone "
+                    f"(${upnl_usd:,.0f} vs -${emergency_usd:,.0f} cap) — can't close"
+                )
+                return
+            print(
+                f"  [{self._ex_tag}:{asset}] HARD STOP (equity cap) at ${price:,.2f} | "
+                f"unrealized ${upnl_usd:,.0f} ≤ -${emergency_usd:,.0f} "
+                f"({self.max_loss_per_trade_equity_pct:.2f}% ref equity × "
+                f"{self.hard_stop_loss_slippage_mult:.2f} slip) | price P&L {pnl_pct:+.2f}%"
+            )
+            self._close_position(
+                asset,
+                price,
+                f"Hard stop equity cap (${upnl_usd:,.0f} <= -${emergency_usd:,.0f})",
+            )
             return
 
         # ── 2b. TIME-BASED EXIT: close zombie positions (Freqtrade pattern) ──
@@ -2604,9 +2956,9 @@ class TradingExecutor:
         # - Minimum profit floor guarantees we keep a % of gains
         # - Whichever is TIGHTER wins (more protective)
         #
-        # Phase 1 (pnl < 0.5%):  Initial SL at L1 — hold through noise
-        # Phase 2 (pnl >= 0.5%): BREAKEVEN — can't lose capital
-        # Phase 3 (pnl >= 1.5%): Protect 40% of profit + ATR trail (1.5x)
+        # Phase 1: Initial SL at L1 — hold through noise (early window: faster BE at early_breakeven_min_pct)
+        # Phase 2: BREAKEVEN — can't lose capital (0.5% normally; early_breakeven_min_pct in first trailing.early_window_seconds)
+        # Phase 3 (pnl >= profit_floor_start_pct): Protect 40% of peak + ATR trail; early_window tightens ATR via early_window_atr_mult_scale
         # Phase 4 (pnl >= 3%):   Protect 50% of profit + ATR trail (1.2x)
         # Phase 5 (pnl >= 5%):   Protect 60% of profit + ATR trail (1.0x)
         # Phase 6 (pnl >= 10%):  Protect 70% of profit + ATR trail (0.8x)
@@ -2614,16 +2966,16 @@ class TradingExecutor:
         # SL = MAX(profit_floor, atr_trail) — always pick the tighter one
 
         new_sl = sl
-        qty = pos.get('qty', 0)
         current_atr = atr_vals[-1] if atr_vals else price * 0.01
+        be_thresh = self._trail_early_breakeven_pct if in_early else 0.5
+        pf0 = self._trail_profit_floor_start_pct
 
         if direction == 'LONG':
-            if pnl_pct >= 0.5:
-                # Phase 2: Breakeven
+            if pnl_pct >= be_thresh:
                 if sl < entry:
                     new_sl = entry
 
-            if pnl_pct >= 1.5:
+            if pnl_pct >= pf0:
                 # Determine protection level
                 if pnl_pct >= 10.0:
                     protect_pct = 0.70
@@ -2638,6 +2990,9 @@ class TradingExecutor:
                     protect_pct = 0.40
                     atr_mult = 1.5
 
+                if in_early:
+                    atr_mult *= self._trail_early_atr_scale
+
                 # Profit floor: lock in X% of peak profit
                 profit_range = peak - entry
                 floor_sl = entry + (profit_range * protect_pct)
@@ -2649,6 +3004,11 @@ class TradingExecutor:
                 best_sl = max(floor_sl, atr_trail_sl)
                 if best_sl > new_sl and best_sl < price:
                     new_sl = best_sl
+
+            if extra_sl_long_floor is not None:
+                cap_sl = min(extra_sl_long_floor, price * 0.9995)
+                if cap_sl > new_sl:
+                    new_sl = cap_sl
 
             # Swing lows + order book as additional tightening
             if pnl_pct >= 2.0:
@@ -2667,11 +3027,11 @@ class TradingExecutor:
                             new_sl = ob_sl
 
         else:  # SHORT
-            if pnl_pct >= 0.5:
+            if pnl_pct >= be_thresh:
                 if sl > entry:
                     new_sl = entry
 
-            if pnl_pct >= 1.5:
+            if pnl_pct >= pf0:
                 if pnl_pct >= 10.0:
                     protect_pct = 0.70
                     atr_mult = 0.8
@@ -2685,6 +3045,9 @@ class TradingExecutor:
                     protect_pct = 0.40
                     atr_mult = 1.5
 
+                if in_early:
+                    atr_mult *= self._trail_early_atr_scale
+
                 # Profit floor (SHORT: SL moves DOWN)
                 profit_range = entry - peak
                 floor_sl = entry - (profit_range * protect_pct)
@@ -2696,6 +3059,10 @@ class TradingExecutor:
                 best_sl = min(floor_sl, atr_trail_sl)
                 if best_sl < new_sl and best_sl > price:
                     new_sl = best_sl
+
+            if extra_sl_short_ceiling is not None and extra_sl_short_ceiling > price * 1.0003:
+                if extra_sl_short_ceiling < new_sl:
+                    new_sl = extra_sl_short_ceiling
 
             if pnl_pct >= 2.0:
                 lookback = min(15, len(highs))
@@ -2713,9 +3080,10 @@ class TradingExecutor:
                             new_sl = ob_sl
 
         # SL can only move FORWARD (tighter), never backward
-        # Minimum move: $0.50 or 0.01% of entry (whichever is larger) to avoid noise
         new_sl = round(new_sl, 2)
-        min_move = max(0.50, entry * 0.0001)
+        min_move = max(self._trail_min_sl_move_usd, entry * self._trail_min_sl_move_pct)
+        if pnl_pct > 0.35:
+            min_move *= self._trail_in_profit_min_move_scale
         sl_moved = False
         if direction == 'LONG' and new_sl > sl + min_move:
             old_level = sl_levels[-1]
@@ -2778,9 +3146,9 @@ class TradingExecutor:
                 phase = "LOCK-60%"
             elif pnl_pct >= 3:
                 phase = "LOCK-50%"
-            elif pnl_pct >= 1.5:
+            elif pnl_pct >= self._trail_profit_floor_start_pct:
                 phase = "LOCK-40%"
-            elif pnl_pct >= 0.5:
+            elif pnl_pct >= self._trail_early_breakeven_pct:
                 phase = "BREAKEVEN"
             else:
                 phase = "INITIAL"
@@ -3006,6 +3374,8 @@ class TradingExecutor:
         # Delta: qty = number of contracts. 1 BTC contract = 0.001 BTC, 1 ETH contract = 0.01 ETH
         # Bybit: qty = coin amount (e.g., 0.001 BTC)
         # P&L formula: (exit - entry) * qty * contract_size
+        # Use exchange-reported size when it differed from our book (fills partials / manual edits).
+        q_for_pnl = float(actual_qty) if actual_qty and float(actual_qty) > 0 else float(qty)
         if self._exchange_name == 'delta':
             contract_sizes = {'BTC': 0.001, 'ETH': 0.01}
             cs = contract_sizes.get(asset, 0.001)
@@ -3014,15 +3384,18 @@ class TradingExecutor:
 
         if direction == 'LONG':
             pnl_pct = ((price - entry) / entry) * 100.0
-            pnl_usd = (price - entry) * qty * cs
+            pnl_usd = (price - entry) * q_for_pnl * cs
         else:
             pnl_pct = ((entry - price) / entry) * 100.0
-            pnl_usd = (entry - price) * qty * cs
+            pnl_usd = (entry - price) * q_for_pnl * cs
 
         sl_chain = '->'.join(pos.get('sl_levels', ['L1']))
         duration_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
 
-        print(f"  [{self._ex_tag}:{asset}] CLOSED: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason}")
+        print(
+            f"  [{self._ex_tag}:{asset}] CLOSED: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} "
+            f"(est.; fees/spread not deducted — exchange row can be worse)"
+        )
 
         # Track realized PnL for drawdown limits
         self.session_realized_pnl += pnl_usd
@@ -3056,7 +3429,7 @@ class TradingExecutor:
                 action=direction,
                 entry_price=entry,
                 exit_price=price,
-                qty=qty,
+                qty=q_for_pnl,
                 pnl_usd=pnl_usd,
                 pnl_pct=pnl_pct,
                 sl_progression=sl_chain,
@@ -3414,6 +3787,18 @@ class TradingExecutor:
         }
         computed_json_line = json.dumps(computed_anchor, ensure_ascii=False)
 
+        _ema_dir_prompt_note = (
+            "Signal timing is LIVE: ema_direction uses current tick as the forming bar's close on the signal "
+            "timeframe (no wait for that bar to close)."
+            if self.signal_timing == 'live'
+            else "ema_direction is the last closed bar vs the prior bar (can still read FALLING after a long decline)."
+        )
+        _mtf_snapshot_note = (
+            "signal TF uses live tick as forming-bar close; other TFs use last closed bar in snapshots"
+            if self.signal_timing == 'live'
+            else "last closed bar per TF"
+        )
+
         prompt = f"""You are a COMPLETE trading decision system for {asset} on {self._exchange_name.upper()}.
 You must play ALL 7 roles below and produce ONE final decision in a SINGLE JSON response.
 
@@ -3463,14 +3848,14 @@ Support: ${support:.2f} | Resistance: ${resistance:.2f} | Volume: {vol_trend}
 Note: trend_phase uses EMA slope deceleration vs recent bars; *_STABILIZING means momentum is fading — possible direction change soon (not pure R/F chase).
 
 === STABILISATION VS PRIOR TREND (do not ignore) ===
-ema_direction={ema_direction} is the last closed bar vs the prior bar (can still read FALLING after a long decline).
+{_ema_dir_prompt_note}
 trend_phase={_phase} adds whether that move is still accelerating or stabilising (slowing).
 If phase is FALLING_STABILIZING or RISING_STABILIZING, the *history* may still look like one trend, but structurally the edge is weaker: mean-reversion, whipsaw, and EMA crossovers *against* the legacy trend are more likely next.
 Current signal is {"trend-following (same side as ema_direction)" if _trend_follow else "not pure trend-follow vs EMA step"}.
 If trend-following AND *_STABILIZING: do NOT justify aggressive {"SHORT" if signal == "SELL" else "LONG" if signal == "BUY" else "entry"} only because "price was falling/rising for many bars". Explicitly address bounce/crossover risk, support/resistance, and L1-L2 failure; lean proceed=false or low trade_quality unless fresh breakdown/continuation is visible in candles and agents.
 MTF: {mtf_stabilizing_count} of {mtf_n} analyzed timeframes are in *_STABILIZING on the last bar (broad slowing increases reversal pressure).
 
-=== MULTI-TIMEFRAME STACK (EMA{self.ema_period} on each TF; last closed bar; refreshed every engine poll) ===
+=== MULTI-TIMEFRAME STACK (EMA{self.ema_period} on each TF; {_mtf_snapshot_note}; refreshed every engine poll) ===
 Signal timeframe is {self.signal_timeframe} — that is the bar size for ENTRY rules above.
 MTF compact uses R/F for strong trend and r/f when that TF is stabilising (slope decelerating).
 Alignment: {mtf_aligned} of {mtf_n} analyzed timeframes agree on EMA direction ({ema_direction}) with the signal TF.
@@ -3540,21 +3925,26 @@ Respond with ONLY that JSON object shape (no markdown, no extra text)."""
             result['risk_score'] = max(0, min(10, int(result.get('risk_score', 5))))
             result['trade_quality'] = max(0, min(10, int(result.get('trade_quality', 5))))
 
-            # Server-side enforcement — override LLM if it ignores rules
+            # Server-side enforcement — override LLM if it ignores rules (skipped when ai.confidence_only_gates)
             tq = result['trade_quality']
             rs = result['risk_score']
-            if tq <= 3:
-                result['proceed'] = False
-                result['confidence'] = min(result['confidence'], 0.3)
+            if not self._confidence_only_gates:
+                if tq <= 3:
+                    result['proceed'] = False
+                    result['confidence'] = min(result['confidence'], 0.3)
             if rs >= self.bear_veto_threshold:
                 result['proceed'] = False
-            if tq <= 5:
-                result['position_size_pct'] = min(result['position_size_pct'], max_position_pct * 0.5)
+            if not self._confidence_only_gates:
+                if tq <= 5:
+                    result['position_size_pct'] = min(
+                        result['position_size_pct'], max_position_pct * 0.5
+                    )
 
             chop_override_msg = ''
             pred_l_raw = str(result.get('predicted_l_level', ''))
             if (
-                result['proceed']
+                not self._confidence_only_gates
+                and result['proceed']
                 and _pred_l_level_chop_zone(pred_l_raw)
                 and tq < 5
             ):
@@ -3574,23 +3964,24 @@ Respond with ONLY that JSON object shape (no markdown, no extra text)."""
                 or (signal == "BUY" and ema_direction == "RISING")
             )
             _no_conf_floor = _stab_gate and _tf_gate
-            if tq >= 6 and mtf_ok and not _no_conf_floor:
-                floor_c = 0.65
-                if result['confidence'] < floor_c:
-                    result['confidence'] = floor_c
-                    print(
-                        f"  [{self._ex_tag}:{asset}] CONF BOOST: LLM conf raised to {floor_c:.2f} "
-                        f"(trade_quality={tq}>=6, MTF {mtf_aligned}/{mtf_n}>=4/5)"
-                    )
-            if _no_conf_floor:
-                cap_c = 0.60
-                prev_c = result['confidence']
-                result['confidence'] = min(prev_c, cap_c)
-                if prev_c > cap_c:
-                    print(
-                        f"  [{self._ex_tag}:{asset}] CONF CAP: LLM conf capped to {cap_c:.2f} "
-                        f"(trend-follow + stabilising phase={_pg} — reversal/crossover risk)"
-                    )
+            if not self._confidence_only_gates:
+                if tq >= 6 and mtf_ok and not _no_conf_floor:
+                    floor_c = 0.65
+                    if result['confidence'] < floor_c:
+                        result['confidence'] = floor_c
+                        print(
+                            f"  [{self._ex_tag}:{asset}] CONF BOOST: LLM conf raised to {floor_c:.2f} "
+                            f"(trade_quality={tq}>=6, MTF {mtf_aligned}/{mtf_n}>=4/5)"
+                        )
+                if _no_conf_floor:
+                    cap_c = 0.60
+                    prev_c = result['confidence']
+                    result['confidence'] = min(prev_c, cap_c)
+                    if prev_c > cap_c:
+                        print(
+                            f"  [{self._ex_tag}:{asset}] CONF CAP: LLM conf capped to {cap_c:.2f} "
+                            f"(trend-follow + stabilising phase={_pg} — reversal/crossover risk)"
+                        )
 
             # Print compact summary of all 7 roles
             bull = str(result.get('bull_case', ''))[:60]

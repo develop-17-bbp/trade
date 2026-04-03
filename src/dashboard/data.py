@@ -13,6 +13,23 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 
+def trade_realized_pnl_usd(t: Dict) -> float:
+    """
+    Closed-trade P&L in USD for dashboards.
+    Journal JSONL uses pnl_usd; older / state records may use pnl.
+    """
+    if not isinstance(t, dict):
+        return 0.0
+    for k in ("pnl_usd", "pnl", "realized_pnl"):
+        v = t.get(k)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                continue
+    return 0.0
+
+
 # ═══════════════════════════════════════════════════════════════════
 # JOURNAL LOADING (cached — one decryption per 8s across all pages)
 # ═══════════════════════════════════════════════════════════════════
@@ -154,7 +171,7 @@ def compute_today_pnl(portfolio: Dict, journal_trades: List[Dict] = None,
     # If there are no closed trades today, the correct day P&L is 0.0.
     if journal_trades is not None:
         closed_today = filter_today(filter_closed(journal_trades), date_str)
-        realized = sum(float(t.get('pnl', 0) or 0) for t in closed_today)
+        realized = sum(trade_realized_pnl_usd(t) for t in closed_today)
         return realized, "Journal (today realized)"
 
     equity_curve = portfolio.get('equity_curve', [])
@@ -165,7 +182,7 @@ def compute_today_pnl(portfolio: Dict, journal_trades: List[Dict] = None,
 
     if journal_trades is not None:
         closed_today = filter_today(filter_closed(journal_trades), date_str)
-        realized = sum(float(t.get('pnl', 0) or 0) for t in closed_today)
+        realized = sum(trade_realized_pnl_usd(t) for t in closed_today)
         return realized, "Journal (realized today)"
         return diff, "Equity Curve (fallback)"
 
@@ -218,10 +235,10 @@ def compute_trade_summary(trades: List[Dict], date_str: Optional[str] = None) ->
             if is_closed_trade(t):
                 today_closed.append(t)
 
-    wins = [t for t in closed if (t.get('pnl') or 0) > 0]
-    losses = [t for t in closed if (t.get('pnl') or 0) < 0]
-    total_pnl = sum(t.get('pnl', 0) for t in closed)
-    today_wins = sum(1 for t in today_closed if (t.get('pnl') or 0) > 0)
+    wins = [t for t in closed if trade_realized_pnl_usd(t) > 0]
+    losses = [t for t in closed if trade_realized_pnl_usd(t) < 0]
+    total_pnl = sum(trade_realized_pnl_usd(t) for t in closed)
+    today_wins = sum(1 for t in today_closed if trade_realized_pnl_usd(t) > 0)
     today_closed_n = len(today_closed)
     today_win_rate = (today_wins / today_closed_n) if today_closed_n else None
 
