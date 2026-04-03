@@ -924,16 +924,36 @@ class TradingExecutor:
 
                 print(f"  [{self._ex_tag}:{asset}] ORPHAN DETECTED: {side} {qty} @ ${entry_p:,.2f} — CLOSING")
 
-                # Close it (reduceOnly so Delta doesn't open a new position)
+                # Close with limit order at best bid/ask for better fill
                 symbol = self._get_symbol(asset)
-                result = self.price_source.place_order(
-                    symbol=symbol,
-                    side=close_side,
-                    amount=qty,
-                    order_type='market',
-                    price=None,
-                    reduce_only=True,
-                )
+                close_price = None
+                try:
+                    ob = self.price_source.fetch_order_book(symbol, limit=5)
+                    if close_side == 'sell' and ob.get('bids'):
+                        close_price = float(ob['bids'][0][0])
+                    elif close_side == 'buy' and ob.get('asks'):
+                        close_price = float(ob['asks'][0][0])
+                except Exception:
+                    pass
+
+                if close_price:
+                    result = self.price_source.place_order(
+                        symbol=symbol,
+                        side=close_side,
+                        amount=qty,
+                        order_type='limit',
+                        price=close_price,
+                        reduce_only=True,
+                    )
+                else:
+                    result = self.price_source.place_order(
+                        symbol=symbol,
+                        side=close_side,
+                        amount=qty,
+                        order_type='market',
+                        price=None,
+                        reduce_only=True,
+                    )
 
                 if result.get('status') == 'success':
                     print(f"  [{self._ex_tag}:{asset}] ORPHAN CLOSED: {result.get('order_id', '?')}")
@@ -1806,7 +1826,20 @@ class TradingExecutor:
                     contracts = abs(float(p.get('qty', 0) or p.get('contracts', 0)))
                     if asset in sym and contracts > 0:
                         pos_side = p.get('side', 'long')
-                        entry_p = float(p.get('avg_entry_price', price) or price)
+                        raw_entry = p.get('avg_entry_price', None)
+                        entry_p = float(raw_entry) if raw_entry and float(raw_entry) > 0 else None
+
+                        # SAFETY: Validate entry price is sane
+                        # If entry price is missing or wildly different from current price, skip sync
+                        if entry_p is None:
+                            print(f"  [{self._ex_tag}:{asset}] SYNC SKIP: no avg_entry_price from exchange — can't calculate safe SL")
+                            return
+                        # Reject if entry is >30% away from current price (testnet price artifact)
+                        entry_deviation = abs(entry_p - price) / price * 100 if price > 0 else 999
+                        if entry_deviation > 30:
+                            print(f"  [{self._ex_tag}:{asset}] SYNC SKIP: entry ${entry_p:,.0f} is {entry_deviation:.0f}% from current ${price:,.0f} — bad data")
+                            return
+
                         synced_direction = 'LONG' if pos_side == 'long' else 'SHORT'
 
                         # Check if signal is OPPOSITE to current position
@@ -1829,12 +1862,22 @@ class TradingExecutor:
                             flip_dir = 'CALL' if signal == 'BUY' else 'PUT'
                             print(f"  [{self._ex_tag}:{asset}] WRONG SIDE: holding {synced_direction} but signal={signal} — closing to flip to {flip_dir}")
                             close_side = 'sell' if synced_direction == 'LONG' else 'buy'
+                            # Use limit at best bid/ask for better fill
+                            flip_price = None
+                            try:
+                                flip_ob = self.price_source.fetch_order_book(self._get_symbol(asset), limit=5)
+                                if close_side == 'sell' and flip_ob.get('bids'):
+                                    flip_price = float(flip_ob['bids'][0][0])
+                                elif close_side == 'buy' and flip_ob.get('asks'):
+                                    flip_price = float(flip_ob['asks'][0][0])
+                            except Exception:
+                                pass
                             result = self.price_source.place_order(
                                 symbol=self._get_symbol(asset),
                                 side=close_side,
                                 amount=contracts,
-                                order_type='market',
-                                price=None,
+                                order_type='limit' if flip_price else 'market',
+                                price=flip_price,
                             )
                             time.sleep(1)
                             # Verify closed
@@ -1863,9 +1906,9 @@ class TradingExecutor:
                                 max_pct = 20 if self.equity < 500 else 5
                                 if self._exchange_name == 'delta':
                                     cs = {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001)
-                                    pos_notional = contracts * cs * price
+                                    pos_notional = contracts * cs * entry_p
                                 else:
-                                    pos_notional = contracts * price
+                                    pos_notional = contracts * entry_p
                                 max_notional = self.equity * (max_pct / 100)
                                 if pos_notional > max_notional * 3:
                                     # Position is >3x our max — likely a leftover from manual trading
@@ -1884,8 +1927,10 @@ class TradingExecutor:
                                     'qty': contracts,
                                     'sl': sync_sl, 'sl_levels': ['L1'],
                                     'sl_order_id': None,
-                                    'peak_price': price, 'entry_time': time.time(),
+                                    'peak_price': entry_p, 'entry_time': time.time(),
                                     'confidence': 0, 'reasoning': 'synced from exchange',
+                                    'predicted_l_level': '?', 'risk_score': 0,
+                                    'bear_risk': 0, 'hurst': 0.5, 'hurst_regime': 'unknown',
                                     'breakeven_moved': False,
                                 }
                                 print(f"  [{self._ex_tag}:{asset}] SYNCED {pos_side} position ({contracts}) ${pos_notional:,.0f} | SL=${sync_sl:,.2f}")
