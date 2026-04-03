@@ -24,7 +24,11 @@ from src.data.fetcher import PriceFetcher
 from src.data.microstructure import MicrostructureAnalyzer
 from src.ai.agentic_strategist import AgenticStrategist
 from src.monitoring.journal import TradeJournal
-from src.indicators.indicators import ema, atr
+from src.indicators.indicators import (
+    ema, atr, rsi, macd, bollinger_bands, stochastic, vwap, obv, adx,
+    bb_width, roc, williams_r, chaikin_money_flow, mfi, supertrend,
+    volume_delta, choppiness_index
+)
 
 # Agent Orchestrator + Math Injection (optional, graceful degradation)
 try:
@@ -97,6 +101,38 @@ try:
     HURST_AVAILABLE = True
 except Exception:
     HURST_AVAILABLE = False
+
+# ML Models — feed predictions to LLM for richer pattern analysis
+try:
+    from src.models.hmm_regime import HMMRegimeDetector
+    HMM_AVAILABLE = True
+except Exception:
+    HMM_AVAILABLE = False
+
+try:
+    from src.models.kalman_filter import KalmanTrendFilter
+    KALMAN_AVAILABLE = True
+except Exception:
+    KALMAN_AVAILABLE = False
+
+try:
+    from src.models.volatility import classify_volatility_regime, log_returns
+    VOLATILITY_MODEL_AVAILABLE = True
+except Exception:
+    VOLATILITY_MODEL_AVAILABLE = False
+
+try:
+    from src.models.cycle_detector import detect_dominant_cycles
+    CYCLE_AVAILABLE = True
+except Exception:
+    CYCLE_AVAILABLE = False
+
+# LightGBM 3-Class Classifier (pre-filter gate: blocks L1-death trades before LLM call)
+try:
+    from src.models.lightgbm_classifier import LightGBMClassifier
+    LIGHTGBM_AVAILABLE = True
+except Exception:
+    LIGHTGBM_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +311,42 @@ class TradingExecutor:
                 print(f"  [HURST] Hurst Exponent ACTIVE — regime detection (H>0.55=trend, H<0.45=revert)")
             except Exception as e:
                 print(f"  [HURST] Hurst init failed ({e})")
+
+        # ── ML Models (feed predictions to LLM) ──
+        self._hmm = None
+        if HMM_AVAILABLE:
+            try:
+                self._hmm = HMMRegimeDetector(n_regimes=4)
+                print(f"  [ML] HMM Regime Detector ACTIVE — 4-state (BULL/BEAR/SIDEWAYS/CRISIS)")
+            except Exception as e:
+                print(f"  [ML] HMM init failed ({e})")
+
+        self._kalman = None
+        if KALMAN_AVAILABLE:
+            try:
+                self._kalman = KalmanTrendFilter()
+                print(f"  [ML] Kalman Trend Filter ACTIVE — adaptive trend + SNR")
+            except Exception as e:
+                print(f"  [ML] Kalman init failed ({e})")
+
+        # ── LightGBM 3-Class Classifier (pre-filter gate) ──
+        self._lgbm = None
+        if LIGHTGBM_AVAILABLE:
+            try:
+                self._lgbm = LightGBMClassifier(config={
+                    'confidence_threshold': 0.55,  # lower than default — we use it as soft gate
+                })
+                # Try to load pre-trained model if exists
+                import os as _os
+                model_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models', 'lgbm_latest.txt')
+                if _os.path.exists(model_path):
+                    self._lgbm.load_model(model_path)
+                    print(f"  [ML] LightGBM Classifier ACTIVE — loaded from {model_path}")
+                else:
+                    print(f"  [ML] LightGBM Classifier ACTIVE — rule-based mode (no trained model)")
+            except Exception as e:
+                print(f"  [ML] LightGBM init failed ({e})")
+                self._lgbm = None
 
         # Set leverage to 1x (prevent amplified losses)
         try:
@@ -1376,6 +1448,74 @@ class TradingExecutor:
         current_atr = atr_vals[-1] if atr_vals else 0
         ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
 
+        # ── FULL INDICATOR SUITE (feeds LLM + ML models) ──
+        indicator_context = {}
+        try:
+            if len(closes) >= 20:
+                # Momentum
+                rsi_vals = rsi(closes, 14)
+                indicator_context['rsi'] = round(rsi_vals[-2], 1) if len(rsi_vals) >= 2 else 50
+
+                # Trend
+                macd_line, signal_line, hist = macd(closes)
+                indicator_context['macd_hist'] = round(hist[-2], 4) if len(hist) >= 2 else 0
+                indicator_context['macd_cross'] = 'BULLISH' if len(hist) >= 2 and hist[-2] > 0 and hist[-3] < 0 else ('BEARISH' if len(hist) >= 2 and hist[-2] < 0 and hist[-3] > 0 else 'NONE')
+
+                # Volatility
+                bb_upper, bb_mid, bb_lower = bollinger_bands(closes, 20)
+                if len(bb_upper) >= 2 and bb_upper[-2] > 0:
+                    bb_pos = (closes[-2] - bb_lower[-2]) / (bb_upper[-2] - bb_lower[-2]) if (bb_upper[-2] - bb_lower[-2]) > 0 else 0.5
+                    indicator_context['bb_position'] = round(bb_pos, 2)  # 0=lower band, 1=upper band
+                    indicator_context['bb_width'] = round((bb_upper[-2] - bb_lower[-2]) / bb_mid[-2] * 100, 2) if bb_mid[-2] > 0 else 0
+
+                # Stochastic
+                k_vals, d_vals = stochastic(highs, lows, closes)
+                if len(k_vals) >= 2:
+                    indicator_context['stoch_k'] = round(k_vals[-2], 1)
+                    indicator_context['stoch_d'] = round(d_vals[-2], 1)
+
+                # Volume
+                obv_vals = obv(closes, volumes)
+                if len(obv_vals) >= 10:
+                    obv_slope = (obv_vals[-2] - obv_vals[-6]) / 4 if obv_vals[-6] != 0 else 0
+                    indicator_context['obv_trend'] = 'RISING' if obv_slope > 0 else 'FALLING'
+
+                # Trend strength
+                adx_vals = adx(highs, lows, closes, 14)
+                if len(adx_vals) >= 2:
+                    indicator_context['adx'] = round(adx_vals[-2], 1)
+                    indicator_context['trend_strength'] = 'STRONG' if adx_vals[-2] > 25 else 'WEAK'
+
+                # Rate of change
+                roc_vals = roc(closes, 12)
+                if len(roc_vals) >= 2:
+                    indicator_context['roc_12'] = round(roc_vals[-2], 2)
+
+                # Williams %R
+                wr_vals = williams_r(highs, lows, closes, 14)
+                if len(wr_vals) >= 2:
+                    indicator_context['williams_r'] = round(wr_vals[-2], 1)
+
+                # Choppiness (ranging vs trending)
+                chop_vals = choppiness_index(highs, lows, closes, 14)
+                if len(chop_vals) >= 2:
+                    indicator_context['choppiness'] = round(chop_vals[-2], 1)
+                    indicator_context['market_type'] = 'RANGING' if chop_vals[-2] > 61.8 else 'TRENDING'
+
+                # Volume delta (buy vs sell pressure)
+                vd_vals = volume_delta(closes, opens, volumes)
+                if len(vd_vals) >= 2:
+                    indicator_context['vol_delta'] = round(vd_vals[-2], 0)
+
+                # Money Flow
+                cmf_vals = chaikin_money_flow(highs, lows, closes, volumes, 20)
+                if len(cmf_vals) >= 2:
+                    indicator_context['cmf'] = round(cmf_vals[-2], 3)
+                    indicator_context['money_flow'] = 'INFLOW' if cmf_vals[-2] > 0 else 'OUTFLOW'
+
+        except Exception as e:
+            pass  # Don't block trading if indicator calculation fails
+
         # ── Compute HTF alignment score now that 5m ema_direction is known ──
         htf_alignment = 0
         # Point for 5m direction (always counts as 1)
@@ -1713,6 +1853,73 @@ class TradingExecutor:
                     entry_score += 1
                     score_reasons.append("2_red")
 
+        # ══════════════════════════════════════════════════════════
+        # 5-8. ML-DRIVEN ENTRY SCORE BOOST (uses indicator_context + ml_context)
+        # Indicators confirm direction → higher score → LLM gets cleaner setup
+        # ══════════════════════════════════════════════════════════
+        try:
+            # 5. RSI CONFIRMATION (0-2 points)
+            # RSI below 40 confirms SHORT, above 60 confirms LONG
+            _rsi = indicator_context.get('rsi', 50)
+            if signal == "BUY" and _rsi > 55 and _rsi < 75:
+                entry_score += 2
+                score_reasons.append(f"rsi_bull={_rsi:.0f}")
+            elif signal == "SELL" and _rsi < 45 and _rsi > 25:
+                entry_score += 2
+                score_reasons.append(f"rsi_bear={_rsi:.0f}")
+            elif (signal == "BUY" and _rsi < 30) or (signal == "SELL" and _rsi > 70):
+                entry_score -= 1  # Overbought/oversold against direction
+                score_reasons.append(f"rsi_against={_rsi:.0f}")
+
+            # 6. ADX TREND STRENGTH (0-2 points)
+            # ADX > 25 = trending market (our strategy works), < 20 = choppy (fails)
+            _adx = indicator_context.get('adx', 20)
+            if _adx > 30:
+                entry_score += 2
+                score_reasons.append(f"adx_strong={_adx:.0f}")
+            elif _adx > 25:
+                entry_score += 1
+                score_reasons.append(f"adx_trend={_adx:.0f}")
+            elif _adx < 15:
+                entry_score -= 1
+                score_reasons.append(f"adx_weak={_adx:.0f}")
+
+            # 7. MACD ALIGNMENT (0-2 points)
+            # MACD histogram agrees with signal direction
+            _macd_cross = indicator_context.get('macd_cross', 'NONE')
+            _macd_hist = indicator_context.get('macd_hist', 0)
+            if signal == "BUY" and (_macd_cross == 'BULLISH' or _macd_hist > 0):
+                entry_score += 2
+                score_reasons.append("macd_bull")
+            elif signal == "SELL" and (_macd_cross == 'BEARISH' or _macd_hist < 0):
+                entry_score += 2
+                score_reasons.append("macd_bear")
+            elif (signal == "BUY" and _macd_hist < 0) or (signal == "SELL" and _macd_hist > 0):
+                entry_score -= 1
+                score_reasons.append("macd_against")
+
+            # 8. CHOPPINESS + MONEY FLOW (0-2 points)
+            _chop = indicator_context.get('choppiness', 50)
+            _mflow = indicator_context.get('money_flow', '')
+            if _chop < 50:
+                entry_score += 1
+                score_reasons.append(f"chop_trending={_chop:.0f}")
+            elif _chop > 65:
+                entry_score -= 1
+                score_reasons.append(f"chop_ranging={_chop:.0f}")
+            if (signal == "BUY" and _mflow == 'INFLOW') or (signal == "SELL" and _mflow == 'OUTFLOW'):
+                entry_score += 1
+                score_reasons.append(f"flow_{_mflow}")
+
+            # 9. OBV VOLUME CONFIRMATION (0-1 point)
+            _obv = indicator_context.get('obv_trend', '')
+            if (signal == "BUY" and _obv == 'RISING') or (signal == "SELL" and _obv == 'FALLING'):
+                entry_score += 1
+                score_reasons.append(f"obv_{_obv}")
+
+        except Exception:
+            pass  # Don't block if indicator boosting fails
+
         # ── RANGE DETECTION — computed for LLM, NOT a hard block ──
         range_pct = 0
         atr_pct = 0
@@ -2025,6 +2232,126 @@ class TradingExecutor:
             except Exception:
                 pass
 
+        # ── ML MODEL PREDICTIONS ──
+        ml_context = {}
+
+        # HMM Regime Detection
+        if self._hmm and len(closes) >= 50:
+            try:
+                import numpy as _np
+                log_ret = _np.diff(_np.log(_np.array(closes[-100:]) + 1e-12))
+                vol_20 = _np.array([_np.std(log_ret[max(0,i-20):i]) for i in range(1, len(log_ret)+1)])
+                vol_change = _np.diff(volumes[-100:]) / (_np.array(volumes[-101:-1]) + 1e-12) if len(volumes) >= 101 else _np.zeros(len(log_ret))
+                if len(vol_change) > len(log_ret):
+                    vol_change = vol_change[-len(log_ret):]
+                elif len(vol_change) < len(log_ret):
+                    vol_change = _np.pad(vol_change, (len(log_ret)-len(vol_change), 0))
+
+                min_len = min(len(log_ret), len(vol_20), len(vol_change))
+                obs = _np.column_stack([log_ret[-min_len:], vol_20[-min_len:], vol_change[-min_len:]])
+
+                regime_result = self._hmm.detect(obs)
+                if regime_result:
+                    ml_context['hmm_regime'] = regime_result.get('regime', 'UNKNOWN')
+                    ml_context['hmm_confidence'] = round(regime_result.get('confidence', 0), 2)
+                    crisis_prob = regime_result.get('crisis_probability', 0)
+                    ml_context['crisis_probability'] = round(crisis_prob, 3)
+
+                    # HARD BLOCK: Crisis regime with high confidence
+                    if ml_context['hmm_regime'] == 'CRISIS' and crisis_prob > 0.5:
+                        print(f"  [{self._ex_tag}:{asset}] HMM CRISIS BLOCK: {ml_context['hmm_regime']} (crisis_prob={crisis_prob:.2f})")
+                        return
+            except Exception:
+                pass
+
+        # Kalman Trend Filter
+        if self._kalman and len(closes) >= 30:
+            try:
+                import numpy as _np
+                kalman_result = self._kalman.filter(_np.array(closes[-100:]))
+                if kalman_result:
+                    ml_context['kalman_slope'] = round(kalman_result.get('slope', 0), 4)
+                    ml_context['kalman_snr'] = round(kalman_result.get('snr', 0), 2)
+                    slope_dir = 'UP' if kalman_result.get('slope', 0) > 0 else 'DOWN'
+                    ml_context['kalman_trend'] = slope_dir
+            except Exception:
+                pass
+
+        # Volatility Regime
+        if VOLATILITY_MODEL_AVAILABLE and len(closes) >= 30:
+            try:
+                import numpy as _np
+                returns = log_returns(_np.array(closes[-100:]))
+                vol_regime = classify_volatility_regime(returns)
+                if vol_regime:
+                    ml_context['vol_regime'] = str(vol_regime.get('regime', 'NORMAL'))
+                    ml_context['vol_percentile'] = round(vol_regime.get('percentile', 50), 0)
+            except Exception:
+                pass
+
+        # Cycle Detection
+        if CYCLE_AVAILABLE and len(closes) >= 50:
+            try:
+                import numpy as _np
+                cycle_result = detect_dominant_cycles(_np.array(closes[-200:]))
+                if cycle_result:
+                    ml_context['dominant_cycle'] = cycle_result.get('period', 0)
+                    ml_context['cycle_phase'] = cycle_result.get('phase', 'UNKNOWN')
+            except Exception:
+                pass
+
+        # ── LIGHTGBM PRE-FILTER GATE ──
+        # Uses 100+ features to predict L3+ runner vs L1 death
+        # If LightGBM says HIGH probability of L1 death, skip before wasting LLM call
+        lgbm_prediction = None
+        lgbm_confidence = 0.0
+        if self._lgbm and len(closes) >= 55:
+            try:
+                features = self._lgbm.extract_features(
+                    closes=closes, highs=highs, lows=lows, volumes=volumes,
+                    external_features={
+                        'vol_regime_encoded': float({'LOW': 0, 'NORMAL': 1, 'HIGH': 2, 'EXTREME': 3}.get(
+                            ml_context.get('vol_regime', 'NORMAL'), 1)),
+                        'cycle_phase_encoded': float({'BOTTOM': 0, 'RISING': 1, 'TOP': 2, 'FALLING': 3}.get(
+                            ml_context.get('cycle_phase', 'RISING'), 1)),
+                        'dominant_period': float(ml_context.get('dominant_cycle', 30)),
+                    },
+                )
+                if features and features[-1]:
+                    preds = self._lgbm.predict([features[-1]])
+                    if preds:
+                        lgbm_cls, lgbm_conf = preds[0]
+                        lgbm_prediction = lgbm_cls
+                        lgbm_confidence = lgbm_conf
+
+                        # Add to ML context for LLM
+                        ml_context['lgbm_direction'] = {1: 'LONG', -1: 'SHORT', 0: 'FLAT'}.get(lgbm_cls, 'FLAT')
+                        ml_context['lgbm_confidence'] = round(lgbm_conf, 2)
+
+                        # SOFT GATE: If LightGBM strongly disagrees with signal, penalize score
+                        signal_dir = 1 if signal == "BUY" else -1
+                        if lgbm_cls != 0 and lgbm_cls != signal_dir and lgbm_conf > 0.70:
+                            entry_score -= 3
+                            score_reasons.append(f"lgbm_disagree={ml_context['lgbm_direction']}@{lgbm_conf:.0%}")
+                            math_filter_warnings.append(f"LGBM DISAGREE: model says {ml_context['lgbm_direction']} ({lgbm_conf:.0%}) but signal={signal}")
+                        elif lgbm_cls == signal_dir and lgbm_conf > 0.65:
+                            entry_score += 2
+                            score_reasons.append(f"lgbm_agrees={lgbm_conf:.0%}")
+                        elif lgbm_cls == 0 and lgbm_conf > 0.70:
+                            entry_score -= 1
+                            score_reasons.append("lgbm_flat")
+
+                        print(f"  [{self._ex_tag}:{asset}] LGBM: {ml_context['lgbm_direction']} conf={lgbm_conf:.2f} | score now={entry_score}")
+            except Exception as e:
+                logger.debug(f"LightGBM prediction error for {asset}: {e}")
+
+        # ── ENTRY SCORE HARD GATE ──
+        # After all ML boosting, check if score meets minimum threshold
+        min_entry_score = self.config.get('adaptive', {}).get('min_entry_score', 4)
+        if entry_score < min_entry_score:
+            print(f"  [{self._ex_tag}:{asset}] LOW SCORE BLOCK: {entry_score}/{min_entry_score} ({', '.join(score_reasons)}) — skipping LLM call")
+            return
+
         # Quality gate: ATR ratio
         atr_ratio = current_atr / price if price > 0 else 0
         if atr_ratio < self.min_atr_ratio:
@@ -2082,6 +2409,21 @@ class TradingExecutor:
         # ══════════════════════════════════════════════════════════
         if orch_result and orch_result.get('veto'):
             math_filter_warnings.append(f"AGENT VETO: consensus={orch_result.get('consensus','?')} — agents strongly disagree")
+
+        # ── Inject Math Agent analysis into LLM context ──
+        # The 10 math agents (momentum, volatility, microstructure, etc.) provide
+        # quantitative analysis that the LLM uses for better pattern recognition
+        math_agent_context = ""
+        if orch_result and orch_result.get('agent_summary'):
+            math_lines = ["MATH AGENT ANALYSIS (10 quantitative agents with adversarial debate):"]
+            math_lines.append(f"  CONSENSUS: {orch_result.get('consensus', '?')} direction={orch_result.get('consensus_dir', '?')}")
+            for summary_line in orch_result.get('agent_summary', [])[:12]:
+                math_lines.append(f"  {summary_line}")
+            # Include debate results if available
+            if orch_result.get('debate_result'):
+                debate = orch_result['debate_result']
+                math_lines.append(f"  DEBATE: winner={debate.get('winner','?')} bull_score={debate.get('bull_score',0):.1f} bear_score={debate.get('bear_score',0):.1f}")
+            math_agent_context = chr(10).join(math_lines)
 
         # Build P&L history for Brain v2 Kelly sizing
         edge = self.edge_stats.get(asset, {})
@@ -2251,16 +2593,31 @@ class TradingExecutor:
             regime_lines.append(f"  VPIN: {vpin_status['vpin']:.2f} (threshold: {vpin_status['threshold']}) action: {vpin_status['risk_action']}")
             if vpin_status['is_toxic']:
                 regime_lines.append(f"  -> TOXIC flow detected — informed traders active, reduce size or skip")
+        # Add ML model predictions to regime context
+        if ml_context:
+            regime_lines.append("  --- ML MODEL PREDICTIONS ---")
+            for key, val in ml_context.items():
+                regime_lines.append(f"  {key}: {val}")
+
         if regime_lines:
             regime_context = chr(10) + "REGIME ANALYSIS:" + chr(10) + chr(10).join(regime_lines)
 
-        # Append institutional + protector + regime data to candle text for LLM
+        # Append institutional + protector + regime + math agents data to candle text for LLM
         if institutional_context:
             candle_text = candle_text + chr(10) + institutional_context
         if profit_protector_context:
             candle_text = candle_text + chr(10) + profit_protector_context
         if regime_context:
             candle_text = candle_text + chr(10) + regime_context
+        if math_agent_context:
+            candle_text = candle_text + chr(10) + math_agent_context
+
+        # ── Indicator Suite Context for LLM ──
+        if indicator_context:
+            ind_lines = ["TECHNICAL INDICATORS (confirmed candle):"]
+            for key, val in indicator_context.items():
+                ind_lines.append(f"  {key}: {val}")
+            candle_text = candle_text + chr(10) + chr(10).join(ind_lines)
 
         if self._brain:
             # ── BRAIN v2: full 7-layer evaluation ──
@@ -2961,6 +3318,85 @@ class TradingExecutor:
                         if ob_sl < new_sl:
                             new_sl = ob_sl
 
+        # ══════════════════════════════════════════════════════════
+        # ML-DRIVEN TRAILING SL TIGHTENING
+        # If ML models detect regime shift or trend exhaustion,
+        # tighten SL faster to protect profits (especially for L3+ runners)
+        # ══════════════════════════════════════════════════════════
+        ml_tighten_reason = None
+        try:
+            # Kalman slope reversal: if slope direction conflicts with position
+            if self._kalman and len(closes) >= 30 and pnl_pct > 0.5:
+                import numpy as _np
+                k_result = self._kalman.filter(_np.array(closes[-100:]))
+                if k_result:
+                    k_slope = k_result.get('slope', 0)
+                    k_snr = k_result.get('snr', 0)
+                    # LONG but Kalman turning down, or SHORT but turning up
+                    slope_against = (direction == 'LONG' and k_slope < -0.001 and k_snr > 1.5) or \
+                                    (direction == 'SHORT' and k_slope > 0.001 and k_snr > 1.5)
+                    if slope_against:
+                        # Tighten: move SL to protect 60% of current profit
+                        if direction == 'LONG':
+                            kalman_sl = entry + (price - entry) * 0.60
+                            if kalman_sl > new_sl and kalman_sl < price:
+                                new_sl = kalman_sl
+                                ml_tighten_reason = f"Kalman slope={k_slope:.4f} reversing"
+                        else:
+                            kalman_sl = entry - (entry - price) * 0.60
+                            if kalman_sl < new_sl and kalman_sl > price:
+                                new_sl = kalman_sl
+                                ml_tighten_reason = f"Kalman slope={k_slope:.4f} reversing"
+
+            # HMM regime shift: if regime goes BEAR during LONG (or BULL during SHORT)
+            if self._hmm and len(closes) >= 50 and pnl_pct > 1.0:
+                import numpy as _np
+                log_ret = _np.diff(_np.log(_np.array(closes[-100:]) + 1e-12))
+                vol_20 = _np.array([_np.std(log_ret[max(0,j-20):j]) for j in range(1, len(log_ret)+1)])
+                vol_change = _np.zeros(len(log_ret))
+                min_len = min(len(log_ret), len(vol_20), len(vol_change))
+                obs = _np.column_stack([log_ret[-min_len:], vol_20[-min_len:], vol_change[-min_len:]])
+                regime_result = self._hmm.detect(obs)
+                if regime_result:
+                    hmm_regime = regime_result.get('regime', 'UNKNOWN')
+                    hmm_conf = regime_result.get('confidence', 0)
+                    regime_against = (direction == 'LONG' and hmm_regime in ('BEAR', 'CRISIS') and hmm_conf > 0.6) or \
+                                     (direction == 'SHORT' and hmm_regime == 'BULL' and hmm_conf > 0.6)
+                    if regime_against:
+                        # Tighten: move SL to protect 70% of profit (regime shift is serious)
+                        if direction == 'LONG':
+                            hmm_sl = entry + (price - entry) * 0.70
+                            if hmm_sl > new_sl and hmm_sl < price:
+                                new_sl = hmm_sl
+                                ml_tighten_reason = f"HMM regime={hmm_regime} ({hmm_conf:.0%}) against LONG"
+                        else:
+                            hmm_sl = entry - (entry - price) * 0.70
+                            if hmm_sl < new_sl and hmm_sl > price:
+                                new_sl = hmm_sl
+                                ml_tighten_reason = f"HMM regime={hmm_regime} ({hmm_conf:.0%}) against SHORT"
+
+            # Hurst: if regime shifted to mean-reverting, trend is exhausting
+            if self._hurst and len(closes) >= 50 and pnl_pct > 2.0:
+                import numpy as _np
+                h_result = self._hurst.compute(_np.array(closes), window=min(200, len(closes)))
+                if h_result and h_result['regime'] == 'mean_reverting' and h_result['confidence'] > 0.6:
+                    # Trend is exhausted — protect 65% of profit
+                    if direction == 'LONG':
+                        hurst_sl = entry + (price - entry) * 0.65
+                        if hurst_sl > new_sl and hurst_sl < price:
+                            new_sl = hurst_sl
+                            ml_tighten_reason = f"Hurst H={h_result['hurst']:.2f} mean-reverting"
+                    else:
+                        hurst_sl = entry - (entry - price) * 0.65
+                        if hurst_sl < new_sl and hurst_sl > price:
+                            new_sl = hurst_sl
+                            ml_tighten_reason = f"Hurst H={h_result['hurst']:.2f} mean-reverting"
+        except Exception as e:
+            logger.debug(f"ML trailing SL error for {asset}: {e}")
+
+        if ml_tighten_reason:
+            print(f"  [{self._ex_tag}:{asset}] ML SL TIGHTEN: {ml_tighten_reason} → SL=${new_sl:,.2f}")
+
         # SL can only move FORWARD (tighter), never backward
         # Minimum move: $0.50 or 0.01% of entry (whichever is larger) to avoid noise
         new_sl = round(new_sl, 2)
@@ -3354,6 +3790,26 @@ class TradingExecutor:
             )
         except Exception as e:
             logger.warning(f"Journal log failed: {e}")
+
+        # ── Log to LightGBM classifier for incremental learning ──
+        if self._lgbm and len(closes) >= 55:
+            try:
+                lgbm_features = self._lgbm.extract_features(
+                    closes=closes, highs=highs, lows=lows, volumes=volumes,
+                )
+                if lgbm_features and lgbm_features[-1]:
+                    dir_int = 1 if direction == 'LONG' else -1
+                    bars_held = max(1, int(duration_min / 5))  # 5min candles
+                    self._lgbm.log_trade(
+                        features=lgbm_features[-1],
+                        direction=dir_int,
+                        net_pnl=pnl_usd,
+                        entry_price=entry,
+                        exit_price=price,
+                        bars_held=bars_held,
+                    )
+            except Exception as e:
+                logger.debug(f"LightGBM log_trade error: {e}")
 
         # ── Record close in Trade Protections (SL guard, pair lock, drawdown) ──
         if self._protections:
