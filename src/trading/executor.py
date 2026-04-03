@@ -134,6 +134,27 @@ try:
 except Exception:
     LIGHTGBM_AVAILABLE = False
 
+# LSTM/GRU/BiLSTM Ensemble (neural net direction prediction)
+try:
+    from src.models.lstm_ensemble import LSTMEnsemble
+    LSTM_AVAILABLE = True
+except Exception:
+    LSTM_AVAILABLE = False
+
+# PatchTST Transformer (patch-based time-series forecaster)
+try:
+    from src.ai.patchtst_model import PatchTSTClassifier
+    PATCHTST_AVAILABLE = True
+except Exception:
+    PATCHTST_AVAILABLE = False
+
+# Alpha Decay (optimal holding period estimator)
+try:
+    from src.models.alpha_decay import AlphaDecayModel
+    ALPHA_DECAY_AVAILABLE = True
+except Exception:
+    ALPHA_DECAY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -370,6 +391,63 @@ class TradingExecutor:
         self.last_close_time: Dict[str, float] = {}
         self.last_signal_candle: Dict[str, float] = {}  # Track candle timestamp to avoid re-entry on same candle
         self.failed_close_assets: Dict[str, float] = {}  # Assets that failed to close — skip until manual resolution
+
+        # ── LSTM Ensemble (neural net direction prediction) ──
+        self._lstm = None
+        if LSTM_AVAILABLE:
+            try:
+                self._lstm = LSTMEnsemble(input_dim=20, seq_len=30)
+                print(f"  [ML] LSTM Ensemble ACTIVE — 3 neural nets (LSTM+GRU+BiLSTM)")
+            except Exception as e:
+                print(f"  [ML] LSTM Ensemble init failed ({e})")
+
+        # ── PatchTST Transformer ──
+        self._patchtst = None
+        if PATCHTST_AVAILABLE:
+            try:
+                self._patchtst = PatchTSTClassifier()
+                if self._patchtst.is_ready:
+                    print(f"  [ML] PatchTST Transformer ACTIVE — pre-trained model loaded")
+                else:
+                    print(f"  [ML] PatchTST initialized (no pre-trained model)")
+            except Exception as e:
+                print(f"  [ML] PatchTST init failed ({e})")
+
+        # ── Alpha Decay (optimal hold period) ──
+        self._alpha_decay = None
+        if ALPHA_DECAY_AVAILABLE:
+            try:
+                import pickle as _pkl
+                alpha_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'models')
+                for asset_name in self.assets:
+                    ap = os.path.join(alpha_path, f'alpha_decay_{asset_name.lower()}.pkl')
+                    if os.path.exists(ap):
+                        with open(ap, 'rb') as _f:
+                            self._alpha_decay = _pkl.load(_f)
+                        print(f"  [ML] Alpha Decay ACTIVE — optimal hold={self._alpha_decay.optimal_hold:.0f} bars ({self._alpha_decay.optimal_hold*5:.0f}min)")
+                        break
+                if self._alpha_decay is None:
+                    self._alpha_decay = AlphaDecayModel()
+                    print(f"  [ML] Alpha Decay initialized (default params)")
+            except Exception as e:
+                print(f"  [ML] Alpha Decay init failed ({e})")
+
+        # ── Load fitted HMM from disk if available ──
+        if self._hmm:
+            try:
+                import pickle as _pkl
+                hmm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'models')
+                for asset_name in self.assets:
+                    hp = os.path.join(hmm_path, f'hmm_{asset_name.lower()}.pkl')
+                    if os.path.exists(hp):
+                        with open(hp, 'rb') as _f:
+                            loaded_hmm = _pkl.load(_f)
+                        if hasattr(loaded_hmm, 'is_fitted') and loaded_hmm.is_fitted:
+                            self._hmm = loaded_hmm
+                            print(f"  [ML] HMM Regime: loaded TRAINED model from {hp}")
+                            break
+            except Exception as e:
+                logger.debug(f"HMM load error: {e}")
 
         # LightGBM auto-retrain counter
         self._lgbm_trades_since_retrain: int = 0
@@ -1298,6 +1376,38 @@ class TradingExecutor:
                     except Exception as e:
                         print(f"  [{self._ex_tag}:{asset}] ERROR: {e}")
                         logger.exception(f"Error processing {asset}")
+
+                # ── AUTONOMOUS ML RETRAIN (every 6 hours) ──
+                if not hasattr(self, '_last_retrain_time'):
+                    self._last_retrain_time = time.time()
+                retrain_interval = 6 * 3600  # 6 hours
+                if time.time() - self._last_retrain_time > retrain_interval:
+                    try:
+                        print(f"  [{self._ex_tag}] AUTO-RETRAIN: 6h interval -- retraining HMM + fitting models")
+                        self._last_retrain_time = time.time()
+                        # Retrain HMM on recent data
+                        if self._hmm:
+                            for asset in self.assets:
+                                try:
+                                    symbol = self._get_symbol(asset)
+                                    raw = self.price_source.fetch_ohlcv(symbol, timeframe='5m', limit=100)
+                                    if raw:
+                                        from src.data.fetcher import PriceFetcher
+                                        _oh = PriceFetcher.extract_ohlcv(raw)
+                                        _closes = _oh['closes']
+                                        _volumes = _oh['volumes']
+                                        if len(_closes) >= 80:
+                                            import numpy as _np
+                                            lr = _np.diff(_np.log(_np.array(_closes) + 1e-12))
+                                            v20 = _np.array([_np.std(lr[max(0,j-20):j]) for j in range(1, len(lr)+1)])
+                                            vc = _np.zeros(len(lr))
+                                            mn = min(len(lr), len(v20), len(vc))
+                                            self._hmm.fit(lr[-mn:], v20[-mn:], vc[-mn:])
+                                            print(f"  [{self._ex_tag}:{asset}] HMM retrained on {mn} observations")
+                                except Exception as he:
+                                    logger.debug(f"HMM retrain error: {he}")
+                    except Exception as re:
+                        logger.debug(f"Auto-retrain error: {re}")
 
                 # Sleep until next bar
                 elapsed = time.time() - loop_start
@@ -2314,6 +2424,50 @@ class TradingExecutor:
                     ml_context['cycle_phase'] = cycle_result.get('phase', 'UNKNOWN')
             except Exception:
                 pass
+
+        # ── LSTM ENSEMBLE PREDICTION ──
+        if self._lstm and len(closes) >= 80:
+            try:
+                from src.scripts.train_all_models import create_sequence_features
+                import numpy as _np
+                X_seq, _ = create_sequence_features(closes, highs, lows, volumes, seq_len=30, n_features=20)
+                if X_seq is not None and len(X_seq) > 0:
+                    lstm_pred = self._lstm.predict(X_seq[-1])
+                    if lstm_pred and lstm_pred.get('confidence', 0) > 0.1:
+                        ml_context['lstm_signal'] = {1: 'LONG', -1: 'SHORT', 0: 'FLAT'}.get(lstm_pred.get('signal', 0), 'FLAT')
+                        ml_context['lstm_confidence'] = round(lstm_pred.get('confidence', 0), 2)
+                        # Boost/penalize entry score
+                        signal_dir = 1 if signal == "BUY" else -1
+                        if lstm_pred.get('signal', 0) == signal_dir and lstm_pred.get('confidence', 0) > 0.3:
+                            entry_score += 1
+                            score_reasons.append(f"lstm_{ml_context['lstm_signal']}")
+                        elif lstm_pred.get('signal', 0) == -signal_dir and lstm_pred.get('confidence', 0) > 0.3:
+                            entry_score -= 1
+                            score_reasons.append(f"lstm_against")
+            except Exception as e:
+                logger.debug(f"LSTM prediction error: {e}")
+
+        # ── PatchTST TRANSFORMER PREDICTION ──
+        if self._patchtst and self._patchtst.is_ready and len(closes) >= 401:
+            try:
+                import numpy as _np
+                ptst_pred = self._patchtst.predict(_np.array(closes))
+                if ptst_pred and ptst_pred.get('confidence', 0) > 0.1:
+                    ml_context['patchtst_direction'] = {1: 'UP', -1: 'DOWN', 0: 'NEUTRAL'}.get(ptst_pred.get('prediction', 0), 'NEUTRAL')
+                    ml_context['patchtst_prob_up'] = round(ptst_pred.get('prob_up', 0.5), 2)
+                    ml_context['patchtst_shock_prob'] = round(ptst_pred.get('liquidity_shock_prob', 0), 2)
+                    # High shock probability = reduce confidence
+                    if ptst_pred.get('liquidity_shock_prob', 0) > 0.6:
+                        entry_score -= 2
+                        score_reasons.append(f"ptst_shock={ptst_pred['liquidity_shock_prob']:.0%}")
+                        math_filter_warnings.append(f"PatchTST: {ptst_pred['liquidity_shock_prob']:.0%} liquidity shock probability")
+                    # Direction agreement
+                    signal_dir = 1 if signal == "BUY" else -1
+                    if ptst_pred.get('prediction', 0) == signal_dir and ptst_pred.get('confidence', 0) > 0.2:
+                        entry_score += 1
+                        score_reasons.append(f"ptst_{ml_context['patchtst_direction']}")
+            except Exception as e:
+                logger.debug(f"PatchTST prediction error: {e}")
 
         # ── LIGHTGBM PRE-FILTER GATE ──
         # Uses 100+ features to predict L3+ runner vs L1 death
