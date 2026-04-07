@@ -2182,17 +2182,20 @@ class TradingExecutor:
                 entry_score += 1
                 score_reasons.append(f"obv_{_obv}")
 
-            # 10. HORIZONTAL S/R LEVELS (v13: -2 to +1 points)
-            try:
-                from src.indicators.trendlines import get_sr_score_adjustment
-                sr_ctx = get_sr_score_adjustment(highs, lows, closes, signal, lookback=100)
-                sr_adj = sr_ctx.get('sr_score_adj', 0)
-                if sr_adj != 0:
-                    entry_score += sr_adj
-                    sr_detail = sr_ctx.get('sr_details', f'sr={sr_adj}')
-                    score_reasons.append(sr_detail)
-            except Exception:
-                pass
+            # 10. HORIZONTAL S/R LEVELS (v14: helps ETH, neutral for BTC)
+            # Per-asset: enabled for ETH (PF +0.02), disabled for BTC (PF -0.01)
+            sr_assets = self.config.get('adaptive', {}).get('sr_assets', ['ETH'])
+            if asset in sr_assets:
+                try:
+                    from src.indicators.trendlines import get_sr_score_adjustment
+                    sr_ctx = get_sr_score_adjustment(highs, lows, closes, signal, lookback=100)
+                    sr_adj = sr_ctx.get('sr_score_adj', 0)
+                    if sr_adj != 0:
+                        entry_score += sr_adj
+                        sr_detail = sr_ctx.get('sr_details', f'sr={sr_adj}')
+                        score_reasons.append(sr_detail)
+                except Exception:
+                    pass
 
         except Exception:
             pass  # Don't block if indicator boosting fails

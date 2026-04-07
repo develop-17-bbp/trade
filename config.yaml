@@ -29,6 +29,7 @@ adaptive:
   min_entry_score: 4                           # v13: LONG min score (backtest: PF 1.003 BTC, 1.001 ETH)
   max_entry_score: 7                           # v13: cap high scores (8+ = momentum traps)
   short_score_penalty: 3                       # v13: SHORTs need score 7+ (LONG bias in crypto)
+  sr_assets: [ETH]                             # v14: S/R levels for ETH only (PF 1.02), hurts BTC
 
 # ── Risk (minimal — daily loss limit only) ──
 risk:
