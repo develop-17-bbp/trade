@@ -660,5 +660,19 @@
       "ETH_lstm": true
     },
     "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-07T21:57:58.999381+00:00",
+    "results": {
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_rl": true,
+      "ETH_lstm": true,
+      "ETH_patchtst": true
+    },
+    "success_rate": 1.0
   }
 ]
