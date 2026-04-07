@@ -250,7 +250,8 @@ def compute_indicator_context(ohlcv: dict) -> dict:
 
 def compute_entry_score(signal: str, ohlcv: dict, ema_vals: list,
                         ema_direction: str, price: float,
-                        indicator_context: dict) -> Tuple[int, List[str]]:
+                        indicator_context: dict, asset: str = None,
+                        config: dict = None) -> Tuple[int, List[str]]:
     """Compute entry quality score (0-20+).
 
     Exact replica of executor's 9-component scoring system.
@@ -391,18 +392,21 @@ def compute_entry_score(signal: str, ohlcv: dict, ema_vals: list,
         score_reasons.append(f"near_trendline(adj={tl_score_adj})")
 
     # 11. Horizontal S/R levels — penalize entries near opposing levels
-    try:
-        from src.indicators.trendlines import get_sr_score_adjustment
-        sr_ctx = get_sr_score_adjustment(
-            ohlcv['highs'], ohlcv['lows'], ohlcv['closes'],
-            signal, lookback=100
-        )
-        sr_adj = sr_ctx.get('sr_score_adj', 0)
-        if sr_adj != 0:
-            entry_score += sr_adj
-            score_reasons.append(sr_ctx.get('sr_details', f'sr_adj={sr_adj}'))
-    except Exception:
-        pass
+    # Only apply to assets in sr_assets (default: ETH only — hurts BTC)
+    sr_assets = (config or {}).get('adaptive', {}).get('sr_assets', ['ETH']) if config else ['ETH']
+    if asset is None or asset in sr_assets:
+        try:
+            from src.indicators.trendlines import get_sr_score_adjustment
+            sr_ctx = get_sr_score_adjustment(
+                ohlcv['highs'], ohlcv['lows'], ohlcv['closes'],
+                signal, lookback=100
+            )
+            sr_adj = sr_ctx.get('sr_score_adj', 0)
+            if sr_adj != 0:
+                entry_score += sr_adj
+                score_reasons.append(sr_ctx.get('sr_details', f'sr_adj={sr_adj}'))
+        except Exception:
+            pass
 
     # 12. Volatility filter — BLOCK entries during extreme volatility spikes
     # Instead of adjusting score (which shifts distribution), use as hard gate

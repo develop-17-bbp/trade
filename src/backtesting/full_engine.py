@@ -28,12 +28,13 @@ class FullBacktestEngine:
 
     def __init__(self, config: dict = None):
         config = config or {}
+        self._config = config  # Store for signal generator
 
         # Strategy params
         self.ema_period = config.get('ema_period', 8)
         self.min_entry_score = config.get('min_entry_score', 4)
-        self.max_entry_score = config.get('max_entry_score', 99)  # Cap high scores (momentum traps)
-        self.short_score_penalty = config.get('short_score_penalty', 0)  # Extra score needed for SHORTs
+        self.max_entry_score = config.get('max_entry_score', 7)  # Cap high scores (momentum traps)
+        self.short_score_penalty = config.get('short_score_penalty', 3)  # Extra score needed for SHORTs
         self.initial_capital = config.get('initial_capital', 100000.0)
         self.risk_per_trade_pct = config.get('risk_per_trade_pct', 2.0)
         self.max_trade_pct = 5.0  # Max 5% of equity per trade
@@ -179,7 +180,8 @@ class FullBacktestEngine:
 
             entry_score, score_reasons = compute_entry_score(
                 primary_signal, ohlcv, sig['ema_vals'],
-                sig['ema_direction'], sig['price'], indicator_ctx
+                sig['ema_direction'], sig['price'], indicator_ctx,
+                asset=asset, config=self._config
             )
 
             # HTF alignment bonus
