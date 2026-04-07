@@ -243,8 +243,9 @@ class TradingExecutor:
             or ai_cfg.get('ollama_base_url', 'http://localhost:11434')
         ).rstrip('/')
         self.ollama_model: str = (
-            os.environ.get('OLLAMA_REMOTE_MODEL', '')
-            or ai_cfg.get('reasoning_model', 'mistral:latest')
+            os.environ.get('OLLAMA_MODEL', '')
+            or os.environ.get('OLLAMA_REMOTE_MODEL', '')
+            or ai_cfg.get('reasoning_model', 'qwen2.5:3b')
         )
         self.llm_conf_threshold: float = ai_cfg.get('llm_trade_conf_threshold', 0.40)
 
@@ -296,7 +297,7 @@ class TradingExecutor:
 
         # LLM strategist (used as fallback / for deeper analysis)
         provider = ai_cfg.get('reasoning_provider', 'auto')
-        model = ai_cfg.get('reasoning_model', 'mistral:latest')
+        model = ai_cfg.get('reasoning_model', 'qwen2.5:3b')
         use_local = ai_cfg.get('use_local_on_failure', False)
         self.strategist = AgenticStrategist(
             provider=provider,
@@ -310,7 +311,7 @@ class TradingExecutor:
         # Journal
         self.journal = TradeJournal()
 
-        # Trading Brain v2 — multi-model consensus (mistral + llama3.2), CoT, memory, regime, Kelly, session
+        # Trading Brain v2 — two-pass Ollama (same model by default = ai.reasoning_model / OLLAMA_MODEL)
         self._brain: Optional[TradingBrainV2] = None
         if BRAIN_V2_AVAILABLE:
             try:
@@ -319,8 +320,9 @@ class TradingExecutor:
                     ollama_base_url=self.ollama_base_url,
                     journal_path=journal_path,
                     exchange=self._ex_tag.lower(),
+                    ollama_model=self.ollama_model,
                 )
-                print(f"  [AI] Trading Brain v2 ACTIVE — multi-model (mistral+llama3.2), CoT, memory, regime, Kelly, session")
+                print(f"  [AI] Trading Brain v2 ACTIVE — 2-pass Ollama ({self.ollama_model}), CoT, memory, regime, Kelly, session")
             except Exception as e:
                 print(f"  [AI] Trading Brain v2 init failed ({e}) — using legacy LLM")
                 self._brain = None

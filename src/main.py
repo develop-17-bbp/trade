@@ -25,6 +25,32 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+# Load .env before importing torch/sklearn/lightgbm (so OMP_* can be set there).
+_env_path = os.path.join(PROJECT_ROOT, '.env')
+if os.path.isfile(_env_path):
+    load_dotenv(_env_path, override=True)
+
+
+def _configure_native_runtime_threads() -> None:
+    """Default to single-threaded BLAS/OpenMP before heavy native imports.
+
+    On macOS, PyTorch + LightGBM + scikit-learn often load two different libomp
+    builds; parallel barriers then segfault (EXC_BAD_ACCESS in __kmp_suspend).
+    setdefault keeps any explicit values already set from the shell or .env.
+    """
+    for key, val in (
+        ('OMP_NUM_THREADS', '1'),
+        ('MKL_NUM_THREADS', '1'),
+        ('OPENBLAS_NUM_THREADS', '1'),
+        ('VECLIB_MAXIMUM_THREADS', '1'),
+        ('NUMEXPR_NUM_THREADS', '1'),
+    ):
+        os.environ.setdefault(key, val)
+    os.environ.setdefault('KMP_DUPLICATE_LIB_OK', 'TRUE')
+
+
+_configure_native_runtime_threads()
+
 from src.trading.executor import TradingExecutor
 
 
@@ -45,10 +71,12 @@ def run_exchange(config: dict, exchange_name: str, assets: list):
 
 
 def main():
-    # Load environment variables
+    # .env already loaded at module import (before native ML libs)
     env_path = os.path.join(PROJECT_ROOT, '.env')
-    load_dotenv(env_path, override=True)
-    print(f"  [ENV] Loaded {env_path}")
+    if os.path.isfile(env_path):
+        print(f"  [ENV] Loaded {env_path}")
+    else:
+        print(f"  [ENV] No file at {env_path} (optional)")
 
     # Configure logging
     logging.basicConfig(

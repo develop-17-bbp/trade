@@ -3,8 +3,8 @@ Crypto Trading Brain v2.1 — Full-Potential Pattern-Finding Brain
 ================================================================
 
 Major upgrade over v2.0:
-- SPECIALIZED MODEL ROLES: Mistral = Pattern Scanner, Llama = Risk Analyst
-- MULTI-PASS ANALYSIS: Pass 1 = scan patterns, Pass 2 = decide based on findings
+- TWO-PASS ANALYSIS: Pass 1 = scan patterns, Pass 2 = decide (same or different Ollama models)
+- Default: one local model (e.g. qwen2.5:3b) for both passes unless overridden
 - EXPLICIT PATTERN RECOGNITION: Candlestick + chart patterns identified by name
 - WINNER DNA EXTRACTION: Analyzes L4+ winners to find common traits
 - CROSS-ASSET INTELLIGENCE: BTC context fed when analyzing ETH and vice versa
@@ -17,7 +17,7 @@ Combines 10 capabilities:
 3. Winner DNA Extractor (what do L4+ trades have in common?)
 4. Regime-Specific Strategy Selector
 5. Funding Rate Signal
-6. Specialized Multi-Model Consensus (different roles per model)
+6. Two-pass Ollama consensus (configurable model(s) per pass)
 7. Kelly Criterion Position Sizing
 8. Session-Aware Trading Filter
 9. Confidence Calibrator (track LLM accuracy, adjust scores)
@@ -40,8 +40,17 @@ from typing import Any, Dict, List, Optional
 import requests
 
 
+def default_brain_ollama_model() -> str:
+    """Single-model default when executor does not pass a model name."""
+    return (
+        (os.environ.get("OLLAMA_MODEL") or "").strip()
+        or (os.environ.get("OLLAMA_REMOTE_MODEL") or "").strip()
+        or "qwen2.5:3b"
+    )
+
+
 # ---------------------------------------------------------------------------
-# 1. Pattern Scanner Prompt (Mistral's specialty)
+# 1. Pattern Scanner Prompt (Pass 1 — structured pattern extraction)
 # ---------------------------------------------------------------------------
 
 def build_pattern_scanner_prompt(
@@ -73,7 +82,7 @@ def build_pattern_scanner_prompt(
     cross_asset_context: str,
     edge_stats: Optional[dict] = None,
 ) -> str:
-    """Build PATTERN SCANNER prompt — Mistral's job is to FIND patterns, not decide."""
+    """Build PATTERN SCANNER prompt — Pass 1 finds patterns, not the final trade decision."""
 
     warnings_str = "; ".join(math_filter_warnings) if math_filter_warnings else "None"
     reasons_str = "; ".join(str(r) for r in score_reasons) if score_reasons else "None"
@@ -202,7 +211,7 @@ RESPOND WITH ONLY JSON — list every pattern you found:
 
 
 # ---------------------------------------------------------------------------
-# 2. Risk Analyst Prompt (Llama's specialty)
+# 2. Risk Analyst Prompt (Pass 2 — decision + risk)
 # ---------------------------------------------------------------------------
 
 def build_risk_analyst_prompt(
@@ -234,7 +243,7 @@ def build_risk_analyst_prompt(
     score_reasons: list = None,
     edge_stats: Optional[dict] = None,
 ) -> str:
-    """Build RISK ANALYST + DECISION prompt — Llama's job is to decide using pattern data."""
+    """Build RISK ANALYST + DECISION prompt — Pass 2 decides using Pass 1 pattern data."""
 
     warnings_str = "; ".join(math_filter_warnings) if math_filter_warnings else "None"
     reasons_str = "; ".join(str(r) for r in score_reasons) if score_reasons else "None"
@@ -775,33 +784,36 @@ class FundingRateSignal:
 # ---------------------------------------------------------------------------
 
 class MultiModelConsensus:
-    """Queries models with SPECIALIZED ROLES:
-    - Mistral = Pattern Scanner (finds patterns, doesn't decide)
-    - Llama = Risk Analyst (uses pattern data to make final decision)
+    """Two-pass Ollama evaluation: pattern scan (Pass 1) then risk/decision (Pass 2).
 
-    This is a TWO-PASS system:
-    Pass 1: Mistral scans for patterns (what do you SEE?)
-    Pass 2: Llama decides using patterns + risk analysis (should we TRADE?)
+    Both passes can use the same model (typical single-GPU setup) or different tags
+    if ``scanner_model`` / ``analyst_model`` are set.
     """
 
-    MODEL_SCANNER = "mistral:latest"    # Fast, good at structured extraction
-    MODEL_ANALYST = "llama3.2:latest"   # Good at reasoning and risk assessment
-
-    def __init__(self, ollama_base_url: str = "http://localhost:11434"):
+    def __init__(
+        self,
+        ollama_base_url: str = "http://localhost:11434",
+        scanner_model: Optional[str] = None,
+        analyst_model: Optional[str] = None,
+        default_model: Optional[str] = None,
+    ):
         self.ollama_base_url = ollama_base_url.rstrip("/")
+        base = (default_model or "").strip() or default_brain_ollama_model()
+        self.model_scanner = (scanner_model or "").strip() or base
+        self.model_analyst = (analyst_model or "").strip() or base
 
     def query_two_pass(self, scanner_prompt: str, analyst_prompt_builder, **analyst_kwargs) -> Dict[str, Any]:
         """
         Two-pass evaluation:
-        1. Mistral scans patterns (Pass 1)
-        2. Llama analyzes risk + decides using Mistral's findings (Pass 2)
+        1. Pass 1: pattern scan
+        2. Pass 2: risk + proceed decision using Pass 1 output
         """
-        # PASS 1: Pattern scan with Mistral
-        print(f"  [BRAIN:PASS1] Mistral scanning patterns...")
+        # PASS 1: Pattern scan
+        print(f"  [BRAIN:PASS1] {self.model_scanner} — pattern scan...")
         try:
-            pattern_result = self._call_ollama(self.MODEL_SCANNER, scanner_prompt)
+            pattern_result = self._call_ollama(self.model_scanner, scanner_prompt)
         except Exception as e:
-            print(f"  [BRAIN:PASS1] Mistral error: {e} — using empty patterns")
+            print(f"  [BRAIN:PASS1] Pass1 error ({self.model_scanner}): {e} — using empty patterns")
             pattern_result = self._empty_pattern_result()
 
         # Validate pattern result
@@ -811,13 +823,13 @@ class MultiModelConsensus:
         strongest = pattern_result.get("strongest_signal", "None")
         print(f"  [BRAIN:PASS1] Patterns: bias={pat_bias} strength={pat_strength}/10 key={strongest}")
 
-        # PASS 2: Risk analysis + decision with Llama, using Mistral's findings
-        print(f"  [BRAIN:PASS2] Llama analyzing risk + deciding...")
+        # PASS 2: Risk analysis + decision
+        print(f"  [BRAIN:PASS2] {self.model_analyst} — risk + decision...")
         analyst_prompt = analyst_prompt_builder(pattern_scan_result=pattern_result, **analyst_kwargs)
         try:
-            decision_result = self._call_ollama(self.MODEL_ANALYST, analyst_prompt)
+            decision_result = self._call_ollama(self.model_analyst, analyst_prompt)
         except Exception as e:
-            print(f"  [BRAIN:PASS2] Llama error: {e} — rejecting trade (safe default)")
+            print(f"  [BRAIN:PASS2] Pass2 error ({self.model_analyst}): {e} — rejecting trade (safe default)")
             decision_result = {
                 "proceed": False, "confidence": 0.2, "risk_score": 8,
                 "trade_quality": 2, "predicted_l_level": "L1",
@@ -825,8 +837,7 @@ class MultiModelConsensus:
                 "facilitator_verdict": "REJECTED — analyst error",
             }
 
-        # PASS 3 (optional): If Llama says YES, quick Mistral verification
-        # "Does the pattern data actually support this decision?"
+        # PASS 3 (optional): If analyst says YES, quick consistency check (no extra LLM call)
         if decision_result.get("proceed", False):
             verification = self._quick_verify(pattern_result, decision_result)
             if not verification["confirmed"]:
@@ -976,13 +987,15 @@ class MultiModelConsensus:
                 "resembles_winner": patterns.get("resembles_winner", False),
             },
             "model_votes": {
-                "mistral_scanner": {
+                "pass1_scanner": {
                     "role": "pattern_scanner",
+                    "model": self.model_scanner,
                     "bias": patterns.get("pattern_bias", "NEUTRAL"),
                     "strength": patterns.get("pattern_strength", 5),
                 },
-                "llama_analyst": {
+                "pass2_analyst": {
                     "role": "risk_analyst",
+                    "model": self.model_analyst,
                     "proceed": decision.get("proceed", False),
                     "confidence": decision.get("confidence", 0.0),
                     "risk_score": decision.get("risk_score", 7),
@@ -1048,27 +1061,42 @@ class TradingBrainV2:
     v2.1 — Full-potential pattern-finding brain.
 
     TWO-PASS LLM evaluation:
-      Pass 1 (Mistral): "What patterns do you SEE?" → structured pattern scan
-      Pass 2 (Llama):   "Given these patterns, should we TRADE?" → risk-aware decision
-      Verify:           If Llama says YES, check patterns don't contradict
+      Pass 1: "What patterns do you SEE?" → structured pattern scan
+      Pass 2: "Given these patterns, should we TRADE?" → risk-aware decision
+      Verify: If proceed=True, check patterns don't contradict (heuristic, no third LLM call)
 
     Plus: Winner DNA extraction, confidence calibration, cross-asset intel.
     Same interface as v2.0 — drop-in replacement.
     """
 
-    def __init__(self, ollama_base_url="http://localhost:11434", journal_path="logs/trading_journal.jsonl", exchange: str = ""):
+    def __init__(
+        self,
+        ollama_base_url="http://localhost:11434",
+        journal_path="logs/trading_journal.jsonl",
+        exchange: str = "",
+        ollama_model: Optional[str] = None,
+        scanner_model: Optional[str] = None,
+        analyst_model: Optional[str] = None,
+    ):
         self.exchange = exchange  # Exchange tag for filtering (e.g., 'bybit', 'delta')
         self.memory = TradeMemory(journal_path, exchange=exchange)
         self.regime = RegimeSelector()
         self.funding = FundingRateSignal()
-        self.consensus = MultiModelConsensus(ollama_base_url)
+        self.consensus = MultiModelConsensus(
+            ollama_base_url,
+            scanner_model=scanner_model,
+            analyst_model=analyst_model,
+            default_model=ollama_model,
+        )
         self.kelly = KellySizer()
         self.session = SessionFilter()
         self.calibrator = ConfidenceCalibrator(journal_path, exchange=exchange)
         self.winner_dna = WinnerDNAExtractor(self.memory.trades)
 
         cal_report = self.calibrator.get_calibration_report()
-        print(f"[BRAIN] TradingBrainV2.1 ACTIVE — 2-pass (Mistral=scanner + Llama=analyst)")
+        m1, m2 = self.consensus.model_scanner, self.consensus.model_analyst
+        same = " (same model both passes)" if m1 == m2 else ""
+        print(f"[BRAIN] TradingBrainV2.1 ACTIVE — 2-pass Ollama pass1={m1} pass2={m2}{same}")
         print(f"[BRAIN] Confidence calibration: {cal_report}")
         print(f"[BRAIN] Winner DNA: {self.winner_dna.get_dna()[:120]}")
 

@@ -340,31 +340,56 @@ class AlpacaClient:
 # Bybit Testnet Client (Futures — supports LONG + SHORT)
 # ═══════════════════════════════════════════════════════════════════
 
+
+def _bybit_demo_from_env() -> bool:
+    return os.environ.get('BYBIT_DEMO', '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 class BybitClient:
     """
-    Bybit testnet/live client via CCXT.
+    Bybit testnet / demo / live client via CCXT.
     Uses USDT-margined linear perpetual futures for full LONG + SHORT.
+
+    Demo trading (BYBIT_DEMO=true): keys from Bybit main site → Demo Trading.
+    CCXT requires sandbox=False then enable_demo_trading(True) — demo cannot mix with testnet sandbox.
     """
 
     def __init__(self, api_key: Optional[str] = None,
                  api_secret: Optional[str] = None,
-                 testnet: bool = True):
-        self.api_key = api_key or os.environ.get('BYBIT_TESTNET_KEY', '')
-        self.api_secret = api_secret or os.environ.get('BYBIT_TESTNET_SECRET', '')
+                 testnet: bool = True,
+                 demo: Optional[bool] = None):
+        # Env: BYBIT_TESTNET_* (historical) or BYBIT_API_* (same names as .env.example / demo keys)
+        self.api_key = (
+            api_key
+            or os.environ.get('BYBIT_TESTNET_KEY', '').strip()
+            or os.environ.get('BYBIT_API_KEY', '').strip()
+        )
+        self.api_secret = (
+            api_secret
+            or os.environ.get('BYBIT_TESTNET_SECRET', '').strip()
+            or os.environ.get('BYBIT_API_SECRET', '').strip()
+        )
         self.testnet = testnet
+        self.demo = demo if demo is not None else _bybit_demo_from_env()
         self.available = False
         self.exchange = None
 
         if not (self.api_key and self.api_secret):
-            logger.warning("[BYBIT] No API keys — set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
+            logger.warning(
+                "[BYBIT] No API keys — set BYBIT_API_KEY / BYBIT_API_SECRET "
+                "or BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET"
+            )
             return
+
+        # testnet sandbox and Bybit demo API are mutually exclusive in CCXT
+        use_sandbox = bool(testnet) and not self.demo
 
         try:
             import ccxt
             self.exchange = ccxt.bybit({
                 'apiKey': self.api_key,
                 'secret': self.api_secret,
-                'sandbox': testnet,
+                'sandbox': use_sandbox,
                 'options': {
                     'defaultType': 'linear',
                     'recvWindow': 60000,
@@ -372,6 +397,8 @@ class BybitClient:
                 },
                 'enableRateLimit': True,
             })
+            if self.demo:
+                self.exchange.enable_demo_trading(True)
             # Sync clock with Bybit server to prevent timestamp rejections
             self.exchange.load_time_difference()
             if hasattr(self.exchange, 'options'):
@@ -382,11 +409,22 @@ class BybitClient:
             balance = self.exchange.fetch_balance()
             usdt = float(balance.get('USDT', {}).get('total', 0) or 0)
             btc = float(balance.get('BTC', {}).get('total', 0) or 0)
-            logger.info(f"[BYBIT] Connected to {'TESTNET' if testnet else 'LIVE'}")
+            if self.demo:
+                logger.info("[BYBIT] Connected to DEMO (api-demo.bybit.com)")
+            else:
+                logger.info(f"[BYBIT] Connected to {'TESTNET' if use_sandbox else 'LIVE'}")
             logger.info(f"[BYBIT] USDT: {usdt:,.2f} | BTC: {btc:,.6f}")
             self.available = True
         except Exception as e:
+            err_s = str(e)
             logger.warning(f"[BYBIT] Connection failed: {e}")
+            if '10003' in err_s or 'API key is invalid' in err_s:
+                logger.warning(
+                    "[BYBIT] retCode 10003: keys must match the endpoint — "
+                    "testnet keys → BYBIT_DEMO unset + testnet.bybit; "
+                    "demo keys → BYBIT_DEMO=true (api-demo.bybit.com); "
+                    "live keys → live mode + mainnet. Regenerate keys on the matching Bybit site."
+                )
             self.available = False
 
     def get_account(self) -> Dict:
@@ -805,13 +843,14 @@ class PriceFetcher:
         self._available = self.bybit.available
 
         if self.bybit.available:
-            print(f"  [BYBIT] {'TESTNET' if testnet else 'LIVE'} trading connected")
+            _lbl = 'DEMO' if getattr(self.bybit, 'demo', False) else ('TESTNET' if testnet else 'LIVE')
+            print(f"  [BYBIT] {_lbl} trading connected")
             acct = self.bybit.get_account()
             if 'equity' in acct:
                 print(f"  [BYBIT] Equity: ${acct['equity']:,.2f} | USDT: ${acct.get('cash', 0):,.2f}")
-            if testnet:
-                # Bybit TESTNET has frozen/stale OHLCV data — use real Bybit mainnet for candles
-                # Orders still go to testnet via self.bybit, only OHLCV reads from mainnet
+            if testnet or getattr(self.bybit, 'demo', False):
+                # Testnet OHLCV is often stale; demo orders are on api-demo — use mainnet for candle data
+                # Orders still go via self.bybit.exchange (testnet or demo)
                 try:
                     import ccxt as _ccxt_bybit
                     self.exchange = _ccxt_bybit.bybit({
@@ -831,7 +870,10 @@ class PriceFetcher:
                 self.exchange = self.bybit.exchange
                 print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
         else:
-            print(f"  [BYBIT] Not connected - set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
+            print(
+                "  [BYBIT] Not connected - set BYBIT_API_KEY / BYBIT_API_SECRET "
+                "(or BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET)"
+            )
             self._init_ccxt_readonly()
 
     def _init_delta(self, api_key, api_secret, testnet):

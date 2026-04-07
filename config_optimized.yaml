@@ -19,7 +19,7 @@ assets:
   - BTC
   - ETH
 
-initial_capital: 100000.0      # Starting capital in USD
+# initial_capital: 100000.0      # Starting capital in USD
 
 # ── L1 Quantitative Engine (TREND-BIASED FOR BTC/ETH) ──
 l1:

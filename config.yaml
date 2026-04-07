@@ -7,7 +7,8 @@ poll_interval: 5             # how often the engine wakes: refetch prices, OHLCV
 trade_cooldown_seconds: 30    # spec §4.4: min seconds between trades per asset
 
 # ── Exchange Configuration ──
-# Bybit demo: .env BYBIT_DEMO=true, BYBIT_API_KEY / BYBIT_API_SECRET (demo keys from Bybit → Demo Trading).
+# Bybit: .env BYBIT_API_KEY / BYBIT_API_SECRET or BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET (fetcher accepts both).
+# Demo: BYBIT_DEMO=true with demo keys from Bybit → Demo Trading when enabled in code.
 exchanges:
   - name: bybit
     assets: [BTC, ETH]
@@ -54,9 +55,14 @@ risk:
   hard_stop_loss_slippage_mult: 1.05
 
 # ── AI / LLM ──
-# Local Ollama: same host/model as `ollama serve` + `ollama run qwen2.5:3b` (see also OLLAMA_HOST / OLLAMA_MODEL in .env)
+# Single stack: everything that calls Ollama (trade decider, TradingBrain, AgenticStrategist /
+# LLMRouter "local", bear/facilitator/orchestrator flows, executor generate) uses the same
+# ollama_base_url + reasoning_model below. monitor.ollama_* should match for auto-healer.
+# Optional env overrides (see .env.example): OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_REMOTE_*.
+# Local: `ollama serve` then `ollama run qwen2.5:3b` on port 11434.
 ai:
-  reasoning_provider: "auto"
+  # "local" = strategist uses LLMRouter’s Ollama provider (same URL/model as below)
+  reasoning_provider: "local"
   reasoning_model: "qwen2.5:3b"
   ollama_base_url: "http://127.0.0.1:11434"
   llm_provider: "ollama"
