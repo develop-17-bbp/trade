@@ -1,0 +1,219 @@
+============================================================
+TRAINING ALL ML MODELS — MULTI-TIMEFRAME REAL MARKET DATA
+============================================================
+
+############################################################
+# ETH
+############################################################
+
+############################################################
+# MULTI-TIMEFRAME DATA: ETH
+############################################################
+
+============================================================
+FETCHING 50000 1m BARS FOR ETH
+============================================================
+    ... fetched 1000/50000 bars
+    ... fetched 2000/50000 bars
+    ... fetched 3000/50000 bars
+    ... fetched 4000/50000 bars
+    ... fetched 5000/50000 bars
+    ... fetched 6000/50000 bars
+    ... fetched 7000/50000 bars
+    ... fetched 8000/50000 bars
+    ... fetched 9000/50000 bars
+    ... fetched 10000/50000 bars
+    ... fetched 11000/50000 bars
+    ... fetched 12000/50000 bars
+    ... fetched 13000/50000 bars
+    ... fetched 14000/50000 bars
+    ... fetched 15000/50000 bars
+    ... fetched 16000/50000 bars
+    ... fetched 17000/50000 bars
+    ... fetched 18000/50000 bars
+    ... fetched 19000/50000 bars
+    ... fetched 20000/50000 bars
+    ... fetched 21000/50000 bars
+    ... fetched 22000/50000 bars
+    ... fetched 23000/50000 bars
+    ... fetched 24000/50000 bars
+    ... fetched 25000/50000 bars
+    ... fetched 26000/50000 bars
+    ... fetched 27000/50000 bars
+    ... fetched 28000/50000 bars
+    ... fetched 29000/50000 bars
+    ... fetched 30000/50000 bars
+    ... fetched 31000/50000 bars
+    ... fetched 32000/50000 bars
+    ... fetched 33000/50000 bars
+    ... fetched 34000/50000 bars
+    ... fetched 35000/50000 bars
+    ... fetched 36000/50000 bars
+    ... fetched 37000/50000 bars
+    ... fetched 38000/50000 bars
+    ... fetched 39000/50000 bars
+    ... fetched 40000/50000 bars
+    ... fetched 41000/50000 bars
+    ... fetched 42000/50000 bars
+    ... fetched 43000/50000 bars
+    ... fetched 44000/50000 bars
+    ... fetched 45000/50000 bars
+    ... fetched 46000/50000 bars
+    ... fetched 47000/50000 bars
+    ... fetched 48000/50000 bars
+    ... fetched 49000/50000 bars
+    ... fetched 50000/50000 bars
+  Fetched 50000 bars (1m) from Binance
+  1m: 50000 bars | $2,114.15 | Range: $1,915.63-$2,384.11
+
+============================================================
+FETCHING 20000 5m BARS FOR ETH
+============================================================
+    ... fetched 1000/20000 bars
+    ... fetched 2000/20000 bars
+    ... fetched 3000/20000 bars
+    ... fetched 4000/20000 bars
+    ... fetched 5000/20000 bars
+    ... fetched 6000/20000 bars
+    ... fetched 7000/20000 bars
+    ... fetched 8000/20000 bars
+    ... fetched 9000/20000 bars
+    ... fetched 10000/20000 bars
+    ... fetched 11000/20000 bars
+    ... fetched 12000/20000 bars
+    ... fetched 13000/20000 bars
+    ... fetched 14000/20000 bars
+    ... fetched 15000/20000 bars
+    ... fetched 16000/20000 bars
+    ... fetched 17000/20000 bars
+    ... fetched 18000/20000 bars
+    ... fetched 19000/20000 bars
+    ... fetched 20000/20000 bars
+  Fetched 20000 bars (5m) from Binance
+  5m: 20000 bars | $2,113.19 | Range: $1,746.19-$3,041.10
+
+============================================================
+FETCHING 6666 15m BARS FOR ETH
+============================================================
+    ... fetched 1000/6666 bars
+    ... fetched 2000/6666 bars
+    ... fetched 3000/6666 bars
+    ... fetched 4000/6666 bars
+    ... fetched 5000/6666 bars
+    ... fetched 6000/6666 bars
+    ... fetched 6666/6666 bars
+  Fetched 6666 bars (15m) from Binance
+  15m: 6666 bars | $2,112.73 | Range: $1,765.49-$3,040.38
+
+============================================================
+FETCHING 1666 1h BARS FOR ETH
+============================================================
+    ... fetched 1000/1666 bars
+  Fetched 1666 bars (1h) from Binance
+  1h: 1666 bars | $2,112.45 | Range: $1,814.60-$3,038.41
+
+============================================================
+FETCHING 416 4h BARS FOR ETH
+============================================================
+    ... fetched 416/416 bars
+  Fetched 416 bars (4h) from Binance
+  4h: 416 bars | $2,112.02 | Range: $1,824.63-$3,015.25
+
+============================================================
+FETCHING 200 1d BARS FOR ETH
+============================================================
+    ... fetched 200/200 bars
+  Fetched 200 bars (1d) from Binance
+  1d: 200 bars | $2,113.25 | Range: $1,824.95-$4,682.43
+  Bars: 20000 | Price: $2,113.19 | Range: $1,746.19-$3,041.10
+
+============================================================
+1. TRAINING LIGHTGBM CLASSIFIER (ETH)
+  Labels: SKIP (L1 death) vs TRADE (L2+ profit locked)
+============================================================
+  Using 40 strategy features (30 base + 5 Kalman + 5 inflection)
+  Training data: 19915 bars | SKIP=7428 (37%) TRADE=12487 (63%)
+  TRADE weight: 0.75x
+Training until validation scores don't improve for 80 rounds
+Early stopping, best iteration is:
+[30]	valid_0's binary_logloss: 0.65654
+    SKIP(L1-death): n=2114 | P=59% R=85% F1=69%
+    TRADE(L2+-profit): n=1869 | P=65% R=32% F1=43%
+    TRADE optimal threshold: 0.370 (F1=67%)
+    Overall accuracy: 60%
+  Top features: ['atr_pct=20656', 'bb_width=1821', 'log_vol_norm=1204', 'ema8_vs_ema50=1169', 'dist_to_resistance=1031', 'obv_slope=821', 'macd_hist_norm=687', 'kalman_snr=642']
+  Saved: models/lgbm_eth_trained.txt + thresholds
+
+============================================================
+2. TRAINING HMM REGIME DETECTOR (ETH)
+============================================================
+WARNING: Model is not converging.  Current: 237697.20859580796 is not greater than 237699.535875613. Delta is -2.3272798050311394
+INFO: HMM fitted on 19999 observations, 4 states, score=237693.26
+  HMM fitted on 19999 observations
+  Current regime: sideways (conf: 0.00)
+  Crisis prob: 0.000
+  Saved: models/hmm_eth.pkl
+
+============================================================
+5. TRAINING GARCH(1,1) (ETH)
+============================================================
+  Fitted on 20000 prices
+  Current vol: 0.001464
+  Params: omega=0.000000 alpha=0.1500 beta=0.7000
+  Persistence: 0.8500 (should be < 1.0)
+  Saved: models/garch_eth.pkl
+
+============================================================
+6. TRAINING ALPHA DECAY (ETH)
+============================================================
+INFO: Alpha Decay: lambda=0.0166, half_life=41.7 bars, optimal_hold=18 bars, peak_IC=-0.0547
+  Half-life: 41.7 bars (208 min)
+  Optimal hold: 18 bars (90 min)
+  Peak alpha: 0.0547
+  Saved: models/alpha_decay_eth.pkl
+
+============================================================
+7. TRAINING RL AGENT (ETH)
+============================================================
+INFO: [RL] Model loaded: 293 states, epsilon=0.050, trades=0
+  Simulating EMA(8) strategy on 20000 bars...
+    ... 200 trades | WR: 54.0% | PnL: +0.6% | eps: 0.242
+    ... 400 trades | WR: 56.8% | PnL: +10.0% | eps: 0.195
+    ... 600 trades | WR: 58.3% | PnL: +30.6% | eps: 0.158
+  Running 100 replay learning passes...
+INFO: [RL] Model saved: 298 states, epsilon=0.050
+
+  RL Training Complete:
+    Trades simulated: 796
+    Win rate: 58.3%
+    Total PnL: +26.1%
+    Q-table states: 298
+    Skip rate: 3.1%
+    Final epsilon: 0.0500
+    Replay buffer: 4042
+  Saved: models/rl_ema_eth.json
+
+  Action Performance:
+    SKIP                : count= 117 | avg_pnl=+0.000%
+    SMALL_TIGHT         : count=  82 | avg_pnl=+0.000%
+    MEDIUM_NORMAL       : count=  99 | avg_pnl=+0.000%
+    FULL_NORMAL         : count=3101 | avg_pnl=+0.000%
+    FULL_WIDE_PATIENT   : count=  67 | avg_pnl=+0.000%
+    AGGRESSIVE          : count=  78 | avg_pnl=+0.000%
+    CAUTIOUS_QUICK      : count= 101 | avg_pnl=+0.000%
+    FULL_VERY_PATIENT   : count=  93 | avg_pnl=+0.000%
+
+============================================================
+3. TRAINING LSTM ENSEMBLE (ETH)
+============================================================
+  PyTorch 2.11.0+cu128 | CUDA: False
+  Using 40 strategy features (30 base + 5 Kalman + 5 inflection)
+  Sequences: (19915, 30, 40) | SKIP=7428 (37%) TRADE=12487 (63%)
+  Removed old checkpoint: bilstm.pth
+  Removed old checkpoint: gru.pth
+  Removed old checkpoint: lstm.pth
+  Classes: 2 (SKIP vs TRADE) | Features: 40
+INFO: Loaded thresholds: {'0': {'threshold': 0.15, 'best_f1': 0.6987584403814291}, '1': {'threshold': 0.4600000000000003, 'best_f1': 0.6571205414795267}}
+INFO: Before oversample: {0: 5826, 1: 11102}
+INFO: After oversample: {0: 11102, 1: 11102}
+INFO: Class weights (2): [0.9999999999989999, 1.9999999999979998]

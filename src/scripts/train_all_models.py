@@ -116,6 +116,39 @@ def fetch_training_data(asset='BTC', timeframe='5m', bars=5000):
     except Exception as e:
         print(f"  Bybit fetch failed: {e}")
 
+    # Fallback: Binance Vision S3 (bypasses API geo-blocks)
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../scripts/maintenance'))
+        from download_vision_data import fetch_vision_ohlcv
+        symbol = f"{asset}USDT"
+        print(f"  Trying Binance Vision S3 for {symbol} ({timeframe})...")
+        df = fetch_vision_ohlcv(symbol, timeframe=timeframe, start_year=2017, data_dir='data/training_cache')
+        if df is not None and len(df) >= 100:
+            # Trim to requested bar count (take most recent)
+            if len(df) > bars:
+                df = df.tail(bars).reset_index(drop=True)
+            # Convert timestamp to milliseconds
+            if 'timestamp' in df.columns:
+                ts = df['timestamp']
+                if hasattr(ts.iloc[0], 'timestamp'):
+                    timestamps = [int(t.timestamp() * 1000) for t in ts]
+                else:
+                    timestamps = ts.astype(int).tolist()
+            else:
+                timestamps = list(range(len(df)))
+            data = {
+                'timestamps': timestamps,
+                'opens': df['open'].astype(float).tolist(),
+                'highs': df['high'].astype(float).tolist(),
+                'lows': df['low'].astype(float).tolist(),
+                'closes': df['close'].astype(float).tolist(),
+                'volumes': df['volume'].astype(float).tolist(),
+            }
+            print(f"  Fetched {len(df)} bars from Binance Vision S3")
+            return data
+    except Exception as e:
+        print(f"  Binance Vision fetch failed: {e}")
+
     print("  ERROR: No exchange connectivity")
     return None
 
