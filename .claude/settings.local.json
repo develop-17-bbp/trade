@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "Bash(GIT_SSH_COMMAND=\"ssh -o StrictHostKeyChecking=no\" git push --force origin main)",
+      "Bash(git fetch:*)",
+      "Bash(git branch:*)"
+    ]
+  }
+}

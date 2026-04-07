@@ -1,0 +1,38 @@
+2026-04-07 00:59:04,080 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-04-07 00:59:04,081 [INFO] src.data.fetcher: [LCW] LiveCoinWatch initialized (API key: ...0240f6)
+2026-04-07 00:59:05,460 [INFO] src.data.fetcher: [BYBIT] Time offset: 0ms
+2026-04-07 00:59:05,675 [INFO] src.data.fetcher: [DELTA] Clock drift: client 1.3s ahead — applying offset -3268ms
+2026-04-07 00:59:07,464 [INFO] src.data.fetcher: [DELTA] Connected to TESTNET
+2026-04-07 00:59:07,464 [INFO] src.data.fetcher: [DELTA] USD: 159.98
+2026-04-07 00:59:07,766 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-07 00:59:07,767 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-07 00:59:07,767 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-04-07 00:59:08,654 [INFO] src.models.lstm_ensemble: Loaded lstm model from models/lstm_ensemble_btc\lstm.pth
+2026-04-07 00:59:08,657 [INFO] src.models.lstm_ensemble: Loaded gru model from models/lstm_ensemble_btc\gru.pth
+2026-04-07 00:59:08,660 [INFO] src.models.lstm_ensemble: Loaded bilstm model from models/lstm_ensemble_btc\bilstm.pth
+2026-04-07 00:59:08,660 [INFO] src.models.lstm_ensemble: Loaded thresholds: {'0': {'threshold': 0.42000000000000026, 'best_f1': 0.8020326063457472}, '1': {'threshold': 0.4800000000000003, 'best_f1': 0.5841995841534435}}
+2026-04-07 00:59:08,665 [INFO] src.models.lstm_ensemble: Loaded lstm model from models/lstm_ensemble_eth\lstm.pth
+2026-04-07 00:59:08,667 [INFO] src.models.lstm_ensemble: Loaded gru model from models/lstm_ensemble_eth\gru.pth
+2026-04-07 00:59:08,671 [INFO] src.models.lstm_ensemble: Loaded bilstm model from models/lstm_ensemble_eth\bilstm.pth
+2026-04-07 00:59:08,671 [INFO] src.models.lstm_ensemble: Loaded thresholds: {'0': {'threshold': 0.40000000000000024, 'best_f1': 0.7367183826506171}, '1': {'threshold': 0.4500000000000003, 'best_f1': 0.6459121326269582}}
+2026-04-07 00:59:08,683 [INFO] src.ai.patchtst_model: [PatchTST] Real model loaded from models/patchtst_v1.pt
+2026-04-07 00:59:08,695 [INFO] src.monitoring.journal: Loaded 1209 trades from journal
+2026-04-07 00:59:08,705 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-07 00:59:08,705 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents
+2026-04-07 00:59:09,810 [INFO] src.data.fetcher: [BYBIT] Connected to TESTNET
+2026-04-07 00:59:09,811 [INFO] src.data.fetcher: [BYBIT] USDT: 30,172.51 | BTC: 0.000000
+2026-04-07 00:59:14,362 [INFO] src.ai.llm_provider: Registered LLM provider: remote_gpu (ollama/mistral)
+2026-04-07 00:59:14,362 [INFO] src.ai.llm_provider: Registered remote Ollama GPU: https://spas-inclusive-breaking-frontier.trycloudflare.com
+2026-04-07 00:59:14,362 [INFO] src.ai.agentic_strategist: [LLM] Cloud APIs available: ['remote_gpu'] + local Ollama fallback
+2026-04-07 00:59:14,597 [INFO] src.models.lstm_ensemble: Loaded lstm model from models/lstm_ensemble_btc\lstm.pth
+2026-04-07 00:59:14,599 [INFO] src.models.lstm_ensemble: Loaded gru model from models/lstm_ensemble_btc\gru.pth
+2026-04-07 00:59:14,602 [INFO] src.models.lstm_ensemble: Loaded bilstm model from models/lstm_ensemble_btc\bilstm.pth
+2026-04-07 00:59:14,602 [INFO] src.models.lstm_ensemble: Loaded thresholds: {'0': {'threshold': 0.42000000000000026, 'best_f1': 0.8020326063457472}, '1': {'threshold': 0.4800000000000003, 'best_f1': 0.5841995841534435}}
+2026-04-07 00:59:14,607 [INFO] src.models.lstm_ensemble: Loaded lstm model from models/lstm_ensemble_eth\lstm.pth
+2026-04-07 00:59:14,610 [INFO] src.models.lstm_ensemble: Loaded gru model from models/lstm_ensemble_eth\gru.pth
+2026-04-07 00:59:14,613 [INFO] src.models.lstm_ensemble: Loaded bilstm model from models/lstm_ensemble_eth\bilstm.pth
+2026-04-07 00:59:14,613 [INFO] src.models.lstm_ensemble: Loaded thresholds: {'0': {'threshold': 0.40000000000000024, 'best_f1': 0.7367183826506171}, '1': {'threshold': 0.4500000000000003, 'best_f1': 0.6459121326269582}}
+2026-04-07 00:59:14,627 [INFO] src.ai.patchtst_model: [PatchTST] Real model loaded from models/patchtst_v1.pt
+2026-04-07 00:59:14,637 [INFO] src.monitoring.journal: Loaded 1294 trades from journal
+2026-04-07 00:59:14,638 [INFO] src.agents.orchestrator: [ORCHESTRATOR] All 13 agents initialized
+2026-04-07 00:59:14,639 [INFO] src.agents.orchestrator: [AgentOrchestrator] Loaded weights for 13 agents

@@ -155,6 +155,13 @@ try:
 except Exception:
     ALPHA_DECAY_AVAILABLE = False
 
+# MetaTrader 5 Bridge — mirror or execute trades on MT5 terminal
+try:
+    from src.trading.mt5_bridge import MT5Bridge
+    MT5_AVAILABLE = True
+except Exception:
+    MT5_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -269,7 +276,7 @@ class TradingExecutor:
                     "sl_guard": {"trade_limit": 3, "lookback_minutes": 60, "cooldown_minutes": 30},
                     "max_drawdown": {"max_drawdown_pct": risk.get('max_drawdown_pct', 10.0),
                                      "lookback_minutes": 120, "cooldown_minutes": 60},
-                    "pair_lock": {"min_profit_pct": -3.0, "lookback_trades": 8, "lock_hours": 2},
+                    "pair_lock": {"min_profit_pct": -8.0, "lookback_trades": 8, "lock_hours": 0.5},
                     "roi_table": {0: 0.10, 30: 0.05, 60: 0.025, 120: 0.01, 240: 0.0},
                     "confirm": {"max_spread_pct": 1.0, "max_price_drift_pct": 0.5,
                                 "max_concurrent_trades": len(self.assets) * 2},
@@ -337,7 +344,7 @@ class TradingExecutor:
         self._hmm = None
         if HMM_AVAILABLE:
             try:
-                self._hmm = HMMRegimeDetector(n_regimes=4)
+                self._hmm = HMMRegimeDetector(n_states=4)
                 print(f"  [ML] HMM Regime Detector ACTIVE — 4-state (BULL/BEAR/SIDEWAYS/CRISIS)")
             except Exception as e:
                 print(f"  [ML] HMM init failed ({e})")
@@ -350,24 +357,52 @@ class TradingExecutor:
             except Exception as e:
                 print(f"  [ML] Kalman init failed ({e})")
 
-        # ── LightGBM 3-Class Classifier (pre-filter gate) ──
+        # ── LightGBM Binary Classifier (SKIP/TRADE pre-filter gate) ──
         self._lgbm = None
+        self._lgbm_raw = {}  # Per-asset raw trained binary models
         if LIGHTGBM_AVAILABLE:
             try:
                 self._lgbm = LightGBMClassifier(config={
-                    'confidence_threshold': 0.55,  # lower than default — we use it as soft gate
+                    'confidence_threshold': 0.55,
                 })
-                # Try to load pre-trained model if exists
                 import os as _os
+                # Load per-asset BINARY trained models (trained on 30 strategy features)
+                for _asset in self.config.get('assets', ['BTC', 'ETH']):
+                    asset_model_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models', f'lgbm_{_asset.lower()}_trained.txt')
+                    if _os.path.exists(asset_model_path):
+                        try:
+                            import lightgbm as _lgb
+                            self._lgbm_raw[_asset] = _lgb.Booster(model_file=asset_model_path)
+                            print(f"  [ML] LightGBM ({_asset}) ACTIVE — binary SKIP/TRADE model loaded")
+                        except Exception as e2:
+                            print(f"  [ML] LightGBM ({_asset}) raw load failed: {e2}")
+                # Also load generic model for backward compat
                 model_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models', 'lgbm_latest.txt')
                 if _os.path.exists(model_path):
                     self._lgbm.load_model(model_path)
-                    print(f"  [ML] LightGBM Classifier ACTIVE — loaded from {model_path}")
+                    print(f"  [ML] LightGBM fallback loaded from {model_path}")
                 else:
-                    print(f"  [ML] LightGBM Classifier ACTIVE — rule-based mode (no trained model)")
+                    print(f"  [ML] LightGBM ACTIVE — rule-based mode (no trained model)")
             except Exception as e:
                 print(f"  [ML] LightGBM init failed ({e})")
                 self._lgbm = None
+
+        # ── MetaTrader 5 Bridge ──
+        self._mt5: Optional[MT5Bridge] = None
+        if MT5_AVAILABLE:
+            mt5_cfg = config.get('mt5', {})
+            if mt5_cfg.get('enabled', False):
+                try:
+                    self._mt5 = MT5Bridge(config)
+                    if self._mt5.connected:
+                        print(f"  [MT5] Bridge ACTIVE — mode: {self._mt5.mode.upper()}")
+                        self._mt5.print_status()
+                    else:
+                        print(f"  [MT5] Bridge enabled but not connected — check MT5 terminal")
+                        self._mt5 = None
+                except Exception as e:
+                    print(f"  [MT5] Bridge init failed: {e}")
+                    self._mt5 = None
 
         # Set leverage to 1x (prevent amplified losses)
         try:
@@ -392,14 +427,24 @@ class TradingExecutor:
         self.last_signal_candle: Dict[str, float] = {}  # Track candle timestamp to avoid re-entry on same candle
         self.failed_close_assets: Dict[str, float] = {}  # Assets that failed to close — skip until manual resolution
 
-        # ── LSTM Ensemble (neural net direction prediction) ──
+        # ── LSTM Ensemble (binary SKIP/TRADE from trailing SL simulation) ──
+        # Loads per-asset models in _process_asset; here we just init the dict
         self._lstm = None
+        self._lstm_per_asset = {}
         if LSTM_AVAILABLE:
-            try:
-                self._lstm = LSTMEnsemble(input_dim=20, seq_len=30)
-                print(f"  [ML] LSTM Ensemble ACTIVE — 3 neural nets (LSTM+GRU+BiLSTM)")
-            except Exception as e:
-                print(f"  [ML] LSTM Ensemble init failed ({e})")
+            for _asset in self.config.get('assets', ['BTC', 'ETH']):
+                try:
+                    model_dir = f'models/lstm_ensemble_{_asset.lower()}'
+                    n_features = 40  # 30 strategy + 5 Kalman + 5 EMA inflection
+                    _lstm = LSTMEnsemble(input_dim=n_features, seq_len=30,
+                                         num_classes=2, model_dir=model_dir)
+                    self._lstm_per_asset[_asset] = _lstm
+                    print(f"  [ML] LSTM Ensemble ({_asset}) ACTIVE — {n_features} features (30+Kalman+inflection), binary SKIP/TRADE")
+                except Exception as e:
+                    print(f"  [ML] LSTM Ensemble ({_asset}) init failed ({e})")
+            # Default to first asset for backward compat
+            if self._lstm_per_asset:
+                self._lstm = list(self._lstm_per_asset.values())[0]
 
         # ── PatchTST Transformer ──
         self._patchtst = None
@@ -412,6 +457,9 @@ class TradingExecutor:
                     print(f"  [ML] PatchTST initialized (no pre-trained model)")
             except Exception as e:
                 print(f"  [ML] PatchTST init failed ({e})")
+
+        # ── ML context cache for cross-agent sharing ──
+        self._last_ml_context = {}
 
         # ── Alpha Decay (optimal hold period) ──
         self._alpha_decay = None
@@ -455,11 +503,26 @@ class TradingExecutor:
 
         # Bear/Risk veto agent
         self.bear_enabled: bool = ai_cfg.get('bear_agent_enabled', True)
-        self.bear_veto_threshold: int = ai_cfg.get('bear_veto_threshold', 7)
-        self.bear_reduce_threshold: int = ai_cfg.get('bear_reduce_threshold', 5)
+        self.bear_veto_threshold: int = ai_cfg.get('bear_veto_threshold', 9)
+        self.bear_reduce_threshold: int = ai_cfg.get('bear_reduce_threshold', 7)
         self.bear_veto_stats: Dict[str, Dict[str, int]] = {}
         for a in self.assets:
             self.bear_veto_stats[a] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
+
+        # ── Per-timeframe performance tracking (LLM learns which TFs profit) ──
+        self.SIGNAL_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h']
+        self.TF_FETCH_LIMITS = {'1m': 100, '5m': 100, '15m': 60, '1h': 50, '4h': 30}
+        # Scale ratchet thresholds by timeframe (higher TF = bigger moves = wider %)
+        self.TF_RATCHET_SCALE = {'1m': 0.5, '5m': 1.0, '15m': 1.5, '1h': 2.5, '4h': 5.0}
+        # Min/Max SL distance as % of price, per timeframe
+        self.TF_SL_MIN_PCT = {'1m': 0.003, '5m': 0.005, '15m': 0.008, '1h': 0.012, '4h': 0.02}
+        self.TF_SL_MAX_PCT = {'1m': 0.01, '5m': 0.02, '15m': 0.03, '1h': 0.05, '4h': 0.08}
+        self.tf_performance: Dict[str, Dict[str, Any]] = {}
+        for tf in self.SIGNAL_TIMEFRAMES:
+            self.tf_performance[tf] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
+        # Cache HTF candles (1h/4h only refresh every few minutes, not every 10s poll)
+        self._tf_cache: Dict[str, Dict] = {}   # key = f"{asset}_{tf}" -> {'ohlcv': ..., 'ts': time.time()}
+        self._tf_cache_ttl = {'1m': 30, '5m': 60, '15m': 120, '1h': 300, '4h': 600}
 
         # ── Portfolio-level drawdown limit (Freqtrade pattern) ──
         # Halt ALL trading if cumulative realized losses exceed threshold
@@ -1164,6 +1227,11 @@ class TradingExecutor:
         """BTC -> exchange-specific symbol format."""
         if self._exchange_name == 'delta':
             return f"{asset}USD"  # Delta uses BTCUSD
+        # MT5: use the MT5 bridge's resolved symbol
+        if self._mt5 and self._mt5.mode == 'execute':
+            mt5_sym = self._mt5.get_mt5_symbol(asset)
+            if mt5_sym:
+                return mt5_sym
         return f"{asset}/USDT:USDT"  # Bybit uses BTC/USDT:USDT
 
     def _get_spot_symbol(self, asset: str) -> str:
@@ -1441,14 +1509,16 @@ class TradingExecutor:
         symbol = self._get_symbol(asset)
 
         # ══════════════════════════════════════════════════════════════
-        # 5m CANDLES ONLY — analyze 5m, trade 5m, check every 10s
+        # MULTI-TIMEFRAME SIGNAL DETECTION
+        # Fetch ALL timeframes, compute EMA(8) crossover on each,
+        # LLM picks the BEST timeframe to trade on
         # ══════════════════════════════════════════════════════════════
 
+        # 5m is the anchor — must succeed for heartbeat/staleness checks
         try:
             raw_5m = self.price_source.fetch_ohlcv(symbol, timeframe='5m', limit=100)
         except Exception as e:
             print(f"  [{self._ex_tag}:{asset}] OHLCV fetch failed: {e}")
-            # Try reconnecting the exchange client
             self._try_reconnect(asset)
             return
         ohlcv = PriceFetcher.extract_ohlcv(raw_5m)
@@ -1463,258 +1533,195 @@ class TradingExecutor:
             print(f"  [{self._ex_tag}:{asset}] Not enough 5m data ({len(closes)} candles)")
             return
 
-        # ── STALENESS DETECTOR: catch frozen/stale OHLCV connections ──
-        # If last 10 candles have identical close prices, the data is frozen
-        # This happens when CCXT connection goes stale after hours of running
+        # ── STALENESS DETECTOR ──
         if len(closes) >= 10:
             last_10 = closes[-10:]
             if len(set(round(c, 2) for c in last_10)) <= 1:
-                # All 10 candles identical = FROZEN DATA
                 print(f"  [{self._ex_tag}:{asset}] STALE DATA: last 10 candles all ${last_10[-1]:,.2f} - reconnecting")
                 self._try_reconnect(asset)
                 return
 
-        # Also check candle timestamps — if newest candle is >15 min old, data is stale
         if raw_5m and len(raw_5m) > 0:
-            newest_ts = raw_5m[-1][0] / 1000.0  # ms → seconds
+            newest_ts = raw_5m[-1][0] / 1000.0
             age_minutes = (time.time() - newest_ts) / 60
             if age_minutes > 15:
                 print(f"  [{self._ex_tag}:{asset}] STALE CANDLES: newest is {age_minutes:.0f}min old - reconnecting")
                 self._try_reconnect(asset)
                 return
 
-        # ── TESTNET PRICE SANITY: reject insane candle jumps (>8% between candles) ──
-        # Bybit testnet BTC swings from $110K to $922K — these aren't real prices
-        # Real BTC moves ~0.1% per 5min candle, not 50%
+        # ── TESTNET PRICE SANITY ──
         if len(closes) >= 3:
             for i in range(-2, 0):
                 prev_c = closes[i - 1]
                 curr_c = closes[i]
                 if prev_c > 0:
                     jump_pct = abs(curr_c - prev_c) / prev_c * 100
-                    if jump_pct > 8.0:
-                        print(f"  [{self._ex_tag}:{asset}] PRICE JUMP: {jump_pct:.1f}% between candles (${prev_c:,.0f} -> ${curr_c:,.0f}) — skipping unreliable data")
+                    # Testnet has wild price jumps — use 25% threshold (was 8%)
+                    if jump_pct > 25.0:
+                        print(f"  [{self._ex_tag}:{asset}] PRICE JUMP: {jump_pct:.1f}% between candles (${prev_c:,.0f} -> ${curr_c:,.0f}) — skipping")
                         return
 
-        # ══════════════════════════════════════════════════════════════
-        # HIGHER TIMEFRAME TREND ALIGNMENT (1h + 4h)
-        # Fetch 1h and 4h candles, compute EMA(8) direction on each
-        # Used to filter entries: only trade when HTFs agree with 5m
-        # ══════════════════════════════════════════════════════════════
-        htf_1h_direction = "FLAT"
-        htf_4h_direction = "FLAT"
-        htf_alignment = 2  # default neutral (don't block if fetch fails)
-        ohlcv_1h = None  # Pre-init for MTF candle builder later
-        try:
-            raw_1h = self.price_source.fetch_ohlcv(symbol, timeframe='1h', limit=50)
-            ohlcv_1h = PriceFetcher.extract_ohlcv(raw_1h)
-            closes_1h = ohlcv_1h['closes']
-            if len(closes_1h) >= 10:
-                ema_1h = ema(closes_1h, self.ema_period)
-                if len(ema_1h) >= 3:
-                    if ema_1h[-1] > ema_1h[-2] > ema_1h[-3]:
-                        htf_1h_direction = "RISING"
-                    elif ema_1h[-1] < ema_1h[-2] < ema_1h[-3]:
-                        htf_1h_direction = "FALLING"
-        except Exception as e:
-            logger.debug(f"1h OHLCV fetch failed for {asset}: {e}")
-
-        try:
-            raw_4h = self.price_source.fetch_ohlcv(symbol, timeframe='4h', limit=30)
-            ohlcv_4h = PriceFetcher.extract_ohlcv(raw_4h)
-            closes_4h = ohlcv_4h['closes']
-            if len(closes_4h) >= 10:
-                ema_4h = ema(closes_4h, self.ema_period)
-                if len(ema_4h) >= 3:
-                    if ema_4h[-1] > ema_4h[-2] > ema_4h[-3]:
-                        htf_4h_direction = "RISING"
-                    elif ema_4h[-1] < ema_4h[-2] < ema_4h[-3]:
-                        htf_4h_direction = "FALLING"
-        except Exception as e:
-            logger.debug(f"4h OHLCV fetch failed for {asset}: {e}")
-
-        # Note: htf_alignment is computed after ema_direction is determined below
-
-        # ══════════════════════════════════════════════════════════════
-        # USE CONFIRMED CANDLES for signal — last candle may be incomplete
-        # Signal analysis: use closes[:-1] (confirmed candles only)
-        # Position management: use live price from ticker for SL checks
-        # ══════════════════════════════════════════════════════════════
-        # Get live tick price for position management (SL needs real-time)
+        # ── Live tick price for SL management ──
         try:
             ticker = self.price_source.exchange.fetch_ticker(symbol) if self.price_source.exchange else {}
             live_price = float(ticker.get('last', 0)) if ticker.get('last') else closes[-1]
         except Exception:
             live_price = closes[-1]
+        tick_price = live_price
 
-        # For signal generation, use the LAST CONFIRMED candle close
-        # The final element in OHLCV may be an incomplete candle
-        price = closes[-2]  # Last confirmed close (signal reference)
-        tick_price = live_price  # Real-time price (execution/SL)
-
-        # Compute EMA(8) and ATR(14) on 5m candles (including current for freshness)
+        # 5m EMA/ATR (always computed — used for position management + as fallback)
         ema_vals = ema(closes, self.ema_period)
         atr_vals = atr(highs, lows, closes, 14)
-
-        # Use confirmed candle EMA for signal direction
-        current_ema = ema_vals[-2]  # EMA at last confirmed candle
+        current_ema = ema_vals[-2] if len(ema_vals) >= 2 else closes[-1]
         prev_ema = ema_vals[-3] if len(ema_vals) >= 3 else current_ema
         current_atr = atr_vals[-1] if atr_vals else 0
         ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
+        price = closes[-2]  # Last confirmed close
 
-        # ── FULL INDICATOR SUITE (feeds LLM + ML models) ──
+        # ══════════════════════════════════════════════════════════════
+        # FETCH ALL TIMEFRAMES & COMPUTE SIGNALS ON EACH
+        # ══════════════════════════════════════════════════════════════
+        tf_data = {'5m': ohlcv}  # 5m already fetched
+        tf_signals = {}
+
+        # Compute 5m signal
+        tf_signals['5m'] = self._compute_tf_signal(ohlcv, '5m')
+
+        # Fetch and compute signals for other timeframes (with caching)
+        for tf in self.SIGNAL_TIMEFRAMES:
+            if tf == '5m':
+                continue
+            try:
+                tf_ohlcv = self._fetch_tf_ohlcv(symbol, asset, tf, self.TF_FETCH_LIMITS[tf])
+                if len(tf_ohlcv.get('closes', [])) >= 20:
+                    tf_data[tf] = tf_ohlcv
+                    tf_signals[tf] = self._compute_tf_signal(tf_ohlcv, tf)
+            except Exception as e:
+                logger.debug(f"{tf} fetch failed for {asset}: {e}")
+
+        # Active signals = timeframes with BUY or SELL
+        active_tf_signals = {tf: sig for tf, sig in tf_signals.items() if sig.get('signal') != 'NEUTRAL'}
+
+        # HTF alignment (computed from tf_signals)
+        htf_1h_direction = tf_signals.get('1h', {}).get('ema_direction', 'FLAT')
+        htf_4h_direction = tf_signals.get('4h', {}).get('ema_direction', 'FLAT')
+        htf_alignment = 1  # 5m always counts
+        if htf_1h_direction == ema_direction:
+            htf_alignment += 1
+        if htf_4h_direction == ema_direction:
+            htf_alignment += 1
+
+        # ── Build multi-timeframe signal summary for LLM ──
+        tf_perf = self.tf_performance
+        mtf_signal_lines = []
+        for tf in self.SIGNAL_TIMEFRAMES:
+            if tf in tf_signals:
+                s = tf_signals[tf]
+                sig = s.get('signal', 'NEUTRAL')
+                perf = tf_perf.get(tf, {})
+                w, l = perf.get('wins', 0), perf.get('losses', 0)
+                pnl = perf.get('total_pnl', 0)
+                wr = (w / (w + l) * 100) if (w + l) > 0 else 0
+                perf_str = f"WR={wr:.0f}% ({w}W/{l}L ${pnl:+,.0f})" if (w + l) > 0 else "no history"
+
+                if sig != 'NEUTRAL':
+                    mtf_signal_lines.append(
+                        f"  [{tf}] {sig} | EMA: ${s['current_ema']:.2f} ({s['ema_direction']}) "
+                        f"| ATR: ${s['current_atr']:.2f} ({s['atr_pct']:.2f}%) "
+                        f"| Slope: {s['ema_slope_pct']:+.4f}%/bar | Trend: {s['trend_bars']} bars "
+                        f"| Gap: {s['ema_separation_pct']:.2f}% | Vol: {s['vol_trend']} "
+                        f"| History: {perf_str}"
+                    )
+                else:
+                    mtf_signal_lines.append(f"  [{tf}] NEUTRAL (no crossover) | History: {perf_str}")
+            else:
+                mtf_signal_lines.append(f"  [{tf}] N/A (fetch failed)")
+
+        mtf_signal_block = chr(10).join(mtf_signal_lines)
+
+        # ── Build MTF candle summary for LLM context ──
+        mtf_candle_summary = ""
+        try:
+            mtf_parts = []
+            for tf in ['1m', '15m', '1h', '4h']:
+                tf_ohlcv = tf_data.get(tf)
+                if not tf_ohlcv or len(tf_ohlcv.get('closes', [])) < 5:
+                    continue
+                c_tf = tf_ohlcv['closes']
+                h_tf = tf_ohlcv['highs']
+                l_tf = tf_ohlcv['lows']
+                o_tf = tf_ohlcv['opens']
+                v_tf = tf_ohlcv['volumes']
+                n_show = {'1m': 10, '15m': 8, '1h': 6, '4h': 4}.get(tf, 6)
+                ema_tf = ema(c_tf, self.ema_period) if len(c_tf) >= self.ema_period else []
+                tf_dir = tf_signals.get(tf, {}).get('ema_direction', 'FLAT')
+                lines_tf = []
+                for i in range(-min(n_show, len(c_tf)), 0):
+                    idx = len(c_tf) + i
+                    e_val = ema_tf[idx] if idx < len(ema_tf) else 0
+                    lines_tf.append(f"  O={o_tf[idx]:.2f} H={h_tf[idx]:.2f} L={l_tf[idx]:.2f} C={c_tf[idx]:.2f} V={v_tf[idx]:.0f} EMA={e_val:.2f}")
+                label = {'1m': '1-MINUTE', '15m': '15-MINUTE', '1h': '1-HOUR', '4h': '4-HOUR'}.get(tf, tf)
+                mtf_parts.append(f"{label} CANDLES (EMA direction: {tf_dir}):" + chr(10) + chr(10).join(lines_tf))
+            if mtf_parts:
+                mtf_candle_summary = chr(10) + chr(10).join(mtf_parts)
+        except Exception as e:
+            logger.debug(f"MTF candle summary error for {asset}: {e}")
+
+        # ── FULL INDICATOR SUITE (from 5m — feeds ML models + LLM) ──
         indicator_context = {}
         try:
             if len(closes) >= 20:
-                # Momentum
                 rsi_vals = rsi(closes, 14)
                 indicator_context['rsi'] = round(rsi_vals[-2], 1) if len(rsi_vals) >= 2 else 50
 
-                # Trend
                 macd_line, signal_line, hist = macd(closes)
                 indicator_context['macd_hist'] = round(hist[-2], 4) if len(hist) >= 2 else 0
-                indicator_context['macd_cross'] = 'BULLISH' if len(hist) >= 2 and hist[-2] > 0 and hist[-3] < 0 else ('BEARISH' if len(hist) >= 2 and hist[-2] < 0 and hist[-3] > 0 else 'NONE')
+                indicator_context['macd_cross'] = 'BULLISH' if len(hist) >= 3 and hist[-2] > 0 and hist[-3] < 0 else ('BEARISH' if len(hist) >= 3 and hist[-2] < 0 and hist[-3] > 0 else 'NONE')
 
-                # Volatility
                 bb_upper, bb_mid, bb_lower = bollinger_bands(closes, 20)
                 if len(bb_upper) >= 2 and bb_upper[-2] > 0:
                     bb_pos = (closes[-2] - bb_lower[-2]) / (bb_upper[-2] - bb_lower[-2]) if (bb_upper[-2] - bb_lower[-2]) > 0 else 0.5
-                    indicator_context['bb_position'] = round(bb_pos, 2)  # 0=lower band, 1=upper band
+                    indicator_context['bb_position'] = round(bb_pos, 2)
                     indicator_context['bb_width'] = round((bb_upper[-2] - bb_lower[-2]) / bb_mid[-2] * 100, 2) if bb_mid[-2] > 0 else 0
 
-                # Stochastic
                 k_vals, d_vals = stochastic(highs, lows, closes)
                 if len(k_vals) >= 2:
                     indicator_context['stoch_k'] = round(k_vals[-2], 1)
                     indicator_context['stoch_d'] = round(d_vals[-2], 1)
 
-                # Volume
                 obv_vals = obv(closes, volumes)
                 if len(obv_vals) >= 10:
                     obv_slope = (obv_vals[-2] - obv_vals[-6]) / 4 if obv_vals[-6] != 0 else 0
                     indicator_context['obv_trend'] = 'RISING' if obv_slope > 0 else 'FALLING'
 
-                # Trend strength
                 adx_vals = adx(highs, lows, closes, 14)
                 if len(adx_vals) >= 2:
                     indicator_context['adx'] = round(adx_vals[-2], 1)
                     indicator_context['trend_strength'] = 'STRONG' if adx_vals[-2] > 25 else 'WEAK'
 
-                # Rate of change
                 roc_vals = roc(closes, 12)
                 if len(roc_vals) >= 2:
                     indicator_context['roc_12'] = round(roc_vals[-2], 2)
 
-                # Williams %R
                 wr_vals = williams_r(highs, lows, closes, 14)
                 if len(wr_vals) >= 2:
                     indicator_context['williams_r'] = round(wr_vals[-2], 1)
 
-                # Choppiness (ranging vs trending)
                 chop_vals = choppiness_index(highs, lows, closes, 14)
                 if len(chop_vals) >= 2:
                     indicator_context['choppiness'] = round(chop_vals[-2], 1)
                     indicator_context['market_type'] = 'RANGING' if chop_vals[-2] > 61.8 else 'TRENDING'
 
-                # Volume delta (buy vs sell pressure)
                 vd_vals = volume_delta(closes, opens, volumes)
                 if len(vd_vals) >= 2:
                     indicator_context['vol_delta'] = round(vd_vals[-2], 0)
 
-                # Money Flow
                 cmf_vals = chaikin_money_flow(highs, lows, closes, volumes, 20)
                 if len(cmf_vals) >= 2:
                     indicator_context['cmf'] = round(cmf_vals[-2], 3)
                     indicator_context['money_flow'] = 'INFLOW' if cmf_vals[-2] > 0 else 'OUTFLOW'
-
-        except Exception as e:
-            pass  # Don't block trading if indicator calculation fails
-
-        # ── Compute HTF alignment score now that 5m ema_direction is known ──
-        htf_alignment = 0
-        # Point for 5m direction (always counts as 1)
-        htf_alignment += 1
-        # Point if 1h agrees with 5m
-        if htf_1h_direction == ema_direction:
-            htf_alignment += 1
-        elif htf_1h_direction == "FLAT":
-            pass  # neutral, no penalty
-        # Point if 4h agrees with 5m
-        if htf_4h_direction == ema_direction:
-            htf_alignment += 1
-        elif htf_4h_direction == "FLAT":
-            pass  # neutral, no penalty
-
-        # ══════════════════════════════════════════════════════════════
-        # MULTI-TIMEFRAME CANDLE DATA for LLM brain (1m, 15m, 1h)
-        # LLMs analyze ALL timeframes to find patterns humans miss
-        # ══════════════════════════════════════════════════════════════
-        mtf_candle_summary = ""
-        try:
-            mtf_parts = []
-
-            # 1m candles (last 10 = last 10 minutes of micro-structure)
-            try:
-                raw_1m = self.price_source.fetch_ohlcv(symbol, timeframe='1m', limit=20)
-                ohlcv_1m = PriceFetcher.extract_ohlcv(raw_1m)
-                if len(ohlcv_1m['closes']) >= 5:
-                    c1m = ohlcv_1m['closes']
-                    h1m = ohlcv_1m['highs']
-                    l1m = ohlcv_1m['lows']
-                    o1m = ohlcv_1m['opens']
-                    v1m = ohlcv_1m['volumes']
-                    lines_1m = []
-                    for i in range(-min(10, len(c1m)), 0):
-                        idx = len(c1m) + i
-                        lines_1m.append(f"  O={o1m[idx]:.2f} H={h1m[idx]:.2f} L={l1m[idx]:.2f} C={c1m[idx]:.2f} V={v1m[idx]:.0f}")
-                    mtf_parts.append(f"1-MINUTE CANDLES (last {len(lines_1m)}, microstructure):" + chr(10) + chr(10).join(lines_1m))
-            except Exception:
-                pass
-
-            # 15m candles (last 8 = last 2 hours of intermediate structure)
-            try:
-                raw_15m = self.price_source.fetch_ohlcv(symbol, timeframe='15m', limit=20)
-                ohlcv_15m = PriceFetcher.extract_ohlcv(raw_15m)
-                if len(ohlcv_15m['closes']) >= 5:
-                    c15 = ohlcv_15m['closes']
-                    h15 = ohlcv_15m['highs']
-                    l15 = ohlcv_15m['lows']
-                    o15 = ohlcv_15m['opens']
-                    v15 = ohlcv_15m['volumes']
-                    ema_15m = ema(c15, self.ema_period)
-                    dir_15m = "RISING" if len(ema_15m) >= 3 and ema_15m[-1] > ema_15m[-2] > ema_15m[-3] else \
-                              "FALLING" if len(ema_15m) >= 3 and ema_15m[-1] < ema_15m[-2] < ema_15m[-3] else "FLAT"
-                    lines_15m = []
-                    for i in range(-min(8, len(c15)), 0):
-                        idx = len(c15) + i
-                        e15 = ema_15m[idx] if idx < len(ema_15m) else 0
-                        lines_15m.append(f"  O={o15[idx]:.2f} H={h15[idx]:.2f} L={l15[idx]:.2f} C={c15[idx]:.2f} V={v15[idx]:.0f} EMA={e15:.2f}")
-                    mtf_parts.append(f"15-MINUTE CANDLES (EMA direction: {dir_15m}):" + chr(10) + chr(10).join(lines_15m))
-            except Exception:
-                pass
-
-            # 1h candles (already fetched — build text for LLM)
-            try:
-                if ohlcv_1h and len(ohlcv_1h.get('closes', [])) >= 5:
-                    c1h_c = ohlcv_1h['closes']
-                    h1h = ohlcv_1h['highs']
-                    l1h = ohlcv_1h['lows']
-                    o1h = ohlcv_1h['opens']
-                    v1h = ohlcv_1h['volumes']
-                    ema_1h_vals = ema(c1h_c, self.ema_period) if len(c1h_c) >= self.ema_period else []
-                    lines_1h = []
-                    for i in range(-min(6, len(c1h_c)), 0):
-                        idx = len(c1h_c) + i
-                        e1h = ema_1h_vals[idx] if idx < len(ema_1h_vals) else 0
-                        lines_1h.append(f"  O={o1h[idx]:.2f} H={h1h[idx]:.2f} L={l1h[idx]:.2f} C={c1h_c[idx]:.2f} V={v1h[idx]:.0f} EMA={e1h:.2f}")
-                    mtf_parts.append(f"1-HOUR CANDLES (EMA direction: {htf_1h_direction}):" + chr(10) + chr(10).join(lines_1h))
-            except Exception:
-                pass
-
-            if mtf_parts:
-                mtf_candle_summary = chr(10) + chr(10).join(mtf_parts)
-        except Exception as e:
-            logger.debug(f"MTF candle fetch error for {asset}: {e}")
+        except Exception:
+            pass
 
         # Fetch L2 order book for support/resistance walls
         try:
@@ -1726,7 +1733,7 @@ class TradingExecutor:
         # ── Feed VPIN guard with recent candle volume ──
         if asset in self._vpin_guards and len(closes) >= 3:
             try:
-                for i in range(-3, -1):  # Last 2 confirmed candles
+                for i in range(-3, -1):
                     idx = len(closes) + i
                     c, o, v = closes[idx], opens[idx], volumes[idx]
                     side = 'buy' if c >= o else 'sell'
@@ -1734,88 +1741,12 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        # ── Signal from 5m EMA crossover (CONFIRMED candles only) ──
-        signal = "NEUTRAL"
-
-        # Check if EMA crossed through recent CONFIRMED candles (skip last incomplete)
-        ema_crossed = False
-        for i in range(2, min(5, len(highs))):  # Start at -2 (last confirmed)
-            h = highs[-i]
-            l = lows[-i]
-            e = ema_vals[-i] if i <= len(ema_vals) else 0
-            if l <= e <= h:
-                ema_crossed = True
-                break
-
-        # PRICE MOMENTUM CHECK — detect reversals before EMA catches up
-        # If last 3 confirmed candles are making lower closes, price is falling
-        # even if EMA still says RISING (EMA lags on fast reversals)
-        price_falling = False
-        price_rising = False
-        if len(closes) >= 5:
-            c1, c2, c3 = closes[-2], closes[-3], closes[-4]  # last 3 confirmed
-            # Use <= to handle stale testnet prices (same close repeated)
-            if c1 < c2 and c1 < c3:
-                price_falling = True  # latest confirmed is lower than previous 2
-            elif c1 > c2 and c1 > c3:
-                price_rising = True   # latest confirmed is higher than previous 2
-
-        # OVEREXTENSION — computed and passed to LLM, NOT a hard block
-        ema_separation = abs(price - current_ema) / current_ema * 100 if current_ema > 0 else 0
-        if ema_separation > 10.0:
-            print(f"  [{self._ex_tag}:{asset}] OVEREXTENDED NOTE: {ema_separation:.1f}% from EMA (LLM will decide)")
-
-        # ── REVERSAL DETECTION: Counter-trend when exhaustion signals appear ──
-        # Volume declining = trend losing steam
-        vol_declining = False
-        if len(volumes) >= 10:
-            recent_vol = sum(volumes[-5:]) / 5
-            prev_vol = sum(volumes[-10:-5]) / 5
-            vol_declining = recent_vol < prev_vol * 0.7
-
-        # Rejection wicks = trend being fought
-        has_rejection_wicks = False
-        if len(highs) >= 3 and len(lows) >= 3 and len(closes) >= 3:
-            for i in range(-3, 0):
-                total_range = highs[i] - lows[i]
-                if total_range > 0:
-                    upper_wick = highs[i] - max(closes[i], opens[i] if i + len(opens) >= 0 else closes[i])
-                    lower_wick = min(closes[i], opens[i] if i + len(opens) >= 0 else closes[i]) - lows[i]
-                    if upper_wick > total_range * 0.5 or lower_wick > total_range * 0.5:
-                        has_rejection_wicks = True
-                        break
-
+        # ── Determine primary signal (5m for backward compat + position mgmt) ──
+        signal = tf_signals.get('5m', {}).get('signal', 'NEUTRAL')
         is_reversal_signal = False
 
-        # CASE 1: Normal trend-following signals (EMA crossover)
-        if ema_direction == "RISING" and price > current_ema and ema_crossed:
-            if price_falling:
-                signal = "NEUTRAL"  # EMA says buy but price is reversing down
-            else:
-                signal = "BUY"
-        elif ema_direction == "FALLING" and price < current_ema and ema_crossed:
-            if price_rising:
-                signal = "NEUTRAL"  # EMA says sell but price is reversing up
-            else:
-                signal = "SELL"
-        # Strong trend: price >1.5% from EMA — but still check momentum
-        # Was 1% — too tight, triggered in ranges. 1.5% ensures real trend.
-        elif ema_direction == "FALLING" and price < current_ema * 0.985:
-            if not price_rising:
-                signal = "SELL"
-        elif ema_direction == "RISING" and price > current_ema * 1.015:
-            if not price_falling:
-                signal = "BUY"
-
-        # CASE 2: REVERSAL signals — DISABLED
-        # Data analysis: ALL profitable trades were trend-following (L3→L46 runners).
-        # Counter-trend reversals fight the market and die at L1.
-        # Keeping the code for future use but not generating reversal signals.
-        # if signal == "NEUTRAL" and ema_direction == "RISING" and price > current_ema:
-        #     ... reversal PUT logic disabled ...
-        # if signal == "NEUTRAL" and ema_direction == "FALLING" and price < current_ema:
-        #     ... reversal CALL logic disabled ...
-
+        # Print status with active signals across all timeframes
+        active_tfs_str = ", ".join(f"{tf}={s['signal']}" for tf, s in active_tf_signals.items()) or "none"
         ob_imb = ob_levels.get('imbalance', 0)
         ob_bid = ob_levels.get('bid_wall', 0)
         ob_ask = ob_levels.get('ask_wall', 0)
@@ -1825,9 +1756,9 @@ class TradingExecutor:
         if ob_ask > 0:
             ob_info += f" res=${ob_ask:,.2f}"
         ob_info += "]"
-        print(f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} (sig=${price:,.2f}) | EMA(5m): ${current_ema:.2f} {ema_direction} | Signal: {signal} | ATR: ${current_atr:.2f} | {ob_info}")
+        print(f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} | EMA(5m): ${current_ema:.2f} {ema_direction} | Signals: [{active_tfs_str}] | ATR: ${current_atr:.2f} | {ob_info}")
 
-        # ── Stale position check: if internal state says position but exchange is clean ──
+        # ── Stale position check ──
         if asset in self.positions and asset not in self.failed_close_assets:
             try:
                 if self._exchange_client:
@@ -1839,10 +1770,14 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        # ── Position management uses LIVE price, entry uses CONFIRMED price ──
+        # ── Position management uses LIVE price; new entries use multi-TF signals ──
         if asset in self.positions:
             self._manage_position(asset, tick_price, ohlcv, ema_vals, atr_vals, ema_direction, signal, ob_levels)
         else:
+            # Need at least ONE active signal on any timeframe to evaluate entry
+            if not active_tf_signals:
+                return  # No crossover on any TF — nothing to evaluate
+
             self._evaluate_entry(asset, tick_price, ohlcv, ema_vals, atr_vals,
                                  ema_direction, signal, closes, highs, lows,
                                  opens, volumes, current_ema, current_atr, ob_levels,
@@ -1850,7 +1785,204 @@ class TradingExecutor:
                                  htf_4h_direction=htf_4h_direction,
                                  htf_alignment=htf_alignment,
                                  is_reversal_signal=is_reversal_signal,
-                                 mtf_candle_summary=mtf_candle_summary)
+                                 mtf_candle_summary=mtf_candle_summary,
+                                 indicator_context=indicator_context,
+                                 tf_signals=tf_signals,
+                                 active_tf_signals=active_tf_signals,
+                                 mtf_signal_block=mtf_signal_block)
+
+    # ------------------------------------------------------------------
+    # Multi-timeframe signal computation
+    # ------------------------------------------------------------------
+    def _compute_tf_signal(self, ohlcv: dict, tf_label: str):
+        """Compute EMA(8) NEW LINE detection for a single timeframe.
+
+        The strategy (from reference images):
+        - ENTRY: Detect when EMA line CHANGES DIRECTION (new line forms)
+          Image 1: EMA was falling → price cuts through → EMA starts rising = NEW UP LINE = CALL
+          Image 3: EMA was rising → price cuts through → EMA starts falling = NEW DOWN LINE = PUT
+        - RIDE: Stay in as long as the new EMA line continues (same direction)
+        - EXIT: When EMA direction changes AGAIN (new opposite line forms)
+
+        Key detection: INFLECTION POINT = where EMA slope changes sign after
+        trending in opposite direction for 3+ bars. This is the exact moment
+        the "new line" starts forming on the chart.
+        """
+        closes = ohlcv['closes']
+        highs = ohlcv['highs']
+        lows = ohlcv['lows']
+        opens = ohlcv['opens']
+        volumes = ohlcv['volumes']
+
+        if len(closes) < 20:
+            return {'timeframe': tf_label, 'signal': 'NEUTRAL', 'reason': 'not enough data'}
+
+        ema_vals = ema(closes, self.ema_period)
+        atr_vals = atr(highs, lows, closes, 14)
+
+        current_ema = ema_vals[-2] if len(ema_vals) >= 2 else closes[-1]
+        prev_ema = ema_vals[-3] if len(ema_vals) >= 3 else current_ema
+        current_atr = atr_vals[-1] if atr_vals and len(atr_vals) > 0 else (closes[-1] * 0.01 if len(closes) > 0 else 1.0)
+        price = closes[-2]  # Last confirmed close
+
+        ema_direction = "RISING" if current_ema > prev_ema else "FALLING"
+
+        # EMA slope as %/bar
+        slope_pct = ((current_ema - prev_ema) / prev_ema * 100) if prev_ema > 0 else 0
+
+        # EMA separation
+        ema_separation = abs(price - current_ema) / current_ema * 100 if current_ema > 0 else 0
+
+        # ATR as % of price
+        atr_pct = (current_atr / price * 100) if price > 0 else 0
+
+        # ══════════════════════════════════════════════════════════════
+        # NEW LINE DETECTION (inflection point)
+        # Walk backward through EMA values to find:
+        #   1. How many bars the CURRENT direction has been going (new_line_bars)
+        #   2. How many bars the PREVIOUS direction went (prior_trend_bars)
+        #   3. Whether this is a genuine NEW LINE (prior trend was 3+ bars)
+        # ══════════════════════════════════════════════════════════════
+        new_line_bars = 0   # How many bars the NEW line has been forming
+        prior_trend_bars = 0  # How many bars the PRIOR trend lasted
+
+        if len(ema_vals) >= 5:
+            # Count bars in CURRENT direction
+            for i in range(2, min(30, len(ema_vals))):
+                if ema_direction == "RISING" and ema_vals[-i] > ema_vals[-i - 1]:
+                    new_line_bars += 1
+                elif ema_direction == "FALLING" and ema_vals[-i] < ema_vals[-i - 1]:
+                    new_line_bars += 1
+                else:
+                    break
+
+            # Now count bars in the PRIOR (opposite) direction
+            inflection_idx = 2 + new_line_bars  # Where the direction changed
+            if inflection_idx < len(ema_vals) - 1:
+                for i in range(inflection_idx, min(inflection_idx + 30, len(ema_vals) - 1)):
+                    if ema_direction == "RISING":
+                        # Prior trend was FALLING
+                        if ema_vals[-i] < ema_vals[-i - 1]:
+                            prior_trend_bars += 1
+                        else:
+                            break
+                    else:
+                        # Prior trend was RISING
+                        if ema_vals[-i] > ema_vals[-i - 1]:
+                            prior_trend_bars += 1
+                        else:
+                            break
+
+        # A genuine NEW LINE = prior trend was 3+ bars, then direction flipped
+        is_new_line = prior_trend_bars >= 3 and new_line_bars >= 1
+        # FRESH new line = just formed (1-5 bars) — best entry zone
+        is_fresh_entry = is_new_line and new_line_bars <= 5
+
+        # EMA crossover: price bar contains the EMA line (price cut through)
+        ema_crossed = False
+        for i in range(2, min(5, len(highs))):
+            h = highs[-i]
+            l = lows[-i]
+            e = ema_vals[-i] if i <= len(ema_vals) else 0
+            if l <= e <= h:
+                ema_crossed = True
+                break
+
+        # Price momentum filter
+        price_falling = False
+        price_rising = False
+        if len(closes) >= 5:
+            c1, c2, c3 = closes[-2], closes[-3], closes[-4]
+            if c1 < c2 and c1 < c3:
+                price_falling = True
+            elif c1 > c2 and c1 > c3:
+                price_rising = True
+
+        # ══════════════════════════════════════════════════════════════
+        # SIGNAL: Detect NEW EMA LINE formation (the exact pattern from images)
+        #
+        # CALL (BUY): EMA was falling 3+ bars → EMA starts rising → price above EMA
+        #   = "New line formed from DOWN to UP" (Image 1 & 2)
+        #
+        # PUT (SELL): EMA was rising 3+ bars → EMA starts falling → price below EMA
+        #   = "New line formed from UP to Down" (Image 3)
+        #
+        # Also allow continuation entry if the new line is strong (5+ bars, price on right side)
+        # ══════════════════════════════════════════════════════════════
+        signal = "NEUTRAL"
+
+        # PRIMARY: New line just formed (best entry — fresh inflection point)
+        if is_fresh_entry and ema_direction == "RISING" and price > current_ema:
+            if not price_falling:
+                signal = "BUY"
+        elif is_fresh_entry and ema_direction == "FALLING" and price < current_ema:
+            if not price_rising:
+                signal = "SELL"
+
+        # SECONDARY: Established new line with crossover (price just cut through EMA)
+        elif is_new_line and ema_crossed:
+            if ema_direction == "RISING" and price > current_ema and not price_falling:
+                signal = "BUY"
+            elif ema_direction == "FALLING" and price < current_ema and not price_rising:
+                signal = "SELL"
+
+        # TERTIARY: Strong continuation (EMA trending 5+ bars, not overextended)
+        elif new_line_bars >= 5 and ema_separation < 3.0:
+            if ema_direction == "RISING" and price > current_ema and ema_crossed and not price_falling:
+                signal = "BUY"
+            elif ema_direction == "FALLING" and price < current_ema and ema_crossed and not price_rising:
+                signal = "SELL"
+
+        # Volume trend
+        vol_trend = "FLAT"
+        if len(volumes) >= 10:
+            recent_vol = sum(volumes[-5:]) / 5
+            prev_vol = sum(volumes[-10:-5]) / 5
+            if prev_vol > 0:
+                if recent_vol > prev_vol * 1.2:
+                    vol_trend = "RISING"
+                elif recent_vol < prev_vol * 0.7:
+                    vol_trend = "DECLINING"
+
+        return {
+            'timeframe': tf_label,
+            'signal': signal,
+            'ema_direction': ema_direction,
+            'current_ema': current_ema,
+            'current_atr': current_atr,
+            'atr_pct': round(atr_pct, 4),
+            'ema_slope_pct': round(slope_pct, 4),
+            'ema_separation_pct': round(ema_separation, 2),
+            'trend_bars': new_line_bars,       # Bars of the NEW line
+            'prior_trend_bars': prior_trend_bars,  # Bars of the PRIOR trend (before inflection)
+            'is_new_line': is_new_line,         # Genuine new line (prior trend 3+ bars)
+            'is_fresh_entry': is_fresh_entry,   # Fresh new line (1-5 bars old)
+            'vol_trend': vol_trend,
+            'price': price,
+            'ohlcv': ohlcv,
+            'ema_vals': ema_vals,
+            'atr_vals': atr_vals,
+        }
+
+    def _fetch_tf_ohlcv(self, symbol: str, asset: str, tf: str, limit: int):
+        """Fetch OHLCV with caching for higher timeframes to reduce API calls."""
+        cache_key = f"{asset}_{tf}"
+        ttl = self._tf_cache_ttl.get(tf, 60)
+        cached = self._tf_cache.get(cache_key)
+        if cached and (time.time() - cached['ts']) < ttl:
+            return cached['ohlcv']
+        raw = self.price_source.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
+        ohlcv = PriceFetcher.extract_ohlcv(raw)
+        self._tf_cache[cache_key] = {'ohlcv': ohlcv, 'ts': time.time()}
+
+        # Periodic cache cleanup — evict expired entries to prevent memory leak
+        if len(self._tf_cache) > 50:
+            now = time.time()
+            expired = [k for k, v in self._tf_cache.items() if now - v.get('ts', 0) > 600]
+            for k in expired:
+                del self._tf_cache[k]
+
+        return ohlcv
 
     # ------------------------------------------------------------------
     # Entry evaluation
@@ -1864,12 +1996,19 @@ class TradingExecutor:
                         htf_4h_direction: str = "FLAT",
                         htf_alignment: int = 2,
                         is_reversal_signal: bool = False,
-                        mtf_candle_summary: str = ""):
+                        mtf_candle_summary: str = "",
+                        indicator_context: dict = None,
+                        tf_signals: dict = None,
+                        active_tf_signals: dict = None,
+                        mtf_signal_block: str = ""):
 
         ob_levels = ob_levels or {}
+        indicator_context = indicator_context or {}
+        tf_signals = tf_signals or {}
+        active_tf_signals = active_tf_signals or {}
 
-        # Only trade when there's a signal (BUY/SELL from crossover or strong trend)
-        if signal == "NEUTRAL":
+        # Need at least one active signal on ANY timeframe
+        if not active_tf_signals and signal == "NEUTRAL":
             return
 
         # Initialize math filter warnings list (used throughout evaluation)
@@ -1886,9 +2025,11 @@ class TradingExecutor:
         # ── JOURNAL-LEARNED: Dangerous hours hard block ──
         # Data: Hours 19-04 lose money consistently (L1 death rate 60%+)
         # Profitable hours: 06-13 (WR 57%, net +$1,164)
-        dangerous_hours = self.config.get('filters', {}).get('dangerous_hours', [19, 20, 21, 22, 23, 0, 1, 2, 3, 4])
-        if utc_hour in dangerous_hours and self.config.get('filters', {}).get('block_dangerous_hours', False):
-            print(f"  [{self._ex_tag}:{asset}] HOUR BLOCK: UTC {utc_hour}:00 is a high-loss hour (journal data)")
+        # Journal data: UTC 19-03 has 2-17% win rate, lost -$192K combined
+        # Enable by default — worst hours are a proven money pit
+        dangerous_hours = self.config.get('filters', {}).get('dangerous_hours', [19, 20, 21, 22, 23, 0, 1, 2, 3])
+        if utc_hour in dangerous_hours:
+            print(f"  [{self._ex_tag}:{asset}] HOUR BLOCK: UTC {utc_hour}:00 is a high-loss hour (2-17% WR in journal)")
             return
 
         # Flag for position sizing: reduce size during off-hours
@@ -2132,7 +2273,7 @@ class TradingExecutor:
                     for o in open_orders:
                         created = o.get('timestamp', 0) or 0
                         age_s = (now_ms - created) / 1000 if created > 0 else 999
-                        if age_s > 120:  # older than 2 min
+                        if age_s > 30:  # older than 30s
                             stale.append(o)
                         else:
                             fresh.append(o)
@@ -2317,7 +2458,7 @@ class TradingExecutor:
                 range_high = max(last_12)
                 range_low = min(last_12)
                 range_pct = (range_high - range_low) / range_low * 100 if range_low > 0 else 0
-                if range_pct < 0.3:
+                if range_pct < 0.15:
                     print(f"  [{self._ex_tag}:{asset}] RANGING: {range_pct:.2f}% range over 10 candles — sitting out")
                     return
 
@@ -2425,25 +2566,39 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        # ── LSTM ENSEMBLE PREDICTION ──
-        if self._lstm and len(closes) >= 80:
+        # ── LSTM ENSEMBLE PREDICTION (BINARY: SKIP vs TRADE) ──
+        # ML learned from trailing SL simulation: TRADE = setup where SL locks profit (L2+)
+        _lstm_model = self._lstm_per_asset.get(asset, self._lstm) if hasattr(self, '_lstm_per_asset') else self._lstm
+        if _lstm_model and len(closes) >= 80:
             try:
-                from src.scripts.train_all_models import create_sequence_features
+                from src.scripts.train_all_models import compute_strategy_features
                 import numpy as _np
-                X_seq, _ = create_sequence_features(closes, highs, lows, volumes, seq_len=30, n_features=20)
+                opens_list = ohlcv.get('opens', closes)
+                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=30, n_features=40)
                 if X_seq is not None and len(X_seq) > 0:
-                    lstm_pred = self._lstm.predict(X_seq[-1])
+                    lstm_pred = _lstm_model.predict(X_seq[-1])
                     if lstm_pred and lstm_pred.get('confidence', 0) > 0.1:
-                        ml_context['lstm_signal'] = {1: 'LONG', -1: 'SHORT', 0: 'FLAT'}.get(lstm_pred.get('signal', 0), 'FLAT')
-                        ml_context['lstm_confidence'] = round(lstm_pred.get('confidence', 0), 2)
-                        # Boost/penalize entry score
-                        signal_dir = 1 if signal == "BUY" else -1
-                        if lstm_pred.get('signal', 0) == signal_dir and lstm_pred.get('confidence', 0) > 0.3:
+                        # Binary: signal=0=SKIP, signal=1=TRADE
+                        trade_quality = lstm_pred.get('trade_quality', 'UNKNOWN')
+                        trade_conf = lstm_pred.get('confidence', 0)
+                        ml_context['lstm_signal'] = trade_quality  # 'TRADE' or 'SKIP'
+                        ml_context['lstm_confidence'] = round(trade_conf, 2)
+                        ml_context['lstm_probs'] = lstm_pred.get('probs', [])
+
+                        # TRADE signal with high confidence = boost entry
+                        if trade_quality == 'TRADE' and trade_conf > 0.55:
+                            entry_score += 2
+                            score_reasons.append(f"lstm_TRADE({trade_conf:.0%})")
+                        elif trade_quality == 'TRADE' and trade_conf > 0.40:
                             entry_score += 1
-                            score_reasons.append(f"lstm_{ml_context['lstm_signal']}")
-                        elif lstm_pred.get('signal', 0) == -signal_dir and lstm_pred.get('confidence', 0) > 0.3:
+                            score_reasons.append(f"lstm_trade_weak({trade_conf:.0%})")
+                        elif trade_quality == 'SKIP' and trade_conf > 0.60:
+                            entry_score -= 2
+                            score_reasons.append(f"lstm_SKIP({trade_conf:.0%})")
+                            math_filter_warnings.append(f"LSTM: SKIP signal ({trade_conf:.0%}) - setup predicts L1 death")
+                        elif trade_quality == 'SKIP' and trade_conf > 0.40:
                             entry_score -= 1
-                            score_reasons.append(f"lstm_against")
+                            score_reasons.append(f"lstm_skip_weak({trade_conf:.0%})")
             except Exception as e:
                 logger.debug(f"LSTM prediction error: {e}")
 
@@ -2469,12 +2624,82 @@ class TradingExecutor:
             except Exception as e:
                 logger.debug(f"PatchTST prediction error: {e}")
 
+        # ── ALPHA DECAY — signal freshness & optimal hold ──
+        if self._alpha_decay and self._alpha_decay._fitted:
+            try:
+                ad_feats = self._alpha_decay.compute_features(bars_held=0)
+                ml_context['alpha_freshness'] = round(ad_feats.get('alpha_freshness', 1.0), 2)
+                ml_context['alpha_optimal_hold'] = int(ad_feats.get('alpha_optimal_hold', 6))
+                ml_context['alpha_half_life'] = round(ad_feats.get('alpha_half_life', 7.0), 1)
+            except Exception:
+                pass
+
+        # ── GARCH VOLATILITY FORECAST ──
+        if len(closes) >= 100:
+            try:
+                import pickle as _pkl
+                garch_path = os.path.join('models', f'garch_{asset.lower() if isinstance(asset, str) else "btc"}.pkl')
+                if os.path.exists(garch_path):
+                    with open(garch_path, 'rb') as _f:
+                        _garch = _pkl.load(_f)
+                    garch_forecast = _garch.forecast(list(closes[-100:]))
+                    if garch_forecast:
+                        current_vol = garch_forecast[-1]
+                        avg_vol = sum(garch_forecast) / len(garch_forecast)
+                        ml_context['garch_vol'] = round(current_vol, 6)
+                        ml_context['garch_vol_expanding'] = current_vol > avg_vol * 1.2
+                        if current_vol > avg_vol * 1.5:
+                            math_filter_warnings.append(f"GARCH: volatility 50%+ above average -> expect wild swings")
+            except Exception:
+                pass
+
         # ── LIGHTGBM PRE-FILTER GATE ──
         # Uses 100+ features to predict L3+ runner vs L1 death
         # If LightGBM says HIGH probability of L1 death, skip before wasting LLM call
         lgbm_prediction = None
         lgbm_confidence = 0.0
-        if self._lgbm and len(closes) >= 55:
+        # Try per-asset binary model first (trained on 30 strategy features)
+        _lgbm_raw = self._lgbm_raw.get(asset) if hasattr(self, '_lgbm_raw') else None
+        if _lgbm_raw and len(closes) >= 55:
+            try:
+                from src.scripts.train_all_models import compute_strategy_features
+                import numpy as _np
+                opens_list = ohlcv.get('opens', closes)
+                # Build flat features (last bar only) using same 35 features as training
+                feat = _np.zeros((1, 40), dtype=_np.float32)
+                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=1, n_features=40)
+                if X_seq is not None and len(X_seq) > 0:
+                    feat = X_seq[-1].reshape(1, -1)[:, :40]  # Flatten last seq, take 40 features
+                    trade_prob = _lgbm_raw.predict(feat)[0]  # Binary: probability of TRADE class
+                    trade_conf = float(trade_prob)
+                    is_trade = trade_conf > 0.5
+
+                    ml_context['lgbm_direction'] = 'TRADE' if is_trade else 'SKIP'
+                    ml_context['lgbm_confidence'] = round(trade_conf if is_trade else (1 - trade_conf), 2)
+                    lgbm_prediction = 1 if is_trade else 0
+                    lgbm_confidence = ml_context['lgbm_confidence']
+
+                    # Binary gate: TRADE boosts, SKIP penalizes
+                    if is_trade and trade_conf > 0.60:
+                        entry_score += 2
+                        score_reasons.append(f"lgbm_TRADE({trade_conf:.0%})")
+                    elif is_trade and trade_conf > 0.45:
+                        entry_score += 1
+                        score_reasons.append(f"lgbm_trade_weak({trade_conf:.0%})")
+                    elif not is_trade and (1 - trade_conf) > 0.65:
+                        entry_score -= 2
+                        score_reasons.append(f"lgbm_SKIP({1-trade_conf:.0%})")
+                        math_filter_warnings.append(f"LGBM: SKIP signal ({1-trade_conf:.0%}) — L1 death predicted by ML")
+                    elif not is_trade and (1 - trade_conf) > 0.45:
+                        entry_score -= 1
+                        score_reasons.append(f"lgbm_skip_weak({1-trade_conf:.0%})")
+
+                    print(f"  [{self._ex_tag}:{asset}] LGBM: {ml_context['lgbm_direction']} conf={ml_context['lgbm_confidence']:.2f} | score now={entry_score}")
+            except Exception as e:
+                logger.debug(f"LightGBM binary prediction error for {asset}: {e}")
+
+        # Fallback: old LightGBM wrapper with generic features
+        elif self._lgbm and len(closes) >= 55:
             try:
                 features = self._lgbm.extract_features(
                     closes=closes, highs=highs, lows=lows, volumes=volumes,
@@ -2492,27 +2717,21 @@ class TradingExecutor:
                         lgbm_cls, lgbm_conf = preds[0]
                         lgbm_prediction = lgbm_cls
                         lgbm_confidence = lgbm_conf
-
-                        # Add to ML context for LLM
                         ml_context['lgbm_direction'] = {1: 'LONG', -1: 'SHORT', 0: 'FLAT'}.get(lgbm_cls, 'FLAT')
                         ml_context['lgbm_confidence'] = round(lgbm_conf, 2)
-
-                        # SOFT GATE: If LightGBM strongly disagrees with signal, penalize score
                         signal_dir = 1 if signal == "BUY" else -1
                         if lgbm_cls != 0 and lgbm_cls != signal_dir and lgbm_conf > 0.70:
                             entry_score -= 3
                             score_reasons.append(f"lgbm_disagree={ml_context['lgbm_direction']}@{lgbm_conf:.0%}")
-                            math_filter_warnings.append(f"LGBM DISAGREE: model says {ml_context['lgbm_direction']} ({lgbm_conf:.0%}) but signal={signal}")
                         elif lgbm_cls == signal_dir and lgbm_conf > 0.65:
                             entry_score += 2
                             score_reasons.append(f"lgbm_agrees={lgbm_conf:.0%}")
-                        elif lgbm_cls == 0 and lgbm_conf > 0.70:
-                            entry_score -= 1
-                            score_reasons.append("lgbm_flat")
-
-                        print(f"  [{self._ex_tag}:{asset}] LGBM: {ml_context['lgbm_direction']} conf={lgbm_conf:.2f} | score now={entry_score}")
+                        print(f"  [{self._ex_tag}:{asset}] LGBM(fallback): {ml_context['lgbm_direction']} conf={lgbm_conf:.2f}")
             except Exception as e:
                 logger.debug(f"LightGBM prediction error for {asset}: {e}")
+
+        # Store ML context for bear agent and other downstream uses
+        self._last_ml_context = ml_context
 
         # ── ENTRY SCORE HARD GATE ──
         # After all ML boosting, check if score meets minimum threshold
@@ -2548,7 +2767,7 @@ class TradingExecutor:
         support = min(recent_lows) if recent_lows else price
 
         # Compute trend strength metrics for LLM
-        ema_slope_pct = ((ema_vals[-1] - ema_vals[-4]) / ema_vals[-4] * 100) if len(ema_vals) >= 4 else 0
+        ema_slope_pct = ((ema_vals[-1] - ema_vals[-4]) / ema_vals[-4] * 100) if len(ema_vals) >= 4 and ema_vals[-4] > 0 else 0
         consecutive_trend = 0
         for i in range(len(ema_vals)-1, max(0, len(ema_vals)-20), -1):
             if i > 0:
@@ -2762,11 +2981,102 @@ class TradingExecutor:
             regime_lines.append(f"  VPIN: {vpin_status['vpin']:.2f} (threshold: {vpin_status['threshold']}) action: {vpin_status['risk_action']}")
             if vpin_status['is_toxic']:
                 regime_lines.append(f"  -> TOXIC flow detected — informed traders active, reduce size or skip")
-        # Add ML model predictions to regime context
+        # Add ML model predictions to regime context — INTERPRETED for LLM
         if ml_context:
-            regime_lines.append("  --- ML MODEL PREDICTIONS ---")
-            for key, val in ml_context.items():
-                regime_lines.append(f"  {key}: {val}")
+            regime_lines.append("  --- ML PATTERN ANALYSIS (trained on real market data) ---")
+            # HMM Regime — tell LLM what it means for the strategy
+            if 'hmm_regime' in ml_context:
+                r = ml_context['hmm_regime']
+                c = ml_context.get('hmm_confidence', 0)
+                cp = ml_context.get('crisis_probability', 0)
+                if r == 'BULL':
+                    regime_lines.append(f"  HMM: BULL regime ({c:.0%} conf) -> CALL trades favored, ride trend with wider trailing SL")
+                elif r == 'BEAR':
+                    regime_lines.append(f"  HMM: BEAR regime ({c:.0%} conf) -> PUT trades favored, CALL trades risky (trend against you)")
+                elif r == 'SIDEWAYS':
+                    regime_lines.append(f"  HMM: SIDEWAYS regime ({c:.0%} conf) -> BOTH directions risky, expect L1-L2 deaths, SKIP or reduce size")
+                elif r == 'CRISIS':
+                    regime_lines.append(f"  HMM: CRISIS regime ({c:.0%} conf, crisis_prob={cp:.2f}) -> EXTREME volatility, only trade with trend, tight SL")
+            # Kalman — trend direction and signal-noise
+            if 'kalman_slope' in ml_context:
+                ks = ml_context['kalman_slope']
+                ksnr = ml_context.get('kalman_snr', 0)
+                kt = ml_context.get('kalman_trend', 'FLAT')
+                if ksnr > 2.0:
+                    regime_lines.append(f"  KALMAN: Strong {kt} trend (slope={ks:+.4f}, SNR={ksnr:.1f}) -> trend is clean, go WITH it")
+                elif ksnr > 1.0:
+                    regime_lines.append(f"  KALMAN: Moderate {kt} trend (slope={ks:+.4f}, SNR={ksnr:.1f}) -> trend exists but noisy")
+                else:
+                    regime_lines.append(f"  KALMAN: No clear trend (slope={ks:+.4f}, SNR={ksnr:.1f}) -> choppy, high L1 death risk")
+            # GARCH volatility
+            if 'vol_regime' in ml_context:
+                vr = ml_context['vol_regime']
+                vp = ml_context.get('vol_percentile', 50)
+                if vr == 'HIGH' or vr == 'EXTREME':
+                    regime_lines.append(f"  GARCH: {vr} volatility (p{vp:.0f}) -> wider stops needed, bigger moves possible but also bigger fakeouts")
+                elif vr == 'LOW':
+                    regime_lines.append(f"  GARCH: LOW volatility (p{vp:.0f}) -> breakout likely coming, tight range = explosive move ahead")
+                else:
+                    regime_lines.append(f"  GARCH: NORMAL volatility (p{vp:.0f})")
+            # LSTM Ensemble consensus
+            if 'lstm_signal' in ml_context:
+                ls = ml_context['lstm_signal']
+                lc = ml_context.get('lstm_confidence', 0)
+                if ls == 'TRADE':
+                    regime_lines.append(f"  LSTM ENSEMBLE (3 neural nets): TRADE SIGNAL ({lc:.0%} conf) -> setup matches profitable patterns (trailing SL will lock profit)")
+                elif ls == 'SKIP':
+                    regime_lines.append(f"  LSTM ENSEMBLE (3 neural nets): SKIP SIGNAL ({lc:.0%} conf) -> setup matches L1 death patterns (likely stopped at loss)")
+                else:
+                    regime_lines.append(f"  LSTM ENSEMBLE (3 neural nets): {ls} ({lc:.0%} conf)")
+            # PatchTST transformer
+            if 'patchtst_direction' in ml_context:
+                pd_dir = ml_context['patchtst_direction']
+                pu = ml_context.get('patchtst_prob_up', 0.5)
+                ps = ml_context.get('patchtst_shock_prob', 0)
+                regime_lines.append(f"  PatchTST TRANSFORMER: {pd_dir} (prob_up={pu:.0%}, shock_risk={ps:.0%})")
+                if ps > 0.3:
+                    regime_lines.append(f"    WARNING: {ps:.0%} liquidity shock probability -> reduce size, expect sudden reversal")
+            # LightGBM pattern classifier
+            if 'lgbm_direction' in ml_context:
+                ld = ml_context['lgbm_direction']
+                lc = ml_context.get('lgbm_confidence', 0)
+                if ld == 'TRADE':
+                    regime_lines.append(f"  LIGHTGBM (30 strategy features): TRADE ({lc:.0%} conf) -> setup matches profitable L2+ patterns, trailing SL will lock profits")
+                elif ld == 'SKIP':
+                    regime_lines.append(f"  LIGHTGBM (30 strategy features): SKIP ({lc:.0%} conf) -> setup matches L1 death patterns, likely stopped at loss")
+                else:
+                    regime_lines.append(f"  LIGHTGBM: predicts {ld} ({lc:.0%} conf) -> {'pattern matches L3+ runners' if ld not in ('FLAT', 'SKIP') else 'pattern matches L1 deaths, SKIP'}")
+            # Alpha Decay — how fresh is the signal?
+            if 'alpha_freshness' in ml_context:
+                af = ml_context['alpha_freshness']
+                ah = ml_context.get('alpha_optimal_hold', 0)
+                regime_lines.append(f"  ALPHA DECAY: signal freshness={af:.0%}, optimal hold={ah} bars -> {'signal is fresh, good entry' if af > 0.7 else 'signal is stale, late entry risk'}")
+            # Cycle phase
+            if 'cycle_phase' in ml_context:
+                cp = ml_context['cycle_phase']
+                cd = ml_context.get('dominant_cycle', 0)
+                regime_lines.append(f"  CYCLE: {cp} phase (period={cd} bars) -> {'RISING/BOTTOM=buy dips' if cp in ('BOTTOM', 'RISING') else 'TOP/FALLING=sell rallies'}")
+            # ML consensus summary
+            ml_agree = 0
+            ml_disagree = 0
+            signal_is_buy = signal == "BUY"
+            # LSTM now outputs TRADE/SKIP (not direction)
+            if 'lstm_signal' in ml_context:
+                lstm_val = ml_context['lstm_signal']
+                if lstm_val == 'TRADE':
+                    ml_agree += 1  # TRADE = setup looks profitable
+                elif lstm_val == 'SKIP':
+                    ml_disagree += 1  # SKIP = L1 death predicted
+            # LightGBM still outputs direction
+            for key in ['lgbm_direction', 'patchtst_direction']:
+                if key in ml_context:
+                    val = ml_context[key]
+                    if (signal_is_buy and val in ('LONG', 'UP')) or (not signal_is_buy and val in ('SHORT', 'DOWN')):
+                        ml_agree += 1
+                    elif val not in ('FLAT', 'NEUTRAL'):
+                        ml_disagree += 1
+            if ml_agree + ml_disagree > 0:
+                regime_lines.append(f"  ML CONSENSUS: {ml_agree} models AGREE, {ml_disagree} DISAGREE -> {'strong ML confirmation — trailing SL will lock profits' if ml_agree > ml_disagree else 'ML models conflict - HIGH RISK, likely L1 death'}")
 
         if regime_lines:
             regime_context = chr(10) + "REGIME ANALYSIS:" + chr(10) + chr(10).join(regime_lines)
@@ -2838,6 +3148,8 @@ class TradingExecutor:
                 htf_1h_direction=htf_1h_direction,
                 htf_4h_direction=htf_4h_direction,
                 htf_alignment=htf_alignment,
+                mtf_signal_block=mtf_signal_block,
+                active_tf_signals=active_tf_signals,
             )
 
         # Extract unified decision
@@ -2898,28 +3210,28 @@ class TradingExecutor:
             except Exception as e:
                 logger.warning(f"[{asset}] Bear agent error (proceeding without veto): {e}")
 
-        # ── Bear REDUCE: risk between reduce_threshold and veto_threshold → halve position ──
+        # ── Bear REDUCE: risk between reduce_threshold and veto_threshold → reduce but don't kill ──
         if risk_score >= self.bear_reduce_threshold and risk_score < self.bear_veto_threshold:
             old_size = size_pct
-            size_pct = size_pct * 0.5
+            size_pct = max(1.0, size_pct * 0.7)  # Floor at 1% — never reduce to 0
             if asset not in self.bear_veto_stats:
                 self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
             self.bear_veto_stats[asset]['reduced'] += 1
             print(f"  [{self._ex_tag}:{asset}] BEAR REDUCE: risk={risk_score}/10 (>={self.bear_reduce_threshold}) — size {old_size:.0f}% -> {size_pct:.0f}%")
 
-        # ── VPIN toxic flow → reduce position ──
+        # ── VPIN toxic flow → warn but don't reduce further (bear already handles risk) ──
         if vpin_status and vpin_status['is_toxic']:
-            old_size = size_pct
-            size_pct = size_pct * 0.5
-            print(f"  [{self._ex_tag}:{asset}] VPIN REDUCE: toxic flow {vpin_status['vpin']:.2f} — size {old_size:.0f}% -> {size_pct:.0f}%")
+            print(f"  [{self._ex_tag}:{asset}] VPIN WARNING: toxic flow {vpin_status['vpin']:.2f} — LLM informed (no additional size cut)")
 
         # LLM IS THE BRAIN — its confidence is the final confidence
         # No more Python-side blending or overriding
         print(f"  [{self._ex_tag}:{asset}] LLM DECISION: conf={confidence:.2f} size={size_pct:.0f}% risk={risk_score}/10 quality={unified.get('trade_quality', 0)}/10 hurst={hurst_value:.2f}")
 
-        # Direction from EMA signal (always)
-        action = "LONG" if signal == "BUY" else "SHORT"
-        direction_label = "CALL" if signal == "BUY" else "PUT"
+        # Direction from LLM's chosen direction (multi-TF aware) or fallback to 5m signal
+        chosen_dir = unified.get('chosen_direction', 'CALL' if signal == 'BUY' else 'PUT')
+        action = "LONG" if chosen_dir == "CALL" else "SHORT"
+        direction_label = chosen_dir
+        chosen_tf = unified.get('chosen_timeframe', '5m')
 
         # Quality gate: confidence
         if confidence < self.min_confidence:
@@ -2958,8 +3270,9 @@ class TradingExecutor:
 
         notional = self.equity * (size_pct / 100.0)
 
-        # Hard cap: proportional to account size, max $2K
-        max_trade = min(2000.0, self.equity * 0.25)
+        # Hard cap: max 5% of equity — prevents catastrophic position sizing
+        # March 31: $270K-$764K positions on $30K equity = instant blowup
+        max_trade = min(2000.0, self.equity * 0.05)
         notional = min(notional, max_trade)
 
         print(f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.0f}% of ${self.equity:,.0f} = ${notional:,.0f} (max ${max_trade:,.0f})")
@@ -3156,44 +3469,90 @@ class TradingExecutor:
             price = fill_price  # Use actual fill for all subsequent calculations
 
             # Compute initial stop-loss (L1) using ORDER BOOK + ATR
-            # Priority: order book wall > ATR-based > percentage fallback
-            sl_distance = current_atr * 1.5  # ATR-based SL (was 2.5 — too wide, L1 deaths lost $243K)
-            sl_distance = max(sl_distance, price * 0.005)  # minimum 0.5% (was 1.0%)
-            sl_distance = min(sl_distance, price * 0.02)   # maximum 2.0% (was 3.5% — way too wide)
+            # Scale SL bounds by chosen timeframe (higher TF = wider SL)
+            tf_min_pct = self.TF_SL_MIN_PCT.get(chosen_tf, 0.005)
+            tf_max_pct = self.TF_SL_MAX_PCT.get(chosen_tf, 0.02)
 
-            sl_source = "ATR"
+            # Use chosen TF's ATR if available
+            init_atr = current_atr
+            try:
+                tf_sig = (active_tf_signals or {}).get(chosen_tf)
+                if tf_sig and tf_sig.get('current_atr', 0) > 0:
+                    init_atr = tf_sig['current_atr']
+            except Exception:
+                pass
+
+            # ════════════════════════════════════════════════════════════
+            # L1 INITIAL SL: EMA LINE as PRIMARY, ATR as EMERGENCY FALLBACK
+            # ════════════════════════════════════════════════════════════
+            # The EMA(8) line IS the trend line. Our strategy enters on new
+            # EMA line → we should exit when price crosses BACK through EMA.
+            # Initial SL = EMA line + small ATR buffer (to survive wicks).
+            # ATR-only SL (old method) killed 37% of trades at 0% win rate
+            # because it was arbitrary — not tied to the actual trend structure.
+            # ════════════════════════════════════════════════════════════
+
+            # ATR emergency SL (wide — only triggers if EMA SL fails)
+            sl_distance_emergency = init_atr * 3.0  # 3x ATR emergency backstop
+            sl_distance_emergency = max(sl_distance_emergency, price * tf_min_pct)
+            sl_distance_emergency = min(sl_distance_emergency, price * tf_max_pct * 1.5)
+
+            # EMA-based SL: place SL beyond the EMA line with ATR buffer
+            # At entry, price is near EMA — need wider buffer to survive first pullback
+            ema_sl_buffer = init_atr * 1.0  # Full ATR buffer beyond EMA for initial breathing room
+            current_ema_val = ema_vals[-2] if len(ema_vals) >= 2 else None
+
+            sl_source = "ATR_EMERGENCY"
             if action == 'LONG':
-                sl_price = price - sl_distance
-                # Use order book bid wall as support-based SL if available
-                # Place SL just below the strongest bid wall (support)
+                # Emergency SL (wide ATR)
+                sl_price = price - sl_distance_emergency
+
+                # EMA-based SL: just below the EMA line
+                if current_ema_val and current_ema_val > 0:
+                    ema_sl = current_ema_val - ema_sl_buffer
+                    # EMA SL must be below current price and within reasonable range
+                    ema_dist_pct = (price - ema_sl) / price * 100
+                    if 0.1 <= ema_dist_pct <= 3.0 and ema_sl < price:
+                        sl_price = ema_sl
+                        sl_source = f"EMA_LINE@${current_ema_val:,.2f}"
+
+                # Order book bid wall can tighten further (but not override EMA)
                 bid_wall = ob_levels.get('bid_wall', 0)
                 if bid_wall > 0 and bid_wall < price:
-                    ob_sl = bid_wall * 0.999  # 0.1% below the wall
-                    # Only use if within reasonable range (0.3% to 2% from entry)
+                    ob_sl = bid_wall * 0.999
                     ob_dist_pct = (price - ob_sl) / price * 100
-                    if 0.3 <= ob_dist_pct <= 2.0:
+                    if 0.3 <= ob_dist_pct <= 2.0 and ob_sl > sl_price:
                         sl_price = ob_sl
                         sl_source = f"OB_BID_WALL@${bid_wall:,.2f}"
             else:  # SHORT
-                sl_price = price + sl_distance
-                # Use order book ask wall as resistance-based SL
-                # Place SL just above the strongest ask wall (resistance)
+                # Emergency SL (wide ATR)
+                sl_price = price + sl_distance_emergency
+
+                # EMA-based SL: just above the EMA line
+                if current_ema_val and current_ema_val > 0:
+                    ema_sl = current_ema_val + ema_sl_buffer
+                    ema_dist_pct = (ema_sl - price) / price * 100
+                    if 0.1 <= ema_dist_pct <= 3.0 and ema_sl > price:
+                        sl_price = ema_sl
+                        sl_source = f"EMA_LINE@${current_ema_val:,.2f}"
+
+                # Order book ask wall can tighten further
                 ask_wall = ob_levels.get('ask_wall', 0)
                 if ask_wall > 0 and ask_wall > price:
-                    ob_sl = ask_wall * 1.001  # 0.1% above the wall
+                    ob_sl = ask_wall * 1.001
                     ob_dist_pct = (ob_sl - price) / price * 100
-                    if 0.3 <= ob_dist_pct <= 2.0:
+                    if 0.3 <= ob_dist_pct <= 2.0 and ob_sl < sl_price:
                         sl_price = ob_sl
                         sl_source = f"OB_ASK_WALL@${ask_wall:,.2f}"
 
             imb = ob_levels.get('imbalance', 0)
-            print(f"  [{self._ex_tag}:{asset}] ORDER OK: {order_id} | SL L1=${sl_price:,.2f} ({sl_source}) | OB imbalance={imb:+.2f}")
+            print(f"  [{self._ex_tag}:{asset}] ORDER OK [{chosen_tf}]: {order_id} | SL L1=${sl_price:,.2f} ({sl_source}) | OB imbalance={imb:+.2f}")
 
             # SL managed by polling loop (10s) — no exchange stop orders
             # Exchange SL was creating orphan positions that cost $2-3 each to close
             sl_order_id = None
 
-            # Record position
+            # Record position (with chosen timeframe for scaled SL management)
             self.positions[asset] = {
                 'direction': action,          # LONG or SHORT
                 'side': side,
@@ -3213,7 +3572,8 @@ class TradingExecutor:
                 'hurst': hurst_value,
                 'hurst_regime': hurst_regime,
                 'breakeven_moved': False,
-                'is_reversal': is_reversal_signal,  # reversal trades get tighter ratchet
+                'is_reversal': is_reversal_signal,
+                'trade_timeframe': chosen_tf,   # LLM chose this TF
                 'agent_votes': orch_result.get('agent_votes', {}) if orch_result else {},
                 'entry_tag': self._protections.tagger.tag_entry(
                     signal=signal, entry_score=entry_score,
@@ -3224,6 +3584,28 @@ class TradingExecutor:
                 'dca_count': 0,
             }
             self.last_trade_time[asset] = time.time()
+
+            # ── MT5: Mirror/execute trade on MetaTrader 5 ──
+            if self._mt5 and self._mt5.connected:
+                try:
+                    if self._mt5.mode == 'execute':
+                        # Execute mode: open position directly on MT5
+                        mt5_result = self._mt5.open_position(
+                            asset=asset, direction=action, price=price,
+                            qty=qty, sl=sl_price,
+                            comment=f"S{entry_score}_C{confidence:.0%}_{chosen_tf}"
+                        )
+                        if mt5_result.get('status') == 'success':
+                            self.positions[asset]['mt5_ticket'] = mt5_result.get('order_id')
+                    else:
+                        # Mirror mode: replicate for visualization
+                        self._mt5.mirror_open(
+                            asset=asset, direction=action, price=price,
+                            qty=qty, sl=sl_price,
+                            entry_score=entry_score, confidence=confidence
+                        )
+                except Exception as e:
+                    print(f"  [MT5:{asset}] Bridge entry failed: {e}")
         else:
             err = result.get('message', str(result))
             print(f"  [{self._ex_tag}:{asset}] ORDER FAILED: {err}")
@@ -3267,7 +3649,7 @@ class TradingExecutor:
 
         # ── 2. HARD STOP: max loss — non-negotiable ──
         # Bybit testnet has inflated prices → use wider stop to avoid noise hits
-        hard_stop_pct = -2.5 if self._exchange_name == 'bybit' else -2.0  # Was -4/-3 — too much capital destroyed per trade
+        hard_stop_pct = -2.5 if self._exchange_name == 'bybit' else -1.8  # 10yr analysis: -1.8% optimal (PF 1.14)
         # But if asset is blacklisted (stuck, can't close), just log and skip
         is_stuck = asset in self.failed_close_assets
         if pnl_pct <= hard_stop_pct:
@@ -3280,16 +3662,24 @@ class TradingExecutor:
 
         # ── 2b. TIME-BASED EXIT: close zombie positions (Freqtrade pattern) ──
         duration_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
-        if duration_min >= self.max_hold_minutes and not is_stuck:
-            if pnl_pct <= 0:
-                print(f"  [{self._ex_tag}:{asset}] TIME EXIT: held {duration_min:.0f}min (max {self.max_hold_minutes:.0f}) P&L={pnl_pct:+.2f}% — closing stale loser")
+        # TIME EXIT: Only close if held too long AND losing/flat.
+        # If profitable, ALWAYS let EMA line exit handle it (ride the trend).
+        max_hold_losers = 180  # 3hr for losers (backtest: PF 0.92→1.32)
+        max_hold_winners = max(self.max_hold_minutes, 720)  # 12hr for winners
+        if not is_stuck:
+            if pnl_pct <= -0.5 and duration_min >= max_hold_losers:
+                print(f"  [{self._ex_tag}:{asset}] TIME EXIT: held {duration_min:.0f}min (max {max_hold_losers:.0f}) P&L={pnl_pct:+.2f}% — closing stale loser")
                 self._close_position(asset, price, f"Time exit ({duration_min:.0f}min, P&L={pnl_pct:+.2f}%)")
                 return
-            elif pnl_pct < 1.0:
+            elif pnl_pct < 0.5 and duration_min >= max_hold_losers * 1.5:
                 print(f"  [{self._ex_tag}:{asset}] TIME EXIT: held {duration_min:.0f}min with tiny P&L={pnl_pct:+.2f}% — closing")
                 self._close_position(asset, price, f"Time exit ({duration_min:.0f}min, P&L={pnl_pct:+.2f}%)")
                 return
-            # If profitable >1%, let trailing SL handle it (don't cut winners)
+            elif pnl_pct >= 0.5 and duration_min >= max_hold_winners:
+                print(f"  [{self._ex_tag}:{asset}] TIME EXIT WINNER: held {duration_min:.0f}min P&L={pnl_pct:+.2f}% — closing")
+                self._close_position(asset, price, f"Time exit winner ({duration_min:.0f}min, P&L={pnl_pct:+.2f}%)")
+                return
+            # If profitable >=0.5% and under max_hold_winners, let EMA line/trailing SL handle it
 
         # ── 2c. PROTECTION EXITS: ROI table + partial profit taking ──
         if self._protections and not is_stuck:
@@ -3335,6 +3725,18 @@ class TradingExecutor:
         # Use CONFIRMED candle close for SL checks (not live tick)
         # This prevents 10-second wicks from triggering exits in a trending market
         # Hard stop (step 2) still uses live price for safety
+        #
+        # MINIMUM HOLD: 180s grace period — don't check SL in first 3 minutes
+        # Backtest shows L1 SL kills 95% of trades at 30% WR. Trades reaching
+        # EMA new-line exit have 68-74% WR. Need to let entries breathe.
+        # Hard stop (-2%) still active during grace for emergency protection.
+        grace_period_s = 180  # 3 minutes = ~3 bars on 5m (1 bar on 15m)
+        position_age_s = time.time() - pos.get('entry_time', time.time())
+        if position_age_s < grace_period_s:
+            # Still show status but don't check SL
+            print(f"  [{self._ex_tag}:{asset}] HOLD {direction} @ ${entry:,.2f} | Now: ${price:,.2f} | P&L: {pnl_pct:+.2f}% | GRACE {grace_period_s - int(position_age_s)}s")
+            return
+
         confirmed_close = closes[-2] if len(closes) >= 2 else price
         sl_hit = False
         if direction == 'LONG' and confirmed_close <= sl:
@@ -3368,9 +3770,27 @@ class TradingExecutor:
 
         new_sl = sl
         qty = pos.get('qty', 0)
-        current_atr = atr_vals[-1] if atr_vals else price * 0.01
         position_age = time.time() - pos.get('entry_time', time.time())
         is_reversal = pos.get('is_reversal', False)
+        trade_tf = pos.get('trade_timeframe', '5m')
+
+        # ── Use chosen timeframe's ATR for SL scaling ──
+        # Re-fetch chosen TF candles to get fresh ATR (higher TF = wider ATR)
+        current_atr = atr_vals[-1] if atr_vals else price * 0.01  # 5m fallback
+        try:
+            if trade_tf != '5m':
+                symbol = self._get_symbol(asset)
+                tf_ohlcv = self._fetch_tf_ohlcv(symbol, asset, trade_tf,
+                                                 self.TF_FETCH_LIMITS.get(trade_tf, 30))
+                if tf_ohlcv and len(tf_ohlcv.get('closes', [])) >= 15:
+                    tf_atr = atr(tf_ohlcv['highs'], tf_ohlcv['lows'], tf_ohlcv['closes'], 14)
+                    if tf_atr:
+                        current_atr = tf_atr[-1]
+        except Exception:
+            pass  # Fall back to 5m ATR
+
+        # Ratchet scaling factor — higher TFs need wider thresholds
+        ratchet_scale = self.TF_RATCHET_SCALE.get(trade_tf, 1.0)
 
         # ══════════════════════════════════════════════════════════════
         # RATCHETING BASELINE SL — progressively move line to make
@@ -3387,38 +3807,49 @@ class TradingExecutor:
         #   because reversals are inherently riskier
         # ══════════════════════════════════════════════════════════════
 
+        # ── GARCH-ADJUSTED ATR: adapt trailing SL to volatility regime ──
+        # High vol = wider SL (avoid noise stops), Low vol = tighter SL (protect faster)
+        garch_atr_factor = 1.0
+        try:
+            if self._last_ml_context.get('garch_vol_expanding'):
+                garch_atr_factor = 1.15  # 15% wider during high vol
+            elif self._last_ml_context.get('vol_regime') == 'LOW':
+                garch_atr_factor = 0.85  # 15% tighter during low vol
+        except Exception:
+            pass
+
         # Define ratchet levels: (min_pnl_pct, protect_pct, atr_mult, label)
-        # More granular than before — smooth progression
+        # Scaled by timeframe: higher TF = wider thresholds (bigger moves expected)
+        # ratchet_scale: 1m=0.5x, 5m=1.0x, 15m=1.5x, 1h=2.5x, 4h=5.0x
+        rs = ratchet_scale
         if is_reversal:
-            # Reversals: tighter, faster protection (they can snap back quickly)
             ratchet_levels = [
-                (0.5,  0.0,  2.0, "BREAKEVEN"),   # +0.5% → move to entry (after 5min for reversals)
-                (1.0,  0.15, 1.8, "LOCK-15%"),     # +1.0% → lock 15% of profit
-                (1.5,  0.25, 1.5, "LOCK-25%"),     # +1.5% → lock 25%
-                (2.0,  0.35, 1.3, "LOCK-35%"),     # +2.0% → lock 35%
-                (3.0,  0.50, 1.0, "LOCK-50%"),     # +3.0% → lock 50%
-                (5.0,  0.60, 0.8, "LOCK-60%"),     # +5.0% → lock 60%
-                (10.0, 0.70, 0.6, "LOCK-70%"),     # +10%  → lock 70%
+                (0.5*rs,  0.0,  2.0, "BREAKEVEN"),
+                (1.0*rs,  0.15, 1.8, "LOCK-15%"),
+                (1.5*rs,  0.25, 1.5, "LOCK-25%"),
+                (2.0*rs,  0.35, 1.3, "LOCK-35%"),
+                (3.0*rs,  0.50, 1.0, "LOCK-50%"),
+                (5.0*rs,  0.60, 0.8, "LOCK-60%"),
+                (10.0*rs, 0.70, 0.6, "LOCK-70%"),
             ]
-            min_age_for_breakeven = 300  # 5min for reversals (faster)
+            min_age_for_breakeven = 300
         else:
-            # Trend-following: move to breakeven FAST, then progressive ratchet
-            # Data shows: trades that survive past L2 are 64%+ winners
-            # Key: protect capital early, then let runners run
+            # WIDENED ratchet: EMA line-following is the PRIMARY SL now.
+            # Ratchet only kicks in at higher profit levels to lock gains.
+            # Old breakeven at 0.3% was killing trades during normal pullbacks.
             ratchet_levels = [
-                (0.3,  0.0,  1.5, "BREAKEVEN"),    # +0.3% → move to entry FAST (was 0.8% — too slow)
-                (0.6,  0.10, 1.4, "LOCK-10%"),     # +0.6% → lock 10% of profit
-                (1.0,  0.20, 1.3, "LOCK-20%"),     # +1.0% → lock 20%
-                (1.5,  0.30, 1.2, "LOCK-30%"),     # +1.5% → lock 30%
-                (2.0,  0.40, 1.1, "LOCK-40%"),     # +2.0% → lock 40%
-                (3.0,  0.50, 1.0, "LOCK-50%"),     # +3.0% → lock 50%
-                (4.0,  0.55, 0.9, "LOCK-55%"),     # +4.0% → lock 55%
-                (5.0,  0.60, 0.8, "LOCK-60%"),     # +5.0% → lock 60%
-                (7.0,  0.65, 0.7, "LOCK-65%"),     # +7.0% → lock 65%
-                (10.0, 0.65, 0.7, "LOCK-65%"),     # +10%  → lock 65%
-                (15.0, 0.70, 0.6, "LOCK-70%"),     # +15%  → lock 70%
+                (1.0*rs,  0.0,  2.0, "BREAKEVEN"),
+                (1.5*rs,  0.10, 1.8, "LOCK-10%"),
+                (2.0*rs,  0.20, 1.5, "LOCK-20%"),
+                (3.0*rs,  0.30, 1.3, "LOCK-30%"),
+                (4.0*rs,  0.40, 1.2, "LOCK-40%"),
+                (5.0*rs,  0.50, 1.0, "LOCK-50%"),
+                (7.0*rs,  0.55, 0.9, "LOCK-55%"),
+                (10.0*rs, 0.60, 0.8, "LOCK-60%"),
+                (12.0*rs, 0.65, 0.7, "LOCK-65%"),
+                (15.0*rs, 0.70, 0.6, "LOCK-70%"),
             ]
-            min_age_for_breakeven = 480  # 8min for trend-following
+            min_age_for_breakeven = 600  # 10 min — give EMA line time to prove trend
 
         if direction == 'LONG':
             # Walk through ratchet levels from highest to lowest
@@ -3434,7 +3865,8 @@ class TradingExecutor:
                         floor_sl = entry + (profit_range * protect)
 
                         # ATR trail: peak - multiplier * ATR (gives room for pullbacks)
-                        atr_trail_sl = peak - (current_atr * atr_m)
+                        # GARCH adjusts: wider during high vol, tighter during low vol
+                        atr_trail_sl = peak - (current_atr * atr_m * garch_atr_factor)
 
                         # Use whichever is TIGHTER (higher = more protection for LONG)
                         best_sl = max(floor_sl, atr_trail_sl)
@@ -3471,7 +3903,8 @@ class TradingExecutor:
                         floor_sl = entry - (profit_range * protect)
 
                         # ATR trail: peak + multiplier * ATR
-                        atr_trail_sl = peak + (current_atr * atr_m)
+                        # GARCH adjusts: wider during high vol, tighter during low vol
+                        atr_trail_sl = peak + (current_atr * atr_m * garch_atr_factor)
 
                         # Use whichever is TIGHTER (lower = more protection for SHORT)
                         best_sl = min(floor_sl, atr_trail_sl)
@@ -3494,6 +3927,32 @@ class TradingExecutor:
                         ob_sl = wall_price * 1.001
                         if ob_sl < new_sl:
                             new_sl = ob_sl
+
+        # ══════════════════════════════════════════════════════════
+        # EMA LINE-FOLLOWING SL — The EMA line IS the trend line
+        # Activates AFTER the EMA has had time to build a trend (5+ minutes).
+        # Before that, let the trade breathe with only hard stop protection.
+        #
+        # Once active: SL tracks just below/above the EMA line.
+        # Only tightens when EMA has moved in our favor (confirms trend).
+        # This is the core of the trend-following strategy:
+        #   ENTER on new EMA line → RIDE while price stays on correct side
+        #   → EXIT when price crosses back through EMA (SL catches it)
+        # ══════════════════════════════════════════════════════════
+        ema_follow_min_age = 300  # 5 minutes — EMA needs time to build trend
+        if len(ema_vals) >= 3 and position_age >= ema_follow_min_age:
+            ema_now = ema_vals[-2]  # Confirmed bar's EMA
+            ema_buffer = current_atr * 0.5  # Buffer for wick tolerance
+
+            if direction == 'LONG':
+                ema_sl = ema_now - ema_buffer
+                # Only tighten if EMA has moved in our favor (trend confirmed)
+                if ema_sl > new_sl and ema_sl < price and ema_now > entry:
+                    new_sl = ema_sl
+            else:
+                ema_sl = ema_now + ema_buffer
+                if ema_sl < new_sl and ema_sl > price and ema_now < entry:
+                    new_sl = ema_sl
 
         # ══════════════════════════════════════════════════════════
         # ML-DRIVEN TRAILING SL TIGHTENING
@@ -3597,28 +4056,66 @@ class TradingExecutor:
         # SL managed by polling (10s check) — no exchange stop orders
         # This avoids orphan positions from exchange SL fills
 
-        # ── 5. EMA reversal exit (E1) — only on CONFIRMED candle + SIGNIFICANT profit ──
-        # Use confirmed EMA (not live tick EMA) to avoid false reversals
-        # Only flip when >= 5% profit AND 2 consecutive confirmed candles show reversal
-        if not is_stuck and len(ema_vals) >= 3:
+        # ── MT5: Sync SL ratchet to MetaTrader 5 ──
+        if sl_moved and self._mt5 and self._mt5.connected:
+            try:
+                self._mt5.mirror_sl_update(asset, new_sl) if self._mt5.mode == 'mirror' else self._mt5.update_sl(asset, new_sl)
+            except Exception:
+                pass  # Don't block main loop for MT5 SL sync
+
+        # ── 5. EMA NEW LINE EXIT — Exit when EMA forms NEW OPPOSITE line ──
+        # This is the core exit rule: we entered on a "new line" forming,
+        # we exit when a NEW OPPOSITE line forms (EMA direction flips after 3+ bars)
+        #
+        # From reference images:
+        #   CALL exit: EMA was rising (our trade), now falling for 2+ bars + price below EMA
+        #   PUT exit:  EMA was falling (our trade), now rising for 2+ bars + price above EMA
+        #
+        # When in profit (breakeven+): exit immediately on new opposite line
+        # When in loss: still exit but give 1 extra bar to confirm (avoid noise)
+        if not is_stuck and len(ema_vals) >= 5:
             confirmed_ema = ema_vals[-2]
             prev_confirmed_ema = ema_vals[-3]
-            # Need 2 consecutive confirmed EMA bars falling/rising (not just one tick)
-            ema_confirmed_falling = confirmed_ema < prev_confirmed_ema
-            ema_confirmed_rising = confirmed_ema > prev_confirmed_ema
+            prev2_confirmed_ema = ema_vals[-4]
 
-            if direction == 'LONG' and ema_confirmed_falling and confirmed_close < confirmed_ema and pnl_pct >= 5.0:
-                print(f"  [{self._ex_tag}:{asset}] EMA REVERSAL (E1): CALL->PUT | exit ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
-                self._close_position(asset, price, "EMA reversal (E1) - flipping to PUT")
-                self.last_trade_time.pop(asset, None)
-                self.last_close_time.pop(asset, None)
-                return
-            elif direction == 'SHORT' and ema_confirmed_rising and confirmed_close > confirmed_ema and pnl_pct >= 5.0:
-                print(f"  [{self._ex_tag}:{asset}] EMA REVERSAL (E1): PUT->CALL | exit ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
-                self._close_position(asset, price, "EMA reversal (E1) - flipping to CALL")
-                self.last_trade_time.pop(asset, None)
-                self.last_close_time.pop(asset, None)
-                return
+            # Count consecutive bars of EMA reversal against our position
+            reversal_bars = 0
+            if direction == 'LONG':
+                # Check for NEW DOWN line forming (EMA falling consecutively)
+                for ri in range(2, min(8, len(ema_vals))):
+                    if ema_vals[-ri] < ema_vals[-ri - 1]:
+                        reversal_bars += 1
+                    else:
+                        break
+            else:
+                # Check for NEW UP line forming (EMA rising consecutively)
+                for ri in range(2, min(8, len(ema_vals))):
+                    if ema_vals[-ri] > ema_vals[-ri - 1]:
+                        reversal_bars += 1
+                    else:
+                        break
+
+            # Exit conditions: new opposite line forming
+            # ONLY when in profit — quick profit protection (2 bars reversal)
+            # When losing, let the SL/hard stop handle it — EMA exit is too late
+            # for losses (backtest: 18% WR for loss exits vs 69-78% for SL exits)
+            min_reversal = 2
+
+            if pnl_pct > 0:
+                if direction == 'LONG' and reversal_bars >= min_reversal and confirmed_close < confirmed_ema:
+                    trade_tf_label = pos.get('trade_timeframe', '5m')
+                    print(f"  [{self._ex_tag}:{asset}] NEW DOWN LINE [{trade_tf_label}]: EMA falling {reversal_bars} bars, price below EMA | P&L: {pnl_pct:+.2f}%")
+                    self._close_position(asset, price, f"EMA new down line ({reversal_bars} bars)")
+                    self.last_trade_time.pop(asset, None)
+                    self.last_close_time.pop(asset, None)
+                    return
+                elif direction == 'SHORT' and reversal_bars >= min_reversal and confirmed_close > confirmed_ema:
+                    trade_tf_label = pos.get('trade_timeframe', '5m')
+                    print(f"  [{self._ex_tag}:{asset}] NEW UP LINE [{trade_tf_label}]: EMA rising {reversal_bars} bars, price above EMA | P&L: {pnl_pct:+.2f}%")
+                    self._close_position(asset, price, f"EMA new up line ({reversal_bars} bars)")
+                    self.last_trade_time.pop(asset, None)
+                    self.last_close_time.pop(asset, None)
+                    return
 
         # ── 6. Print HOLD status with profit-buffer % ──
         dir_label = "CALL" if direction == "LONG" else "PUT"
@@ -3898,7 +4395,18 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        print(f"  [{self._ex_tag}:{asset}] CLOSED: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} | predicted={predicted_l} actual={actual_l_level} [{pred_hit}]")
+        trade_tf_label = pos.get('trade_timeframe', '5m')
+        print(f"  [{self._ex_tag}:{asset}] CLOSED [{trade_tf_label}]: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} | predicted={predicted_l} actual={actual_l_level} [{pred_hit}]")
+
+        # ── MT5: Close mirrored/executed position ──
+        if self._mt5 and self._mt5.connected:
+            try:
+                if self._mt5.mode == 'execute':
+                    self._mt5.close_position(asset, price, reason)
+                else:
+                    self._mt5.mirror_close(asset, price, reason)
+            except Exception as e:
+                print(f"  [MT5:{asset}] Bridge close failed: {e}")
 
         # Track realized PnL for drawdown limits
         self.session_realized_pnl += pnl_usd
@@ -3919,9 +4427,10 @@ class TradingExecutor:
         if pnl_usd < 0:
             self.asset_loss_streak[asset] = self.asset_loss_streak.get(asset, 0) + 1
             streak = self.asset_loss_streak[asset]
-            if streak >= 2:
-                # Exponential cooldown: 2 losses=10min, 3=20min, 4=40min, 5+=60min
-                cooldown_min = min(60, 10 * (2 ** (streak - 2)))
+            if streak >= 3:
+                # Reduced cooldown: 3 losses=5min, 4=10min, 5+=15min max
+                # Was exponential up to 60min — too aggressive, missed many good patterns
+                cooldown_min = min(15, 5 * (streak - 2))
                 self.asset_cooldown_until[asset] = time.time() + cooldown_min * 60
                 print(f"  [{self._ex_tag}:{asset}] LOSS STREAK {streak} — cooling down {cooldown_min}min (until next good setup)")
         else:
@@ -3936,6 +4445,15 @@ class TradingExecutor:
                 self.edge_stats[asset]['losses'] += 1
             s = self.edge_stats[asset]
             s['win_rate'] = s['wins'] / s['total'] if s['total'] > 0 else 0.5
+
+        # Update per-timeframe performance (LLM learns which TFs profit)
+        trade_tf = pos.get('trade_timeframe', '5m')
+        if trade_tf in self.tf_performance:
+            self.tf_performance[trade_tf]['total_pnl'] += pnl_usd
+            if pnl_usd > 0:
+                self.tf_performance[trade_tf]['wins'] += 1
+            else:
+                self.tf_performance[trade_tf]['losses'] += 1
 
         # Log to journal (with prediction tracking)
         try:
@@ -3963,12 +4481,23 @@ class TradingExecutor:
                     'bear_risk': pos.get('bear_risk', 0),
                     'hurst': pos.get('hurst', 0.5),
                     'hurst_regime': pos.get('hurst_regime', 'unknown'),
+                    'trade_timeframe': pos.get('trade_timeframe', '5m'),
                 },
             )
         except Exception as e:
             logger.warning(f"Journal log failed: {e}")
 
         # ── Log to LightGBM classifier for incremental learning ──
+        # Fetch fresh 5m candles for feature extraction (not passed to _close_position)
+        try:
+            _symbol = self._get_symbol(asset)
+            _raw = self.price_source.fetch_ohlcv(_symbol, timeframe='5m', limit=60)
+            _ohlcv = PriceFetcher.extract_ohlcv(_raw)
+            closes = _ohlcv['closes']; highs = _ohlcv['highs']
+            lows = _ohlcv['lows']; volumes = _ohlcv['volumes']
+        except Exception:
+            closes = []; highs = []; lows = []; volumes = []
+
         if self._lgbm and len(closes) >= 55:
             try:
                 lgbm_features = self._lgbm.extract_features(
@@ -4234,7 +4763,9 @@ class TradingExecutor:
                             ema_separation: float = 0,
                             htf_1h_direction: str = "FLAT",
                             htf_4h_direction: str = "FLAT",
-                            htf_alignment: int = 2) -> dict:
+                            htf_alignment: int = 2,
+                            mtf_signal_block: str = "",
+                            active_tf_signals: dict = None) -> dict:
         """
         SINGLE LLM call that performs ALL 7 analysis roles:
           1. Agent Synthesis — interpret 13 math agents together
@@ -4307,35 +4838,49 @@ class TradingExecutor:
         # Build warnings string
         warnings_str = chr(10).join(f'  - {w}' for w in (math_filter_warnings or [])) or '  - No warnings — all clear'
 
-        prompt = f"""You are a PROFIT-FOCUSED trading brain for {asset}/USDT. Your job: ONLY enter trades that MAKE MONEY.
+        prompt = f"""You are a PROFIT-FOCUSED trading brain for {asset}/USDT perpetual futures. ONLY enter trades that MAKE MONEY.
 
-STRATEGY: EMA(8) crossover + trailing stop-loss (L1->Ln).
-- CALL: price crosses ABOVE EMA(8) -> ride uptrend. PUT: crosses BELOW -> ride downtrend.
-- Trailing SL locks profit: L1=breakeven, L2=lock 40%, L3=50%, L4=55%, L5+=60-70%.
-- WE ONLY MAKE MONEY on trades reaching L4+ (strong sustained trend).
-- L1-L2 exits = small loss or breakeven. Hard stop = big loss (-2%).
-- Our win rate is LOW ({pnl_history}). Most trades die at L1. ONLY enter A+ setups.
+═══ PROVEN STRATEGY (backtested 6 months: 72% WR, PF 1.19) ═══
+The EMA(8) TREND LINE strategy works as follows — follow EXACTLY:
 
-TWO TRADE TYPES:
-1. TREND-FOLLOWING: Enter WITH the trend after EMA crossover.
-   - CALL in uptrend (price above rising EMA) or PUT in downtrend (price below falling EMA)
-   - Need: steep slope >0.3%/bar + 3+ trend bars + volume confirms + early entry near EMA
-2. REVERSAL (counter-trend): Enter AGAINST exhausted trend expecting mean reversion.
-   - PUT in exhausted uptrend (price far above EMA + declining volume + rejection wicks + price turning)
-   - CALL in exhausted downtrend (price far below EMA + selling dried up + wicks + price bouncing)
-   - Need: 3%+ from EMA + declining volume + rejection wicks + price already turning
+ENTRY: Enter when EMA(8) forms a NEW LINE (direction changes after 3+ bars trending opposite).
+- Price must be on correct side of EMA (above for CALL, below for PUT)
+- Entry score >= 7 (indicators + multi-TF alignment)
+- The EMA line IS the trend. We ride it until it flips.
 
-SKIP when: flat/weak slope + choppy candles + no clear trend or reversal + near S/R wall.
-If entry score < 5/10 AND no reversal signals, the trade almost always dies at L1. SKIP IT.
+EXIT RULES (in priority order — this is CRITICAL):
+1. HARD STOP -2%: Emergency protection. Always active.
+2. EMA NEW LINE EXIT: When EMA reverses 2+ bars AND price crosses EMA — BUT ONLY WHEN IN PROFIT.
+   - This exit has 100% win rate. Never use it when losing (18% WR = terrible).
+3. EMA LINE-FOLLOWING SL: After 5 min, SL tracks the EMA line with buffer.
+   - Ratchet breakeven at 1.0% profit. Lock gains from 1.5%+.
 
-Signal: {"CALL" if signal == "BUY" else "PUT"} | Equity: ${equity:,.0f}
+KEY LESSONS FROM BACKTEST DATA:
+- Grace period 3 min minimum — early SL checks kill 37% of trades at 0% WR
+- L2+ ratchet levels = 100% WR. Let trades breathe to reach them.
+- EMA exits on LOSING trades = 18% WR. Let SL handle losses instead.
+- Winners ride 1-3 hours avg. Losers die in <40 min. Don't cut winners early.
 
-MARKET DATA:
-Price: ${price:,.2f} | EMA(8): ${current_ema:.2f} ({ema_direction}) | Gap: {ema_separation:.2f}%
-ATR: ${current_atr:.2f} | Slope: {ema_slope_pct:+.3f}%/bar | Trend bars: {min_trend_bars}
-Entry Score: {entry_score}/10 ({', '.join(score_reasons or []) or 'none'})
-Support: ${support:.2f} | Resistance: ${resistance:.2f} | Volume: {vol_trend}
-HTF Trend: 1h EMA(8)={htf_1h_direction} | 4h EMA(8)={htf_4h_direction} | Alignment: {htf_alignment}/3 (3=all agree)
+YOUR KEY ROLE: Choose the BEST TIMEFRAME to trade on.
+Pick the timeframe with the CLEANEST EMA new-line setup.
+
+TIMEFRAME SELECTION GUIDE:
+- 5m: Standard trades. Best signal/noise ratio. Most common choice.
+- 15m: Intermediate. Wider SL, stronger trend confirmation needed.
+- 1h: Swing trades. Wide SL but powerful trends. High conviction only.
+- 4h: Major moves only. Very wide SL. Crystal-clear setups only.
+- HIGHER TF signals that AGREE with lower TF = strongest setups.
+- If TFs CONFLICT = dangerous. REJECT or pick the dominant trend TF.
+
+ACTIVE SIGNALS ON ALL TIMEFRAMES:
+{mtf_signal_block}
+
+Price: ${price:,.2f} | Equity: ${equity:,.0f}
+Entry Score (5m): {entry_score}/10 ({', '.join(score_reasons or []) or 'none'})
+Support: ${support:.2f} | Resistance: ${resistance:.2f}
+
+ML PATTERN RECOGNITION (trained on real {asset} data):
+USE ML SIGNALS to judge if this setup matches historical L3+ runners or L1 deaths.
 
 Warnings: {'; '.join(math_filter_warnings or []) or 'None'}
 
@@ -4347,20 +4892,25 @@ QUANT AGENTS:
 
 {historical_patterns}
 
-DECISION CHECKLIST — answer each honestly:
-1. TREND STRENGTH: Slope={ema_slope_pct:+.3f}%, {min_trend_bars} bars. Is this strong enough for L4+? (Need slope>0.3% AND 3+ bars)
-2. CANDLE QUALITY: Are candles clean (big bodies, small wicks, same direction)? Or messy (dojis, wicks, mixed)?
-3. VOLUME: {vol_trend}. Rising volume = trend continues. Flat/declining = dying trend, SKIP.
-4. ENTRY TIMING: {ema_separation:.1f}% from EMA. Under 3% = early/good. Over 5% = late, likely L1-L2 max.
-5. ROOM TO RUN: Distance to {"resistance $" + f"{resistance:.2f}" if signal == "BUY" else "support $" + f"{support:.2f}"}. Need 2%+ room for L4.
-6. PATTERN MATCH: Check historical data above. What L-level did similar setups reach? If mostly L1-L2, SKIP.
-7. RISK: Score 0-10. What specifically could go wrong?
-8. FINAL CALL: Does this trade have a realistic path to L4+ profit? Be brutally honest.
+DECISION FRAMEWORK:
+1. TIMEFRAME: Which TF has the cleanest crossover? Prefer TFs with history of profit.
+2. DIRECTION: CALL or PUT based on chosen TF's signal.
+3. ML CONSENSUS: Do ML models agree? If 2+ disagree -> REJECT.
+4. ENTRY TIMING: Gap from EMA. <2%=excellent, >3%=late, >5%=REJECT.
+5. VOLUME: Rising=trend continues. Declining=dying.
+6. CANDLE QUALITY: Big bodies + small wicks = conviction. Dojis = SKIP.
+7. RISK: What kills this trade? Score 0-10.
+8. PROFIT PATH: Can this reach L4+ on the chosen timeframe?
 
-RESPOND WITH ONLY JSON (fill in YOUR analysis of THIS specific setup):
-{{"proceed": <true or false>, "confidence": <0.0 to 1.0>, "position_size_pct": <1 to {max_position_pct}>, "risk_score": <0 to 10>, "trade_quality": <0 to 10>, "predicted_l_level": "<L1/L2/L3/L4/L6+/L10+>", "bull_case": "<why this {asset} trade reaches L4+>", "bear_case": "<what kills this trade — be specific>", "facilitator_verdict": "<your honest final decision>"}}
+POSITION SIZING (investment protection):
+- trade_quality >= 8 AND risk <= 3: full size ({max_position_pct}% equity)
+- trade_quality 6-7: half size ({max_position_pct//2}% equity)
+- trade_quality <= 5: REJECT
 
-CRITICAL: confidence = probability of reaching L3+. If you predict L1-L2, set proceed=false. We lose money on L1-L2 exits."""
+RESPOND WITH ONLY JSON:
+{{"proceed": <true/false>, "chosen_timeframe": "<1m/5m/15m/1h/4h>", "chosen_direction": "<CALL/PUT>", "confidence": <0.0-1.0 probability of L3+>, "position_size_pct": <1-{max_position_pct}>, "risk_score": <0-10>, "trade_quality": <0-10>, "predicted_l_level": "<L1/L2/L3/L4/L6+/L10+>", "bull_case": "<specific reason for L4+ on chosen TF>", "bear_case": "<specific risk that kills this trade>", "facilitator_verdict": "<honest final decision — which TF and why>"}}
+
+CRITICAL: If no timeframe has a clean setup, set proceed=false. Capital preservation > missed trades."""
 
         try:
             raw = self._query_llm_auto(prompt)
@@ -4377,6 +4927,24 @@ CRITICAL: confidence = probability of reaching L3+. If you predict L1-L2, set pr
             result['risk_score'] = max(0, min(10, int(result.get('risk_score', 5))))
             result['trade_quality'] = max(0, min(10, int(result.get('trade_quality', 5))))
 
+            # Validate chosen_timeframe — must be one of the active signals
+            active_tf_signals = active_tf_signals or {}
+            chosen_tf = str(result.get('chosen_timeframe', '5m'))
+            if chosen_tf not in self.SIGNAL_TIMEFRAMES:
+                chosen_tf = '5m'
+            # If LLM chose a TF with no active signal, pick the best active one
+            if active_tf_signals and chosen_tf not in active_tf_signals:
+                # Fall back to highest entry_score active TF
+                chosen_tf = max(active_tf_signals.keys(),
+                               key=lambda t: active_tf_signals[t].get('trend_bars', 0))
+            result['chosen_timeframe'] = chosen_tf
+
+            # Validate chosen_direction
+            chosen_dir = str(result.get('chosen_direction', 'CALL')).upper()
+            if chosen_dir not in ('CALL', 'PUT'):
+                chosen_dir = 'CALL' if signal == 'BUY' else 'PUT'
+            result['chosen_direction'] = chosen_dir
+
             # Server-side enforcement — override LLM if it ignores rules
             tq = result['trade_quality']
             rs = result['risk_score']
@@ -4388,19 +4956,18 @@ CRITICAL: confidence = probability of reaching L3+. If you predict L1-L2, set pr
             if tq <= 5:
                 result['position_size_pct'] = min(result['position_size_pct'], max_position_pct * 0.5)
 
-            # Print compact summary of all 7 roles
+            # Print compact summary
             bull = str(result.get('bull_case', ''))[:60]
             bear = str(result.get('bear_case', ''))[:60]
             fac = str(result.get('facilitator_verdict', ''))[:80]
-            conflicts = str(result.get('agent_conflicts', ''))[:40]
             pred_l = str(result.get('predicted_l_level', '?'))
 
-            print(f"  [{self._ex_tag}:{asset}] UNIFIED LLM (1 call, 7 roles):")
-            print(f"    AGENTS: quality={tq}/10 conflicts=[{conflicts}]")
+            print(f"  [{self._ex_tag}:{asset}] UNIFIED LLM (multi-TF):")
+            print(f"    CHOSEN TF: {chosen_tf} | {chosen_dir} | quality={tq}/10")
             print(f"    BULL: {bull}")
             print(f"    BEAR: risk={rs}/10 | {bear}")
-            print(f"    L-LEVEL PREDICTION: {pred_l} | {'ENTER' if result['proceed'] else 'REJECT'} conf={result['confidence']:.2f} size={result['position_size_pct']:.0f}%")
-            print(f"    FACILITATOR: {fac}")
+            print(f"    L-LEVEL: {pred_l} | {'ENTER' if result['proceed'] else 'REJECT'} conf={result['confidence']:.2f} size={result['position_size_pct']:.0f}%")
+            print(f"    VERDICT: {fac}")
 
             return result
 
@@ -4484,9 +5051,50 @@ CRITICAL: confidence = probability of reaching L3+. If you predict L1-L2, set pr
         n_candles = min(10, len(candle_lines))
         candle_data = chr(10).join(candle_lines[-n_candles:]) if candle_lines else "N/A"
 
+        # Build ML warning block for bear agent
+        ml_bear_warnings = []
+        try:
+            if hasattr(self, '_last_ml_context') and self._last_ml_context:
+                mc = self._last_ml_context
+                # HMM regime conflict
+                hmm_r = mc.get('hmm_regime', '')
+                if (signal == 'BUY' and hmm_r in ('BEAR', 'CRISIS')) or (signal == 'SELL' and hmm_r == 'BULL'):
+                    ml_bear_warnings.append(f"HMM regime={hmm_r} CONFLICTS with {signal}")
+                # LSTM says SKIP (binary model: setup predicts L1 death)
+                lstm_s = mc.get('lstm_signal', '')
+                lstm_c = mc.get('lstm_confidence', 0)
+                if lstm_s == 'SKIP' and lstm_c > 0.50:
+                    ml_bear_warnings.append(f"LSTM ensemble says SKIP ({lstm_c:.0%} conf) — setup matches L1 death patterns, trailing SL likely stops at loss")
+                # LightGBM disagrees
+                lgbm_d = mc.get('lgbm_direction', '')
+                if (signal == 'BUY' and lgbm_d == 'SHORT') or (signal == 'SELL' and lgbm_d == 'LONG'):
+                    ml_bear_warnings.append(f"LightGBM pattern model predicts {lgbm_d} (opposite)")
+                # High shock probability
+                shock = mc.get('patchtst_shock_prob', 0)
+                if shock > 0.3:
+                    ml_bear_warnings.append(f"PatchTST: {shock:.0%} liquidity shock risk")
+                # Stale signal
+                af = mc.get('alpha_freshness', 1.0)
+                if af < 0.5:
+                    ml_bear_warnings.append(f"Alpha Decay: signal is stale (freshness={af:.0%})")
+                # GARCH expanding vol
+                if mc.get('garch_vol_expanding', False):
+                    ml_bear_warnings.append("GARCH: volatility expanding above average")
+        except Exception:
+            pass
+
+        ml_warning_text = chr(10).join(f"  - {w}" for w in ml_bear_warnings) if ml_bear_warnings else "  - No ML model conflicts detected"
+
         bear_prompt = f"""You are a RISK ANALYST for {asset}/USDT perpetual futures.
 Your job is to find reasons this trade SHOULD NOT be taken.
-You are the last defense before capital is risked.
+You are the last defense before capital is risked. Investment safety is #1 priority.
+
+STRATEGY CONTEXT (backtested 6 months: 72% WR, PF 1.19):
+- We enter on EMA(8) NEW LINE (direction change after 3+ bars). Exit via EMA reversal or SL.
+- Hard stop -2%. EMA line-following SL activates after 5 min. Breakeven at 1.0% profit.
+- 68-78% of SL exits are winners. The system is profitable WHEN we enter quality setups.
+- YOUR JOB: Identify the 28% of trades that will hit hard stop (-2%). These share patterns:
+  late entries (price far from EMA), declining volume, reversal wicks, fighting higher TF trend.
 
 A bull analyst recommends: {signal} with confidence {bull_confidence:.2f}
 Bull says: "{bull_reasoning}"
@@ -4499,43 +5107,33 @@ Distance from EMA: {separation_pct:.2f}%
 Volume trend: {vol_trend}
 {wick_warning}
 
+ML MODEL WARNINGS:
+{ml_warning_text}
+
 LAST {n_candles} CANDLES (5m):
 {candle_data}
 
 SCORE EACH RISK 0-2 POINTS:
 
 1. LATE ENTRY: Price {separation_pct:.2f}% from EMA.
-   - Crypto is VERY volatile especially on testnet. 15%+ from EMA = clearly late (2pts)
-   - 8-15% = somewhat extended (1pt)
-   - Under 8% = normal for crypto momentum, score 0
+   - 15%+ from EMA = clearly late (2pts), 8-15% = somewhat extended (1pt), <8% = normal (0pts)
 
-2. REVERSAL SIGNS: Any rejection wicks, dojis, shrinking bodies? {wick_warning or "Check candles above."}
-   - Clear reversal pattern (multiple wicks against trend) = 2pts
-   - Single wick or doji = 1pt
-   - No reversal signs = 0pts
+2. REVERSAL SIGNS: {wick_warning or "Check candles above."}
+   - Clear reversal pattern (multiple wicks against trend) = 2pts, single wick = 1pt, none = 0pts
 
 3. VOLUME: Volume is {vol_trend}.
-   - Declining volume on strong price move = weak, likely to reverse (2pts)
-   - Flat volume = uncertain (1pt)
-   - Increasing volume = confirming trend (0pts)
+   - Declining on strong price move = 2pts, flat = 1pt, increasing = 0pts
 
-4. KEY LEVEL: {"LONG near resistance $"+f"{resistance:,.2f} ({level_dist_pct:.1f}% away)" if signal=="BUY" else "SHORT near support $"+f"{support:,.2f} ({level_dist_pct:.1f}% away)"}.
-   - Within 0.5% of key level = very dangerous (2pts)
-   - 0.5-2% = caution (1pt)
-   - More than 2% away = fine (0pts)
+4. KEY LEVEL: {"LONG near resistance $"+f"{resistance:,.2f} ({level_dist_pct:.1f}% away)" if signal=="BUY" else "SHORT near support $"+f"{support:,.2f} ({level_dist_pct:.1f}% away)"}
+   - Within 0.5% = 2pts, 0.5-2% = 1pt, >2% = 0pts
 
-5. LOSS STREAK: {recent_losses} losses in last 10 {asset} trades.
-   - 5+ recent losses = regime clearly unfavorable (2pts)
-   - 3-4 losses = caution (1pt)
-   - 0-2 losses = normal (0pts)
+5. ML MODELS + LOSS STREAK: {len(ml_bear_warnings)} ML conflicts + {recent_losses}/10 recent losses.
+   - 2+ ML conflicts OR 5+ losses = 2pts, 1 conflict OR 3-4 losses = 1pt, none = 0pts
 
 TOTAL risk_score = sum (0-10)
-0-6: Acceptable (proceed or reduce)
-7-8: High risk (reduce position)
-9-10: Extreme risk ONLY (veto)
+0-4: Low risk (proceed), 5-6: Medium (reduce position 50%), 7-8: High (reduce 75%), 9-10: VETO
 
-IMPORTANT: Crypto markets are volatile. A 3% move from EMA is NORMAL, not "late."
-Only score 9-10 if MULTIPLE serious risks combine (e.g. 5%+ from EMA AND reversal wicks AND declining volume).
+IMPORTANT: Only score 9-10 if MULTIPLE serious risks combine.
 A single risk factor alone should NOT push score above 7.
 
 Respond ONLY with JSON:

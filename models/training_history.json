@@ -1,0 +1,651 @@
+[
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T18:15:52.313767",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T18:42:10.176430",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_patchtst": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T18:45:34.496793",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "BTC_patchtst": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true,
+      "ETH_patchtst": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T19:17:22.279116",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "BTC_patchtst": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true,
+      "ETH_patchtst": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T19:23:54.218992",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T19:43:57.092707",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "BTC_patchtst": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true,
+      "ETH_patchtst": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T20:12:41.556225",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "BTC_patchtst": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true,
+      "ETH_patchtst": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T20:14:45.702861",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T20:26:03.961253",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T20:57:25.453467",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T21:03:36.188378",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": false
+    },
+    "success_rate": 0.8
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T21:16:11.096012",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T21:25:03.105093+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T21:36:31.276378+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T21:46:50.508410+00:00",
+    "results": {
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T22:16:03.682570+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T22:17:27.619804+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T22:31:59.274688+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-03T23:30:09.858462+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-04T00:12:13.269074+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 2,
+    "timestamp": "2026-04-04T02:30:21.974174+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 3,
+    "timestamp": "2026-04-04T06:44:51.361785+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 4,
+    "timestamp": "2026-04-04T10:58:34.789675+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 5,
+    "timestamp": "2026-04-04T15:12:55.037150+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-04T16:13:19.070452+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 2,
+    "timestamp": "2026-04-04T20:27:49.916638+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 3,
+    "timestamp": "2026-04-05T00:43:05.309876+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 4,
+    "timestamp": "2026-04-05T04:57:26.027373+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 5,
+    "timestamp": "2026-04-05T09:11:56.482139+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 6,
+    "timestamp": "2026-04-05T13:26:49.510223+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 7,
+    "timestamp": "2026-04-05T17:42:52.546037+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 8,
+    "timestamp": "2026-04-05T21:59:56.755880+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 9,
+    "timestamp": "2026-04-06T02:15:16.587808+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 10,
+    "timestamp": "2026-04-06T06:29:43.535618+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 11,
+    "timestamp": "2026-04-06T10:44:42.394768+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 12,
+    "timestamp": "2026-04-06T15:00:59.591158+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-06T16:07:00.258771+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-06T16:37:21.727140+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-06T19:39:52.099547+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-06T19:42:42.147222+00:00",
+    "results": {
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 2,
+    "timestamp": "2026-04-06T20:58:00.548525+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_lstm": true,
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_lstm": true
+    },
+    "success_rate": 1.0
+  }
+]

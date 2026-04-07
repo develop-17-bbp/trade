@@ -604,6 +604,499 @@ def train_symbol_timeframe(symbol: str, timeframe: str, data_dir: str,
 
 
 # ============================================================================
+# RL AGENT TRAINING (integrated into continuous loop)
+# ============================================================================
+
+def _train_rl_for_symbol(symbol: str, data_dir: str, model_dir: str) -> bool:
+    """
+    Train RL agent for a symbol using available OHLCV data.
+    Simulates EMA(8) strategy and learns entry quality filtering + sizing.
+    """
+    logger.info(f"\n{'─'*50}")
+    logger.info(f"RL Training: {symbol}")
+    logger.info(f"{'─'*50}")
+
+    try:
+        import ccxt
+        from src.ai.reinforcement_learning import EMAStrategyRL, EMATradeState
+        from src.indicators.indicators import ema, atr
+
+        # Fetch data via CCXT (5m, last 5000 bars)
+        asset = symbol.replace('USDT', '')
+        exchange = ccxt.binance({'enableRateLimit': True})
+        pair = f"{asset}/USDT"
+
+        logger.info(f"  Fetching {pair} 5m data...")
+        candles = exchange.fetch_ohlcv(pair, '5m', limit=1000)
+
+        # Paginate for more data
+        all_candles = list(candles)
+        for _ in range(4):  # Get ~5000 bars total
+            if not all_candles:
+                break
+            since = all_candles[0][0] - (1000 * 5 * 60 * 1000)
+            batch = exchange.fetch_ohlcv(pair, '5m', since=since, limit=1000)
+            if not batch:
+                break
+            all_candles = batch + all_candles
+            time.sleep(exchange.rateLimit / 1000)
+
+        # Deduplicate
+        seen = set()
+        unique = []
+        for c in all_candles:
+            if c[0] not in seen:
+                seen.add(c[0])
+                unique.append(c)
+        unique.sort(key=lambda x: x[0])
+
+        if len(unique) < 200:
+            logger.warning(f"  Only {len(unique)} bars — need 200+")
+            return False
+
+        closes = np.array([c[4] for c in unique], dtype=float)
+        highs = np.array([c[2] for c in unique], dtype=float)
+        lows = np.array([c[3] for c in unique], dtype=float)
+        volumes = np.array([c[5] for c in unique], dtype=float)
+        timestamps = [c[0] for c in unique]
+
+        n_bars = len(closes)
+        logger.info(f"  Data: {n_bars} bars")
+
+        # Compute indicators
+        ema_8 = np.array(ema(list(closes), 8))
+        atr_14 = np.array(atr(list(highs), list(lows), list(closes), 14))
+
+        # ATR percentile
+        atr_pctile = np.zeros(n_bars)
+        for i in range(100, n_bars):
+            window = atr_14[max(0, i-100):i]
+            if len(window) > 0 and np.max(window) > np.min(window):
+                atr_pctile[i] = (atr_14[i] - np.min(window)) / (np.max(window) - np.min(window) + 1e-10)
+
+        # EMA slope
+        ema_slope = np.zeros(n_bars)
+        for i in range(3, n_bars):
+            if atr_14[i] > 0:
+                ema_slope[i] = (ema_8[i] - ema_8[i-3]) / (atr_14[i] * 3)
+
+        # EMA direction
+        ema_direction = np.zeros(n_bars)
+        ema_dir_bars = np.zeros(n_bars, dtype=int)
+        for i in range(1, n_bars):
+            ema_direction[i] = 1 if ema_8[i] > ema_8[i-1] else (-1 if ema_8[i] < ema_8[i-1] else ema_direction[i-1])
+            ema_dir_bars[i] = (ema_dir_bars[i-1] + 1) if ema_direction[i] == ema_direction[i-1] else 1
+
+        # EMA21 for HTF proxy
+        ema_21 = np.array(ema(list(closes), 21))
+        htf_align = np.zeros(n_bars)
+        for i in range(21, n_bars):
+            htf_align[i] = 1.0 if ema_21[i] > ema_21[i-5] else (-1.0 if ema_21[i] < ema_21[i-5] else 0)
+
+        # Initialize RL
+        model_path = os.path.join(model_dir, f'rl_ema_{asset.lower()}.json')
+        rl = EMAStrategyRL({'rl_model_path': model_path})
+        rl.epsilon = 0.20  # Moderate exploration for continuous training
+
+        # Simulate trades
+        in_position = False
+        entry_bar = 0
+        entry_price = 0.0
+        entry_direction = 0
+        entry_state_key = ''
+        entry_action_idx = 0
+        trades = 0
+        wins = 0
+        total_pnl = 0.0
+        prev_dir = 0
+        recent_results = []
+        HARD_STOP = 2.0
+
+        for i in range(50, n_bars):
+            cur_dir = int(ema_direction[i])
+            price = closes[i]
+            is_new_line = (cur_dir != prev_dir and prev_dir != 0 and ema_dir_bars[i-1] >= 3)
+
+            if not in_position and is_new_line:
+                recent_wr = 0.5
+                consec = 0
+                if recent_results:
+                    w = sum(1 for r in recent_results[-20:] if r > 0)
+                    recent_wr = w / len(recent_results[-20:]) if recent_results[-20:] else 0.5
+                    for r in reversed(recent_results):
+                        if r < 0: consec += 1
+                        else: break
+
+                hour = 12
+                try:
+                    from datetime import datetime as dt, timezone
+                    hour = dt.fromtimestamp(timestamps[i] / 1000, tz=timezone.utc).hour
+                except Exception:
+                    pass
+
+                state = EMATradeState(
+                    ema_slope=float(ema_slope[i]),
+                    ema_slope_bars=int(ema_dir_bars[i]),
+                    price_ema_distance_atr=float((price - ema_8[i]) / (atr_14[i] + 1e-10)),
+                    ema_acceleration=float(ema_slope[i] - ema_slope[max(0, i-3)]),
+                    trend_bars_since_flip=int(ema_dir_bars[i]),
+                    trend_consistency=0.7,
+                    higher_tf_alignment=float(htf_align[i]) * cur_dir,
+                    atr_percentile=float(atr_pctile[i]),
+                    volume_ratio=1.0,
+                    spread_atr_ratio=0.1,
+                    recent_win_rate=recent_wr,
+                    daily_pnl_pct=0.0,
+                    open_positions=0,
+                    consecutive_losses=consec,
+                    hour_of_day=hour,
+                    day_of_week=3,
+                )
+
+                decision = rl.decide(state)
+                entry_state_key = rl._discretize_state(state)
+                for idx, act in enumerate(rl.actions):
+                    if act['label'] == decision.reasoning.split('Action: ')[1].split(' |')[0]:
+                        entry_action_idx = idx
+                        break
+
+                if decision.enter_trade:
+                    in_position = True
+                    entry_bar = i
+                    entry_price = price
+                    entry_direction = cur_dir
+                else:
+                    # Skip reward (look-ahead)
+                    look = min(i + 60, n_bars)
+                    best = 0.0
+                    for j in range(i+1, look):
+                        sp = ((closes[j] - price) / price * 100) * cur_dir
+                        if sp < -HARD_STOP: best = -HARD_STOP; break
+                        if int(ema_direction[j]) != cur_dir and sp > 0: best = sp; break
+                        best = sp
+                    rl.update(entry_state_key, entry_action_idx,
+                             rl.compute_reward({'was_skipped': True, 'would_have_pnl': best}), None)
+
+            elif in_position:
+                bars_held = i - entry_bar
+                pnl = ((price - entry_price) / entry_price * 100) * (1 if entry_direction == 1 else -1)
+                exit_type = None
+
+                if pnl <= -HARD_STOP: exit_type = 'hard_stop'; pnl = -HARD_STOP
+                elif cur_dir != entry_direction and ema_dir_bars[i] >= 2 and pnl > 0: exit_type = 'ema_exit'
+                elif bars_held >= 4 and pnl <= -0.5: exit_type = 'sl'
+                elif bars_held >= 200 and pnl < 0.3: exit_type = 'time'
+
+                if exit_type:
+                    in_position = False
+                    trades += 1
+                    total_pnl += pnl
+                    if pnl > 0: wins += 1
+                    recent_results.append(pnl)
+                    rl.update(entry_state_key, entry_action_idx,
+                             rl.compute_reward({'pnl_pct': pnl, 'exit_type': exit_type,
+                                               'hold_bars': bars_held, 'was_skipped': False}), None)
+
+            prev_dir = cur_dir
+
+        # Replay learning
+        for _ in range(50):
+            rl.replay_learn()
+
+        rl._save_model()
+
+        wr = wins / trades * 100 if trades > 0 else 0
+        logger.info(f"  RL done: {trades} trades | WR: {wr:.1f}% | PnL: {total_pnl:+.1f}% | "
+                   f"Q-states: {len(rl.q_table)} | ε: {rl.epsilon:.3f}")
+        return True
+
+    except Exception as e:
+        logger.error(f"  RL training failed: {e}", exc_info=True)
+        return False
+
+
+def _train_all_models_for_symbol(symbol: str, data_dir: str, model_dir: str) -> Dict[str, bool]:
+    """
+    Train ALL non-LightGBM models for a core symbol:
+    HMM, GARCH, Alpha Decay, LSTM ensemble, RL agent.
+
+    LightGBM is already trained by the main loop (train_symbol_timeframe).
+    PatchTST is skipped in continuous mode (too slow, trained separately).
+    """
+    results = {}
+    asset = symbol.replace('USDT', '')
+
+    try:
+        import ccxt
+
+        # Fetch 5m data via CCXT
+        exchange = ccxt.binance({'enableRateLimit': True})
+        pair = f"{asset}/USDT"
+
+        logger.info(f"\n{'='*50}")
+        logger.info(f"FULL MODEL SUITE: {asset}")
+        logger.info(f"{'='*50}")
+        logger.info(f"  Fetching {pair} 5m data for all models...")
+
+        all_candles = []
+        candles = exchange.fetch_ohlcv(pair, '5m', limit=1000)
+        all_candles.extend(candles)
+
+        # Paginate to get ~5000 bars
+        for _ in range(4):
+            if not all_candles:
+                break
+            since = all_candles[0][0] - (1000 * 5 * 60 * 1000)
+            batch = exchange.fetch_ohlcv(pair, '5m', since=since, limit=1000)
+            if not batch:
+                break
+            all_candles = batch + all_candles
+            time.sleep(exchange.rateLimit / 1000)
+
+        # Deduplicate and sort
+        seen = set()
+        unique = []
+        for c in all_candles:
+            if c[0] not in seen:
+                seen.add(c[0])
+                unique.append(c)
+        unique.sort(key=lambda x: x[0])
+
+        if len(unique) < 500:
+            logger.warning(f"  Only {len(unique)} bars, need 500+")
+            return results
+
+        data = {
+            'closes': [c[4] for c in unique],
+            'highs': [c[2] for c in unique],
+            'lows': [c[3] for c in unique],
+            'opens': [c[1] for c in unique],
+            'volumes': [c[5] for c in unique],
+            'timestamps': [c[0] for c in unique],
+        }
+        logger.info(f"  Data: {len(unique)} bars of 5m")
+
+    except Exception as e:
+        logger.error(f"  Data fetch failed: {e}")
+        return results
+
+    # --- HMM ---
+    try:
+        logger.info(f"  Training HMM ({asset})...")
+        from src.indicators.indicators import ema, atr
+        import pickle
+
+        closes = np.array(data['closes'], dtype=float)
+        highs = np.array(data['highs'], dtype=float)
+        lows = np.array(data['lows'], dtype=float)
+
+        returns = np.diff(closes) / (closes[:-1] + 1e-12)
+        atr_14 = np.array(atr(list(highs), list(lows), list(closes), 14))
+        vol = atr_14[1:] / (closes[1:] + 1e-12)
+        ema_8 = np.array(ema(list(closes), 8))
+        trend = np.diff(ema_8) / (atr_14[1:] + 1e-12)
+
+        mn = min(len(returns), len(vol), len(trend))
+        X_hmm = np.column_stack([returns[-mn:], vol[-mn:], trend[-mn:]])
+        X_hmm = X_hmm[np.isfinite(X_hmm).all(axis=1)]
+
+        if len(X_hmm) > 200:
+            from hmmlearn.hmm import GaussianHMM
+            hmm_model = GaussianHMM(n_components=3, covariance_type='full',
+                                     n_iter=200, random_state=42)
+            hmm_model.fit(X_hmm)
+            os.makedirs(model_dir, exist_ok=True)
+            with open(os.path.join(model_dir, f'hmm_{asset.lower()}.pkl'), 'wb') as f:
+                pickle.dump(hmm_model, f)
+            logger.info(f"    HMM saved: hmm_{asset.lower()}.pkl")
+            results['hmm'] = True
+        else:
+            logger.warning(f"    HMM: insufficient clean data ({len(X_hmm)} rows)")
+            results['hmm'] = False
+    except Exception as e:
+        logger.error(f"    HMM error: {e}")
+        results['hmm'] = False
+
+    # --- GARCH ---
+    try:
+        logger.info(f"  Training GARCH ({asset})...")
+        import pickle
+
+        closes = np.array(data['closes'], dtype=float)
+        returns = np.diff(closes) / (closes[:-1] + 1e-12) * 100
+        returns = returns[np.isfinite(returns)]
+
+        if len(returns) > 200:
+            try:
+                from arch import arch_model
+                am = arch_model(returns[-2000:], vol='Garch', p=1, q=1, dist='normal', rescale=False)
+                garch_fit = am.fit(disp='off', show_warning=False)
+                os.makedirs(model_dir, exist_ok=True)
+                with open(os.path.join(model_dir, f'garch_{asset.lower()}.pkl'), 'wb') as f:
+                    pickle.dump({'params': dict(garch_fit.params), 'asset': asset}, f)
+                logger.info(f"    GARCH saved: garch_{asset.lower()}.pkl")
+                results['garch'] = True
+            except ImportError:
+                # Fallback: simple EWMA volatility
+                vol_ewma = pd.Series(returns).ewm(span=20).std().iloc[-1]
+                with open(os.path.join(model_dir, f'garch_{asset.lower()}.pkl'), 'wb') as f:
+                    pickle.dump({'ewma_vol': float(vol_ewma), 'asset': asset}, f)
+                logger.info(f"    GARCH fallback (EWMA): garch_{asset.lower()}.pkl")
+                results['garch'] = True
+        else:
+            results['garch'] = False
+    except Exception as e:
+        logger.error(f"    GARCH error: {e}")
+        results['garch'] = False
+
+    # --- Alpha Decay ---
+    try:
+        logger.info(f"  Training Alpha Decay ({asset})...")
+        from src.models.alpha_decay import AlphaDecayModel
+        from src.indicators.indicators import ema
+
+        closes = np.array(data['closes'], dtype=float)
+        ema_8 = np.array(ema(list(closes), 8))
+        ema_21 = np.array(ema(list(closes), 21))
+
+        signals = ema_8 - ema_21
+        returns = np.diff(closes) / (closes[:-1] + 1e-12)
+        mn = min(len(signals), len(returns))
+
+        model = AlphaDecayModel(max_horizon=60)
+        model.fit(signals[-mn:], returns[-mn:])
+
+        import pickle
+        os.makedirs(model_dir, exist_ok=True)
+        with open(os.path.join(model_dir, f'alpha_decay_{asset.lower()}.pkl'), 'wb') as f:
+            pickle.dump(model, f)
+        logger.info(f"    Alpha Decay saved: half_life={model.half_life:.1f} bars, "
+                   f"optimal_hold={model.optimal_hold:.0f} bars")
+        results['alpha_decay'] = True
+    except Exception as e:
+        logger.error(f"    Alpha Decay error: {e}")
+        results['alpha_decay'] = False
+
+    # --- LSTM Ensemble ---
+    try:
+        logger.info(f"  Training LSTM Ensemble ({asset})...")
+        import torch
+        import torch.nn as nn
+        from src.indicators.indicators import ema, atr, rsi
+
+        closes = np.array(data['closes'], dtype=float)
+        highs = np.array(data['highs'], dtype=float)
+        lows = np.array(data['lows'], dtype=float)
+        volumes = np.array(data['volumes'], dtype=float)
+
+        # Build features
+        ema_8 = np.array(ema(list(closes), 8))
+        ema_21 = np.array(ema(list(closes), 21))
+        atr_14 = np.array(atr(list(highs), list(lows), list(closes), 14))
+        rsi_14 = np.array(rsi(list(closes), 14))
+
+        returns = np.zeros(len(closes))
+        returns[1:] = np.diff(closes) / (closes[:-1] + 1e-12)
+
+        ema_diff = (ema_8 - ema_21) / (atr_14 + 1e-12)
+        price_ema = (closes - ema_8) / (atr_14 + 1e-12)
+        vol_norm = np.log1p(volumes) / (np.log1p(np.mean(volumes)) + 1e-12)
+
+        features = np.column_stack([returns, ema_diff, price_ema, rsi_14 / 100, vol_norm])
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Create sequences
+        seq_len = 30
+        X_seqs = []
+        y_labels = []
+        for i in range(seq_len, len(features) - 5):
+            X_seqs.append(features[i-seq_len:i])
+            # Label: price direction over next 5 bars
+            future_ret = (closes[i+5] - closes[i]) / (closes[i] + 1e-12)
+            if future_ret > 0.002:
+                y_labels.append(1)   # Up
+            elif future_ret < -0.002:
+                y_labels.append(0)   # Down
+            else:
+                y_labels.append(2)   # Flat
+
+        if len(X_seqs) < 500:
+            logger.warning(f"    LSTM: only {len(X_seqs)} sequences, need 500+")
+            results['lstm'] = False
+        else:
+            X_t = torch.FloatTensor(np.array(X_seqs))
+            y_t = torch.LongTensor(np.array(y_labels))
+
+            # Split
+            split = int(len(X_t) * 0.8)
+            X_train, X_val = X_t[:split], X_t[split:]
+            y_train, y_val = y_t[:split], y_t[split:]
+
+            n_features = X_t.shape[2]
+            hidden = 64
+            n_classes = 3
+            model_dir_lstm = os.path.join(model_dir, f'lstm_ensemble_{asset.lower()}')
+            os.makedirs(model_dir_lstm, exist_ok=True)
+
+            for arch_name, ModelClass in [('lstm', nn.LSTM), ('gru', nn.GRU)]:
+                # Simple wrapper model
+                class SeqModel(nn.Module):
+                    def __init__(self):
+                        super().__init__()
+                        self.rnn = ModelClass(n_features, hidden, batch_first=True, num_layers=2, dropout=0.2)
+                        self.fc = nn.Linear(hidden, n_classes)
+                    def forward(self, x):
+                        out, _ = self.rnn(x)
+                        return self.fc(out[:, -1, :])
+
+                model = SeqModel()
+                optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+                criterion = nn.CrossEntropyLoss()
+
+                # Train
+                best_val_acc = 0
+                for epoch in range(30):
+                    model.train()
+                    # Mini-batch
+                    perm = torch.randperm(len(X_train))
+                    total_loss = 0
+                    for b_start in range(0, len(X_train), 128):
+                        idx = perm[b_start:b_start+128]
+                        optimizer.zero_grad()
+                        pred = model(X_train[idx])
+                        loss = criterion(pred, y_train[idx])
+                        loss.backward()
+                        optimizer.step()
+                        total_loss += loss.item()
+
+                    # Validate
+                    model.eval()
+                    with torch.no_grad():
+                        val_pred = model(X_val).argmax(dim=1)
+                        val_acc = (val_pred == y_val).float().mean().item()
+                    if val_acc > best_val_acc:
+                        best_val_acc = val_acc
+                        torch.save(model.state_dict(), os.path.join(model_dir_lstm, f'{arch_name}.pth'))
+
+                logger.info(f"    {arch_name.upper()}: val_acc={best_val_acc:.3f}")
+
+            results['lstm'] = True
+            logger.info(f"    LSTM ensemble saved: {model_dir_lstm}/")
+    except Exception as e:
+        logger.error(f"    LSTM error: {e}")
+        results['lstm'] = False
+
+    # --- RL Agent (reuse existing function) ---
+    results['rl'] = _train_rl_for_symbol(symbol, data_dir, model_dir)
+
+    logger.info(f"\n  Full model suite results for {asset}:")
+    for model_name, ok in results.items():
+        logger.info(f"    {model_name:15s}: {'OK' if ok else 'FAILED'}")
+
+    return results
+
+
+# ============================================================================
 # CONTINUOUS LOOP
 # ============================================================================
 
@@ -688,6 +1181,20 @@ def run_continuous(symbols: List[str], timeframes: List[str],
             except Exception as e:
                 logger.error(f"Error training {symbol}/{timeframe}: {e}", exc_info=True)
                 continue
+
+        # Train ALL models (HMM, GARCH, Alpha Decay, LSTM, RL) for core symbols
+        for sym in CORE_SYMBOLS:
+            if sym in symbols:
+                try:
+                    model_results = _train_all_models_for_symbol(sym, data_dir, model_dir)
+                    ok_count = sum(1 for v in model_results.values() if v)
+                    total_count = len(model_results)
+                    round_results.append({
+                        'symbol': sym, 'timeframe': f'all_models ({ok_count}/{total_count})',
+                        'accuracy': 0, 'high_conf_accuracy': 0, 'rows': 0,
+                    })
+                except Exception as e:
+                    logger.error(f"Full model training error for {sym}: {e}", exc_info=True)
 
         # Round summary
         logger.info(f"\n{'─'*50}")

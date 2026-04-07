@@ -99,6 +99,11 @@ def build_pattern_scanner_prompt(
 YOUR ONLY JOB: Scan the candle data below and identify ALL patterns you see. Do NOT make a trade decision.
 You are the EYES of the system — find every pattern, formation, and anomaly.
 
+STRATEGY CONTEXT (so you know what matters most):
+Our system trades EMA(8) NEW LINES (72% WR, PF 1.19 in 6-month backtest).
+The 28% losers share patterns: late entries, declining volume, reversal wicks, fighting macro trend.
+PAY SPECIAL ATTENTION to these danger signals — they predict the hard stop (-2%) deaths.
+
 ═══════════════════════════════════════════════════════════
 MARKET DATA
 ═══════════════════════════════════════════════════════════
@@ -274,15 +279,23 @@ A Pattern Scanner (separate AI) has already analyzed the charts. Your job:
 3. Make the FINAL go/no-go decision — but LEAN TOWARD ENTERING when patterns confirm direction
 
 ═══════════════════════════════════════════════════════════
-OUR STRATEGY — EMA(8) CROSSOVER + TRAILING SL (L1->Ln)
+PROVEN STRATEGY — EMA(8) TREND LINE (6-month backtest: 72% WR, PF 1.19)
 ═══════════════════════════════════════════════════════════
-- CALL: Price crosses ABOVE EMA(8) and trends up
-- PUT: Price crosses BELOW EMA(8) and trends down
-- SL ratchets one way only: UP for CALL, DOWN for PUT (locks profits)
-- L1 = initial SL. L2 = breakeven. L3+ = profit. Trailing SL protects gains automatically.
-- Our edge: 52% of trades move in the right direction. We need to ENTER those trades.
-- The trailing SL handles exit timing. YOUR job is to confirm DIRECTION is correct.
-- A winning trend trade pays for 3-4 small losses. ENTER when direction is clear.
+ENTRY: EMA(8) forms NEW LINE (direction changes after 3+ bars opposite). Price on correct side.
+EXIT (priority order):
+  1. Hard stop -2% (emergency)
+  2. EMA new line exit — ONLY when in profit (100% WR in backtest)
+  3. EMA line-following SL — tracks EMA with buffer after 5 min
+  4. Ratchet: breakeven at 1.0%, lock profits from 1.5%+
+
+KEY FACTS FROM 6-MONTH BACKTEST:
+- 72% of trades are winners when entry score >= 7
+- EMA exit on profitable trades = 100% WR. On losing trades = 18% WR (system handles this)
+- SL exits (delayed activation) = 68-78% WR
+- Hard stop losers (-2%) are the ONLY consistent losers = 28% of trades
+- YOUR JOB: Confirm direction is correct and this isn't a hard-stop setup
+- Hard-stop setups look like: late entry, declining volume, reversal wicks, fighting macro trend
+- ENTER when patterns support direction. Missing a winner costs more than a small loss.
 
 ═══════════════════════════════════════════════════════════
 PATTERN SCAN RESULTS (from Pattern Scanner AI)
