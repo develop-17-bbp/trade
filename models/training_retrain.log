@@ -1,0 +1,174 @@
+============================================================
+TRAINING ALL ML MODELS — MULTI-TIMEFRAME REAL MARKET DATA
+============================================================
+
+############################################################
+# BTC
+############################################################
+
+############################################################
+# MULTI-TIMEFRAME DATA: BTC
+############################################################
+
+============================================================
+FETCHING 50000 1m BARS FOR BTC
+============================================================
+    ... fetched 1000/50000 bars
+    ... fetched 2000/50000 bars
+    ... fetched 3000/50000 bars
+    ... fetched 4000/50000 bars
+    ... fetched 5000/50000 bars
+    ... fetched 6000/50000 bars
+    ... fetched 7000/50000 bars
+    ... fetched 8000/50000 bars
+    ... fetched 9000/50000 bars
+    ... fetched 10000/50000 bars
+    ... fetched 11000/50000 bars
+    ... fetched 12000/50000 bars
+    ... fetched 13000/50000 bars
+    ... fetched 14000/50000 bars
+    ... fetched 15000/50000 bars
+    ... fetched 16000/50000 bars
+    ... fetched 17000/50000 bars
+    ... fetched 18000/50000 bars
+    ... fetched 19000/50000 bars
+    ... fetched 20000/50000 bars
+    ... fetched 21000/50000 bars
+    ... fetched 22000/50000 bars
+    ... fetched 23000/50000 bars
+    ... fetched 24000/50000 bars
+    ... fetched 25000/50000 bars
+    ... fetched 26000/50000 bars
+    ... fetched 27000/50000 bars
+    ... fetched 28000/50000 bars
+    ... fetched 29000/50000 bars
+    ... fetched 30000/50000 bars
+    ... fetched 31000/50000 bars
+    ... fetched 32000/50000 bars
+    ... fetched 33000/50000 bars
+    ... fetched 34000/50000 bars
+    ... fetched 35000/50000 bars
+    ... fetched 36000/50000 bars
+    ... fetched 37000/50000 bars
+    ... fetched 38000/50000 bars
+    ... fetched 39000/50000 bars
+    ... fetched 40000/50000 bars
+    ... fetched 41000/50000 bars
+    ... fetched 42000/50000 bars
+    ... fetched 43000/50000 bars
+    ... fetched 44000/50000 bars
+    ... fetched 45000/50000 bars
+    ... fetched 46000/50000 bars
+    ... fetched 47000/50000 bars
+    ... fetched 48000/50000 bars
+    ... fetched 49000/50000 bars
+    ... fetched 50000/50000 bars
+  Fetched 50000 bars (1m) from Binance
+  1m: 50000 bars | $67,297.80 | Range: $65,000.10-$75,950.50
+
+============================================================
+FETCHING 10000 5m BARS FOR BTC
+============================================================
+    ... fetched 1000/10000 bars
+    ... fetched 2000/10000 bars
+    ... fetched 3000/10000 bars
+    ... fetched 4000/10000 bars
+    ... fetched 5000/10000 bars
+    ... fetched 6000/10000 bars
+    ... fetched 7000/10000 bars
+    ... fetched 8000/10000 bars
+    ... fetched 9000/10000 bars
+    ... fetched 10000/10000 bars
+  Fetched 10000 bars (5m) from Binance
+  5m: 10000 bars | $67,299.90 | Range: $65,000.10-$75,899.90
+
+============================================================
+FETCHING 3333 15m BARS FOR BTC
+============================================================
+    ... fetched 1000/3333 bars
+    ... fetched 2000/3333 bars
+    ... fetched 3000/3333 bars
+  Fetched 3333 bars (15m) from Binance
+  15m: 3333 bars | $67,300.00 | Range: $65,211.10-$75,899.90
+
+============================================================
+FETCHING 833 1h BARS FOR BTC
+============================================================
+    ... fetched 833/833 bars
+  Fetched 833 bars (1h) from Binance
+  1h: 833 bars | $67,299.90 | Range: $65,241.00-$75,584.70
+
+============================================================
+FETCHING 208 4h BARS FOR BTC
+============================================================
+    ... fetched 208/208 bars
+  Fetched 208 bars (4h) from Binance
+  4h: 208 bars | $67,299.90 | Range: $65,750.00-$74,846.40
+
+============================================================
+FETCHING 200 1d BARS FOR BTC
+============================================================
+    ... fetched 200/200 bars
+  Fetched 200 bars (1d) from Binance
+  1d: 200 bars | $67,300.00 | Range: $62,868.10-$124,628.50
+  Bars: 10000 | Price: $67,299.90 | Range: $65,000.10-$75,899.90
+
+============================================================
+1. TRAINING LIGHTGBM CLASSIFIER (BTC)
+  Labels: SKIP (L1 death) vs TRADE (L2+ profit locked)
+============================================================
+  Using 40 strategy features (30 base + 5 Kalman + 5 inflection)
+  Training data: 9915 bars | SKIP=5021 (51%) TRADE=4894 (49%)
+  TRADE weight: 1.37x
+Training until validation scores don't improve for 80 rounds
+[200]	valid_0's binary_logloss: 0.615403
+Early stopping, best iteration is:
+[239]	valid_0's binary_logloss: 0.613029
+    SKIP(L1-death): n=1240 | P=77% R=65% F1=71%
+    TRADE(L2+-profit): n=743 | P=54% R=69% F1=60%
+    TRADE optimal threshold: 0.445 (F1=61%)
+    Overall accuracy: 66%
+  Top features: ['atr_pct=13873', 'bb_width=4235', 'ema8_vs_ema50=4187', 'obv_slope=3115', 'prior_trend_bars=2711', 'vol_up_vs_down=2702', 'vol_trend=2578', 'dist_to_support=2192']
+  Saved: models/lgbm_btc_trained.txt + thresholds
+
+============================================================
+2. TRAINING HMM REGIME DETECTOR (BTC)
+============================================================
+INFO: HMM fitted on 9999 observations, 4 states, score=124208.88
+  HMM fitted on 9999 observations
+  Current regime: sideways (conf: 0.00)
+  Crisis prob: 0.000
+  Saved: models/hmm_btc.pkl
+
+============================================================
+5. TRAINING GARCH(1,1) (BTC)
+============================================================
+  Fitted on 10000 prices
+  Current vol: 0.000587
+  Params: omega=0.000000 alpha=0.0800 beta=0.9000
+  Persistence: 0.9800 (should be < 1.0)
+  Saved: models/garch_btc.pkl
+
+============================================================
+6. TRAINING ALPHA DECAY (BTC)
+============================================================
+INFO: Alpha Decay: lambda=0.0212, half_life=32.7 bars, optimal_hold=22 bars, peak_IC=-0.0913
+  Half-life: 32.7 bars (163 min)
+  Optimal hold: 22 bars (110 min)
+  Peak alpha: 0.0913
+  Saved: models/alpha_decay_btc.pkl
+
+============================================================
+3. TRAINING LSTM ENSEMBLE (BTC)
+============================================================
+  PyTorch 2.11.0+cu128 | CUDA: False
+  Using 40 strategy features (30 base + 5 Kalman + 5 inflection)
+  Sequences: (9915, 30, 40) | SKIP=5021 (51%) TRADE=4894 (49%)
+  Removed old checkpoint: bilstm.pth
+  Removed old checkpoint: gru.pth
+  Removed old checkpoint: lstm.pth
+  Classes: 2 (SKIP vs TRADE) | Features: 40
+INFO: Loaded thresholds: {'0': {'threshold': 0.41000000000000025, 'best_f1': 0.7686848524693038}, '1': {'threshold': 0.4600000000000003, 'best_f1': 0.5952584975270332}}
+INFO: Before oversample: {0: 4124, 1: 4304}
+INFO: After oversample: {0: 4124, 1: 4304}
+INFO: Class weights (2): [1.021357380160346, 1.9572852396753095]

@@ -216,17 +216,25 @@ class AgenticStrategist:
             ### ON-CHAIN DATA: {onchain_serial}
             ### TRADE LOGS (Last 20):
             {history_summary}
-            
+
+            ### PROVEN STRATEGY (backtested 6 months: 72% WR, PF 1.19):
+            EMA(8) Trend Line: Enter on new EMA line (direction change), ride trend, exit on EMA reversal.
+            - Entry score >= 7 required. EMA line = primary SL. Hard stop -2% emergency only.
+            - EMA exit ONLY when profitable (100% WR). Losing trades handled by SL (68-78% WR).
+            - Winners avg 1-3 hours. Losers die in <40 min. Never cut winners early.
+            - 28% of trades hit hard stop — these share: late entry, declining volume, fighting macro trend.
+
             ### CONTEXTUAL FRAMEWORK:
-            1. MARKET STRUCTURE: Is this a Bull Market, Bear Market, or Altcoin Season? Consider Bitcoin Dominance.
-            2. PSYCHOLOGY: Monitor for FOMO (buying high on hype) or FUD (selling low on fear). Ensure Emotional Discipline.
+            1. MARKET STRUCTURE: Is this a Bull Market, Bear Market, or Altcoin Season? Our EMA strategy works in TRENDING markets. In CHOPPY/RANGING, reduce trade frequency.
+            2. PSYCHOLOGY: Monitor for FOMO (buying high on hype) or FUD (selling low on fear). Our entry score >= 7 filter eliminates most emotional trades.
             3. FUNDAMENTALS (FA): Consider project Whitepapers, Tokenomics, and Use Cases if implied in news.
-            4. TECHNICALS (TA): Support/Resistance, RSI (Overbought/Oversold), and MACD Momentum.
-            5. RISK: Strict Position Sizing (1-2% rule) and Risk/Reward (1:2 ratio).
-            
+            4. TECHNICALS (TA): EMA(8) is primary. Support/Resistance, RSI (55-75 for BUY, 25-45 for SELL), ADX > 25 for trend confirmation.
+            5. RISK: Position sizing capped at 5% equity. Hard stop -2%. EMA line-following SL. Breakeven at 1.0% profit.
+
             ### TASK:
             Analyze why we are winning/losing. Is the current 'market_regime' correctly identified?
-            - If we are losing under 'CHOPPY' conditions, suggest increasing stop-loss distance.
+            - If we are losing: are we entering in RANGING conditions (EMA flat, ADX < 20)? Suggest blocking trades.
+            - If we are winning: which exit mechanism is capturing profits (EMA exit vs SL ratchet)?
             - If 'funding_rates' are high, suggest a bearish 'macro_bias' (deleveraging risk).
             - If 'whale_sentiment' is BEARISH, be cautious with long positions.
             - Provide a specific reasoning trace that references the Framework above.

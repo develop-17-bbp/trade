@@ -809,9 +809,27 @@ class PriceFetcher:
             acct = self.bybit.get_account()
             if 'equity' in acct:
                 print(f"  [BYBIT] Equity: ${acct['equity']:,.2f} | USDT: ${acct.get('cash', 0):,.2f}")
-            # Use Bybit's own exchange for OHLCV data too
-            self.exchange = self.bybit.exchange
-            print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
+            if testnet:
+                # Bybit TESTNET has frozen/stale OHLCV data — use real Bybit mainnet for candles
+                # Orders still go to testnet via self.bybit, only OHLCV reads from mainnet
+                try:
+                    import ccxt as _ccxt_bybit
+                    self.exchange = _ccxt_bybit.bybit({
+                        'enableRateLimit': True,
+                        'options': {'defaultType': 'swap'},
+                    })
+                    # Verify mainnet data is actually live
+                    _test = self.exchange.fetch_ohlcv('BTC/USDT:USDT', '5m', limit=2)
+                    if _test and len(_test) >= 2:
+                        print("  [DATA] Bybit MAINNET OHLCV for real candle data (orders go to testnet)")
+                    else:
+                        raise RuntimeError("mainnet returned empty")
+                except Exception as _e:
+                    self.exchange = self.bybit.exchange
+                    print(f"  [DATA] Bybit testnet OHLCV (mainnet failed: {str(_e)[:80]})")
+            else:
+                self.exchange = self.bybit.exchange
+                print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
         else:
             print(f"  [BYBIT] Not connected - set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
             self._init_ccxt_readonly()

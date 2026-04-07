@@ -26,7 +26,7 @@ adaptive:
   ema_crossover_primary: true
   ema_period: 8                                # EMA period (matches chart)
   struct_window: 5                             # Structure points for SL (L1->L4)
-  min_entry_score: 4                           # Hard gate: block trades below this score before LLM call
+  min_entry_score: 7                           # Hard gate: block trades below this score before LLM call (backtest: 72% WR, PF 1.15-1.19 at score 7)
 
 # ── Risk (minimal — daily loss limit only) ──
 risk:
@@ -52,8 +52,8 @@ ai:
   fallback_on_quota_error: true
   use_local_on_failure: true
   bear_agent_enabled: true        # Second LLM call to argue AGAINST the trade
-  bear_veto_threshold: 7          # risk_score >= 7 = VETO (protects capital)
-  bear_reduce_threshold: 5        # risk_score 5-6 = reduce position 50%
+  bear_veto_threshold: 9          # risk_score >= 9 = VETO (only extreme danger)
+  bear_reduce_threshold: 7        # risk_score 7-8 = reduce position 30% (floor 1%)
   facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
   risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
   edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
@@ -72,6 +72,24 @@ monitor:
 
 # ── Time-Based Exits ──
 max_hold_minutes: 360             # Close stale/losing positions after 6 hours
+
+# ── MetaTrader 5 ──
+# Bridge to MT5 terminal for visual tracking and/or direct execution
+# Setup: Install MT5 from broker, enable Algo Trading, pip install MetaTrader5
+mt5:
+  enabled: true
+  mode: execute                      # 'mirror' (visual only) or 'execute' (trade through MT5)
+  terminal_path: "C:/Program Files/MetaTrader 5/terminal64.exe"  # Auto-detect if omitted
+  login: 5048969803       # MT5 account number
+  password: "@c0sOyFd" #MT5 password
+  server: "MetaQuotes-Demo" #Server name
+  symbol_map:
+    BTC: "BTC"                       # MetaQuotes-Demo: iShares Bitcoin Trust ETF
+    ETH: "ETH"                       # MetaQuotes-Demo: iShares Ethereum Trust ETF
+  lot_size:
+    BTC: 1.0                         # Min lot for BTC ETF (1 share)
+    ETH: 1.0                         # Min lot for ETH ETF (1 share)
+  magic_number: 888888               # Unique EA ID for our trades
 
 # ── Order Execution ──
 # LIMIT preferred: places at best bid/ask for instant fill + slippage protection
