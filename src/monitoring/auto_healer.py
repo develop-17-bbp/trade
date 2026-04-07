@@ -29,7 +29,6 @@ import hashlib
 import shutil
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 
 import requests
 import yaml
@@ -212,44 +211,20 @@ class AutoHealer:
         monitor_cfg = config.get('monitor', {})
         ai_cfg = config.get('ai', {})
 
-        # LLM endpoint — same local-first rules as executor (local HOST/BASE before REMOTE_URL)
-        _mon_url = (monitor_cfg.get('ollama_url') or '').strip()
-        _local = (
-            os.environ.get('OLLAMA_HOST', '').strip()
-            or os.environ.get('OLLAMA_BASE_URL', '').strip()
-        )
-        _remote = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
-        _cfg_base = (ai_cfg.get('ollama_base_url') or 'http://127.0.0.1:11434').strip()
-        if _mon_url:
-            self.ollama_url = _mon_url.rstrip('/')
-        elif os.environ.get('MONITOR_OLLAMA_URL', '').strip():
-            self.ollama_url = os.environ.get('MONITOR_OLLAMA_URL', '').strip().rstrip('/')
-        elif _local:
-            self.ollama_url = _local.rstrip('/')
-        elif _remote:
-            self.ollama_url = _remote.rstrip('/')
-        else:
-            self.ollama_url = _cfg_base.rstrip('/') or 'http://127.0.0.1:11434'
+        # LLM endpoint for monitoring (can be separate from trading LLM)
+        self.ollama_url = (
+            monitor_cfg.get('ollama_url', '')
+            or os.environ.get('MONITOR_OLLAMA_URL', '')
+            or os.environ.get('OLLAMA_REMOTE_URL', '')
+            or ai_cfg.get('ollama_base_url', 'http://localhost:11434')
+        ).rstrip('/')
 
-        _mh = (urlparse(self.ollama_url).hostname or '').lower()
-        _mon_local = _mh in ('127.0.0.1', 'localhost', '0.0.0.0', '')
-        _mm = (monitor_cfg.get('ollama_model') or '').strip()
-        _mom = os.environ.get('MONITOR_OLLAMA_MODEL', '').strip()
-        if _mm:
-            self.ollama_model = _mm
-        elif _mom:
-            self.ollama_model = _mom
-        elif _mon_local:
-            self.ollama_model = (
-                os.environ.get('OLLAMA_MODEL', '').strip()
-                or ai_cfg.get('reasoning_model', 'qwen2.5:3b')
-            )
-        else:
-            self.ollama_model = (
-                os.environ.get('OLLAMA_REMOTE_MODEL', '').strip()
-                or os.environ.get('OLLAMA_MODEL', '').strip()
-                or ai_cfg.get('reasoning_model', 'qwen2.5:3b')
-            )
+        self.ollama_model = (
+            monitor_cfg.get('ollama_model', '')
+            or os.environ.get('MONITOR_OLLAMA_MODEL', '')
+            or os.environ.get('OLLAMA_REMOTE_MODEL', '')
+            or ai_cfg.get('reasoning_model', 'llama3.2:latest')
+        )
 
         self.scan_interval = monitor_cfg.get('scan_interval', 60)
         self.auto_fix = monitor_cfg.get('auto_fix', True)

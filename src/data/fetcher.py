@@ -9,7 +9,7 @@ Supports:
   - Data normalization and validation
   - Binance Testnet for paper trading with fake money
   - Alpaca Paper Trading (crypto + stocks)
-  - Optional LiveCoinWatch (disabled when exchange is Bybit — use Bybit for prices/OHLCV)
+  - LiveCoinWatch fast price data
   - Order placement (testnet / live)
 """
 
@@ -337,82 +337,26 @@ class AlpacaClient:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Bybit Client (Demo / Testnet / Live — USDT linear perps)
+# Bybit Testnet Client (Futures — supports LONG + SHORT)
 # ═══════════════════════════════════════════════════════════════════
-
-def _env_bool(val: Optional[str]) -> bool:
-    if val is None or not str(val).strip():
-        return False
-    return str(val).strip().lower() in ('1', 'true', 'yes', 'on')
-
-
-def _bybit_linear_position_idx_open(side: str) -> int:
-    """Hedge open: buy (long) → 1, sell (short) → 2."""
-    return 1 if side == 'buy' else 2
-
-
-def _bybit_linear_position_idx_reduce(side: str) -> int:
-    """Hedge reduce-only: sell closes long → 1, buy closes short → 2."""
-    return 1 if side == 'sell' else 2
-
-
-_BYBIT_HEDGE_CFG_CACHE: Optional[bool] = None
-
-
-def bybit_hedge_mode_enabled() -> bool:
-    """True if Bybit orders must send positionIdx (hedge / dual-side account)."""
-    global _BYBIT_HEDGE_CFG_CACHE
-    if _env_bool(os.environ.get('BYBIT_HEDGE_MODE')):
-        return True
-    if _BYBIT_HEDGE_CFG_CACHE is not None:
-        return _BYBIT_HEDGE_CFG_CACHE
-    try:
-        import yaml
-        cfg_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
-        with open(cfg_path, 'r', encoding='utf-8') as f:
-            cfg = yaml.safe_load(f) or {}
-        ex = cfg.get('execution') or {}
-        _BYBIT_HEDGE_CFG_CACHE = bool(ex.get('bybit_hedge_mode', False))
-    except Exception:
-        _BYBIT_HEDGE_CFG_CACHE = False
-    return _BYBIT_HEDGE_CFG_CACHE
-
 
 class BybitClient:
     """
-    Bybit via CCXT: demo trading (api-demo.bybit.com), testnet sandbox, or live.
-    Demo: set BYBIT_DEMO=true and BYBIT_API_KEY / BYBIT_API_SECRET (not testnet keys).
-    Testnet: BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET with sandbox (no BYBIT_DEMO).
+    Bybit testnet/live client via CCXT.
+    Uses USDT-margined linear perpetual futures for full LONG + SHORT.
     """
 
     def __init__(self, api_key: Optional[str] = None,
                  api_secret: Optional[str] = None,
                  testnet: bool = True):
-        self.demo_trading = _env_bool(os.environ.get('BYBIT_DEMO'))
-
-        if self.demo_trading:
-            self.api_key = api_key or os.environ.get('BYBIT_API_KEY', '')
-            self.api_secret = api_secret or os.environ.get('BYBIT_API_SECRET', '')
-            use_sandbox = False
-            key_hint = 'BYBIT_API_KEY / BYBIT_API_SECRET'
-        elif testnet:
-            self.api_key = api_key or os.environ.get('BYBIT_TESTNET_KEY', '')
-            self.api_secret = api_secret or os.environ.get('BYBIT_TESTNET_SECRET', '')
-            use_sandbox = True
-            key_hint = 'BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET'
-        else:
-            self.api_key = api_key or os.environ.get('BYBIT_API_KEY', '')
-            self.api_secret = api_secret or os.environ.get('BYBIT_API_SECRET', '')
-            use_sandbox = False
-            key_hint = 'BYBIT_API_KEY / BYBIT_API_SECRET'
-
-        # True when connected to Bybit sandbox testnet (not demo, not live)
-        self.testnet = use_sandbox
+        self.api_key = api_key or os.environ.get('BYBIT_TESTNET_KEY', '')
+        self.api_secret = api_secret or os.environ.get('BYBIT_TESTNET_SECRET', '')
+        self.testnet = testnet
         self.available = False
         self.exchange = None
 
         if not (self.api_key and self.api_secret):
-            logger.warning(f"[BYBIT] No API keys — set {key_hint}")
+            logger.warning("[BYBIT] No API keys — set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
             return
 
         try:
@@ -420,7 +364,7 @@ class BybitClient:
             self.exchange = ccxt.bybit({
                 'apiKey': self.api_key,
                 'secret': self.api_secret,
-                'sandbox': use_sandbox,
+                'sandbox': testnet,
                 'options': {
                     'defaultType': 'linear',
                     'recvWindow': 60000,
@@ -428,11 +372,6 @@ class BybitClient:
                 },
                 'enableRateLimit': True,
             })
-            if self.demo_trading:
-                if not hasattr(self.exchange, 'enable_demo_trading'):
-                    logger.warning("[BYBIT] CCXT version has no enable_demo_trading — upgrade ccxt")
-                    return
-                self.exchange.enable_demo_trading(True)
             # Sync clock with Bybit server to prevent timestamp rejections
             self.exchange.load_time_difference()
             if hasattr(self.exchange, 'options'):
@@ -443,14 +382,8 @@ class BybitClient:
             balance = self.exchange.fetch_balance()
             usdt = float(balance.get('USDT', {}).get('total', 0) or 0)
             btc = float(balance.get('BTC', {}).get('total', 0) or 0)
-            if self.demo_trading:
-                env_label = 'DEMO (api-demo.bybit.com)'
-            else:
-                env_label = 'TESTNET' if use_sandbox else 'LIVE'
-            logger.info(f"[BYBIT] Connected to {env_label}")
+            logger.info(f"[BYBIT] Connected to {'TESTNET' if testnet else 'LIVE'}")
             logger.info(f"[BYBIT] USDT: {usdt:,.2f} | BTC: {btc:,.6f}")
-            if bybit_hedge_mode_enabled():
-                logger.info("[BYBIT] Hedge mode ON — positionIdx set on all orders (execution.bybit_hedge_mode or BYBIT_HEDGE_MODE)")
             self.available = True
         except Exception as e:
             logger.warning(f"[BYBIT] Connection failed: {e}")
@@ -556,13 +489,6 @@ class BybitClient:
             params = {}
             if reduce_only:
                 params['reduceOnly'] = True
-            # Hedge: open long=buy→1, short=sell→2; reduce sell closes long→1, buy closes short→2
-            if side in ('buy', 'sell') and bybit_hedge_mode_enabled():
-                params['positionIdx'] = (
-                    _bybit_linear_position_idx_reduce(side)
-                    if reduce_only
-                    else _bybit_linear_position_idx_open(side)
-                )
 
             if order_type == 'limit' and limit_price:
                 order = self.exchange.create_order(bybit_sym, 'limit', side, qty, limit_price, params)
@@ -588,7 +514,6 @@ class BybitClient:
                 'filled_avg_price': order.get('average') or order.get('price'),
                 'status_detail': order.get('status'),
                 'testnet': self.testnet,
-                'demo_trading': self.demo_trading,
             }
         except Exception as e:
             return {'status': 'error', 'message': str(e)[:500]}
@@ -608,16 +533,11 @@ class BybitClient:
             return {'status': 'error'}
         try:
             positions = self.exchange.fetch_positions()
-            hedge = bybit_hedge_mode_enabled()
             for p in positions:
                 contracts = float(p.get('contracts', 0) or 0)
                 if contracts > 0:
-                    pos_side = p.get('side', 'long')
-                    close_side = 'sell' if pos_side == 'long' else 'buy'
-                    params: Dict = {'reduceOnly': True}
-                    if hedge:
-                        params['positionIdx'] = 1 if pos_side == 'long' else 2
-                    self.exchange.create_order(p['symbol'], 'market', close_side, contracts, None, params)
+                    close_side = 'sell' if p.get('side') == 'long' else 'buy'
+                    self.exchange.create_order(p['symbol'], 'market', close_side, contracts, None, {'reduceOnly': True})
             return {'status': 'success', 'closed': True}
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
@@ -690,6 +610,37 @@ class DeltaClient:
                     'public': 'https://cdn-ind.testnet.deltaex.org',
                     'private': 'https://cdn-ind.testnet.deltaex.org',
                 }
+
+            # Sync clock with Delta server to prevent expired_signature errors
+            # Delta rejects if client timestamp > server timestamp (even by a few seconds)
+            # CCXT load_time_difference doesn't work for Delta (returns 0), so we
+            # measure drift using the HTTP Date header from any Delta API response.
+            try:
+                import requests as _req
+                from email.utils import parsedate_to_datetime
+                base_url = 'https://cdn-ind.testnet.deltaex.org' if testnet else 'https://api.delta.exchange'
+                local_before = time.time()
+                resp = _req.get(f"{base_url}/v2/settings", timeout=5)
+                local_after = time.time()
+                server_date = resp.headers.get('Date', '')
+                if server_date:
+                    server_ts = parsedate_to_datetime(server_date).timestamp()
+                    local_mid = (local_before + local_after) / 2
+                    drift_s = local_mid - server_ts  # positive = client ahead
+                    if drift_s > 1.0:
+                        # Client is ahead — apply negative offset with 2s safety margin
+                        self.exchange.timeOffset = -int((drift_s + 2) * 1000)
+                        logger.info(f"[DELTA] Clock drift: client {drift_s:.1f}s ahead — applying offset {self.exchange.timeOffset}ms")
+                    else:
+                        logger.info(f"[DELTA] Clock OK (drift {drift_s:.1f}s)")
+                else:
+                    # No Date header — apply conservative offset
+                    self.exchange.timeOffset = -10000
+                    logger.warning("[DELTA] No Date header — applying -10s offset")
+            except Exception as e:
+                # Last resort: apply conservative negative offset (client usually ahead)
+                self.exchange.timeOffset = -10000
+                logger.warning(f"[DELTA] Time sync failed ({e}) — applying -10s offset")
 
             # Verify auth
             balance = self.exchange.fetch_balance()
@@ -794,12 +745,13 @@ class DeltaClient:
 class PriceFetcher:
     """
     Multi-exchange price data fetcher.
-    Supports: Alpaca (paper/live), CCXT exchanges, optional LiveCoinWatch (not used with Bybit).
+    Supports: Alpaca (paper/live), CCXT exchanges, and LiveCoinWatch for fast data.
 
-    With Bybit: prices, order book, and OHLCV come from Bybit (authenticated or public read-only fallback).
+    Primary: Alpaca paper trading for order execution.
+    Data: LiveCoinWatch for fast prices, CCXT as fallback for OHLCV.
     """
 
-    VALID_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M']
+    VALID_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1M']
 
     def __init__(self, exchange_name: str = "alpaca",
                  testnet: bool = True,
@@ -823,16 +775,11 @@ class PriceFetcher:
         self.bybit: Optional[BybitClient] = None
         self.delta: Optional[DeltaClient] = None
 
-        # ── LiveCoinWatch (optional; never used when Bybit is the trading venue) ──
+        # ── LiveCoinWatch (fast price data) ──
         self.lcw: Optional[LiveCoinWatchFetcher] = None
-        _lcw_disabled = _env_bool(os.environ.get('DISABLE_LIVECOINWATCH'))
-        _use_lcw = (
-            not _lcw_disabled
-            and 'bybit' not in self.exchange_name
-            and os.environ.get('LIVECOINWATCH_API_KEY', '').strip()
-        )
-        if _use_lcw:
-            self.lcw = LiveCoinWatchFetcher(api_key=os.environ.get('LIVECOINWATCH_API_KEY', ''))
+        lcw_key = os.environ.get('LIVECOINWATCH_API_KEY', '')
+        if lcw_key:
+            self.lcw = LiveCoinWatchFetcher(api_key=lcw_key)
 
         # ── CCXT exchange (fallback for OHLCV data) ──
         self.exchange = None
@@ -858,22 +805,33 @@ class PriceFetcher:
         self._available = self.bybit.available
 
         if self.bybit.available:
-            if getattr(self.bybit, 'demo_trading', False):
-                _bl = 'DEMO (Bybit demo trading, not testnet)'
-            else:
-                _bl = 'TESTNET' if testnet else 'LIVE'
-            print(f"  [BYBIT] {_bl} connected")
+            print(f"  [BYBIT] {'TESTNET' if testnet else 'LIVE'} trading connected")
             acct = self.bybit.get_account()
             if 'equity' in acct:
                 print(f"  [BYBIT] Equity: ${acct['equity']:,.2f} | USDT: ${acct.get('cash', 0):,.2f}")
-            # Use Bybit's own exchange for OHLCV data too
-            self.exchange = self.bybit.exchange
-            print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
-        else:
-            if _env_bool(os.environ.get('BYBIT_DEMO')):
-                print(f"  [BYBIT] Not connected - set BYBIT_API_KEY / BYBIT_API_SECRET (BYBIT_DEMO=true)")
+            if testnet:
+                # Bybit TESTNET has frozen/stale OHLCV data — use real Bybit mainnet for candles
+                # Orders still go to testnet via self.bybit, only OHLCV reads from mainnet
+                try:
+                    import ccxt as _ccxt_bybit
+                    self.exchange = _ccxt_bybit.bybit({
+                        'enableRateLimit': True,
+                        'options': {'defaultType': 'swap'},
+                    })
+                    # Verify mainnet data is actually live
+                    _test = self.exchange.fetch_ohlcv('BTC/USDT:USDT', '5m', limit=2)
+                    if _test and len(_test) >= 2:
+                        print("  [DATA] Bybit MAINNET OHLCV for real candle data (orders go to testnet)")
+                    else:
+                        raise RuntimeError("mainnet returned empty")
+                except Exception as _e:
+                    self.exchange = self.bybit.exchange
+                    print(f"  [DATA] Bybit testnet OHLCV (mainnet failed: {str(_e)[:80]})")
             else:
-                print(f"  [BYBIT] Not connected - set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET or BYBIT_API_* + BYBIT_DEMO=true")
+                self.exchange = self.bybit.exchange
+                print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
+        else:
+            print(f"  [BYBIT] Not connected - set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
             self._init_ccxt_readonly()
 
     def _init_delta(self, api_key, api_secret, testnet):
@@ -929,18 +887,9 @@ class PriceFetcher:
         """Initialize a CCXT exchange for read-only OHLCV data."""
         try:
             import ccxt
-            if 'bybit' in self.exchange_name:
-                self.exchange = ccxt.bybit({
-                    'enableRateLimit': True,
-                    'options': {
-                        'defaultType': 'linear',
-                        'adjustForTimeDifference': True,
-                    },
-                })
-                print(f"  [DATA] Bybit public CCXT for OHLCV/prices (read-only, no API keys)")
-            else:
-                self.exchange = ccxt.kraken({'enableRateLimit': True})
-                print(f"  [DATA] Kraken CCXT initialized for OHLCV data (read-only)")
+            # Use Kraken (no auth needed for public data) as OHLCV source
+            self.exchange = ccxt.kraken({'enableRateLimit': True})
+            print(f"  [DATA] Kraken CCXT initialized for OHLCV data (read-only)")
         except Exception as e:
             logger.debug(f"CCXT fallback init failed: {e}")
             self.exchange = None
@@ -1012,14 +961,14 @@ class PriceFetcher:
             return {'last': 0.0, 'bid': 0.0, 'ask': 0.0}
 
     def fetch_latest_price(self, symbol: str) -> Optional[float]:
-        """Fetch current price. Bybit: Bybit → CCXT ticker; others may use LCW / Alpaca / CCXT."""
-        # 1. Bybit (authenticated — same venue as trades)
+        """Fetch current price. Priority: Bybit → LiveCoinWatch → Alpaca → CCXT."""
+        # 1. Bybit (if connected — fastest for futures)
         if self.bybit and self.bybit.available:
             price = self.bybit.fetch_crypto_price(symbol)
             if price and price > 0:
                 return price
 
-        # 2. LiveCoinWatch (only when configured and not Bybit primary)
+        # 2. LiveCoinWatch (fast, ~100ms)
         if self.lcw and self.lcw.available:
             price = self.lcw.fetch_price(symbol)
             if price and price > 0:

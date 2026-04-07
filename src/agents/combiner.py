@@ -18,18 +18,21 @@ from src.agents.base_agent import AgentVote, EnhancedDecision
 
 
 # Regime-adaptive multipliers for each agent type
+# Strategy: EMA(8) trend line (72% WR, PF 1.19 in backtest)
+# trend_momentum and pattern_matcher are most aligned with our proven EMA strategy
+# mean_reversion gets LOWER weight — our strategy is trend-following, not mean-reverting
 REGIME_MULTIPLIERS = {
-    'market_structure': {'crisis': 0.5, 'bull': 1.0, 'bear': 1.0, 'sideways': 1.2},
-    'regime_intelligence': {'crisis': 2.0, 'bull': 0.8, 'bear': 1.5, 'sideways': 1.0},
-    'mean_reversion': {'crisis': 0.3, 'bull': 0.5, 'bear': 1.3, 'sideways': 1.5},
-    'trend_momentum': {'crisis': 0.3, 'bull': 1.5, 'bear': 0.7, 'sideways': 0.5},
+    'market_structure': {'crisis': 0.5, 'bull': 1.2, 'bear': 1.2, 'sideways': 1.0},
+    'regime_intelligence': {'crisis': 2.0, 'bull': 1.0, 'bear': 1.5, 'sideways': 1.0},
+    'mean_reversion': {'crisis': 0.3, 'bull': 0.3, 'bear': 0.8, 'sideways': 1.0},
+    'trend_momentum': {'crisis': 0.5, 'bull': 2.0, 'bear': 1.5, 'sideways': 0.5},
     'risk_guardian': {'crisis': 2.0, 'bull': 0.8, 'bear': 1.5, 'sideways': 1.0},
-    'sentiment_decoder': {'crisis': 1.5, 'bull': 1.0, 'bear': 1.5, 'sideways': 0.8},
-    'trade_timing': {'crisis': 0.5, 'bull': 1.0, 'bear': 1.0, 'sideways': 1.5},
+    'sentiment_decoder': {'crisis': 1.5, 'bull': 0.8, 'bear': 1.2, 'sideways': 0.8},
+    'trade_timing': {'crisis': 0.5, 'bull': 1.0, 'bear': 1.0, 'sideways': 1.2},
     'portfolio_optimizer': {'crisis': 1.5, 'bull': 1.0, 'bear': 1.5, 'sideways': 1.0},
-    'pattern_matcher': {'crisis': 0.5, 'bull': 1.2, 'bear': 1.0, 'sideways': 1.2},
+    'pattern_matcher': {'crisis': 0.5, 'bull': 1.5, 'bear': 1.2, 'sideways': 1.0},
     'loss_prevention': {'crisis': 2.5, 'bull': 0.8, 'bear': 2.0, 'sideways': 1.0},
-    'polymarket_arb': {'crisis': 1.5, 'bull': 1.0, 'bear': 1.0, 'sideways': 1.2},
+    'polymarket_arb': {'crisis': 1.0, 'bull': 0.8, 'bear': 0.8, 'sideways': 1.0},
 }
 
 

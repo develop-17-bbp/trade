@@ -439,15 +439,9 @@ class LLMRouter:
             ('COHERE_API_KEY', 'cohere', 'command-r-plus', 'cohere'),
         ]
 
-        # Local Ollama when OLLAMA_HOST / BASE / LLM_BASE_URL set, or no remote tunnel URL.
-        # Register remote_gpu only if OLLAMA_REMOTE_URL is set and no explicit local endpoint.
-        local_hint = (
-            os.environ.get('OLLAMA_HOST', '').strip()
-            or os.environ.get('OLLAMA_BASE_URL', '').strip()
-            or os.environ.get('LLM_BASE_URL', '').strip()
-        )
+        # ── Remote Ollama GPU is the PRIMARY and ONLY LLM ──
         remote_ollama_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
-        if remote_ollama_url and not local_hint:
+        if remote_ollama_url:
             self.add_provider('remote_gpu', LLMConfig(
                 provider='ollama',
                 model=os.environ.get('OLLAMA_REMOTE_MODEL', 'mistral'),
@@ -456,15 +450,16 @@ class LLMRouter:
             ))
             logger.info(f"Registered remote Ollama GPU: {remote_ollama_url}")
         else:
-            local_base_url = local_hint
-            _local_model = os.environ.get('OLLAMA_MODEL', '').strip() or 'mistral:latest'
+            # Fallback: try local Ollama if no remote URL
+            local_base_url = (
+                os.environ.get('LLM_BASE_URL', '').strip()
+                or os.environ.get('OLLAMA_BASE_URL', '').strip()
+            )
             self.add_provider('local', LLMConfig(
                 provider='ollama',
-                model=_local_model,
+                model='mistral:latest',
                 base_url=local_base_url,
             ))
-            if remote_ollama_url and local_hint:
-                logger.info("OLLAMA_REMOTE_URL ignored while OLLAMA_HOST/BASE_URL/LLM_BASE_URL points at local Ollama")
 
         return self
 

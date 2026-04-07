@@ -131,40 +131,30 @@ class AgenticStrategist:
 
             router = LLMRouter()
 
-            # Step 0: config ai.ollama_base_url — localhost must use OLLAMA_HOST / local provider,
-            # not OLLAMA_REMOTE_URL (otherwise add_from_env skips "local" and model override misses).
+            # Step 0: If a remote Ollama URL is set in config, expose it as env var
+            # so the LLM router can auto-discover it
             _remote_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
             if not _remote_url:
+                # Try reading from config.yaml ai.ollama_base_url
                 try:
                     import yaml
-                    from urllib.parse import urlparse
-
                     _cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config.yaml')
                     if os.path.exists(_cfg_path):
                         with open(_cfg_path) as _f:
                             _yaml_cfg = yaml.safe_load(_f)
-                        _cfg_ollama = ((_yaml_cfg or {}).get('ai', {}) or {}).get('ollama_base_url', '') or ''
-                        if _cfg_ollama:
-                            _host = (urlparse(_cfg_ollama).hostname or '').lower()
-                            _base = _cfg_ollama.rstrip('/')
-                            if _host in ('127.0.0.1', 'localhost', '0.0.0.0'):
-                                os.environ.setdefault('OLLAMA_HOST', _base)
-                                self.logger.info(f"[LLM] Local Ollama from config: {_base}")
-                            else:
-                                os.environ['OLLAMA_REMOTE_URL'] = _base
-                                self.logger.info(f"[LLM] Remote Ollama from config: {_base}")
+                        _remote_url = (_yaml_cfg or {}).get('ai', {}).get('ollama_base_url', '')
+                        if _remote_url:
+                            os.environ['OLLAMA_REMOTE_URL'] = _remote_url
+                            self.logger.info(f"[LLM] Remote Ollama GPU from config: {_remote_url}")
                 except Exception:
                     pass
 
             # Step 1: Auto-detect ALL available cloud API keys + local Ollama
             router.add_from_env()
 
-            # Step 2: Apply strategist model to whichever Ollama provider was registered
-            if self.model_name:
-                if 'local' in router.providers:
-                    router.providers['local'].config.model = self.model_name
-                if 'remote_gpu' in router.providers:
-                    router.providers['remote_gpu'].config.model = self.model_name
+            # Step 2: Override local Ollama model with config value if set
+            if self.model_name and 'local' in router.providers:
+                router.providers['local'].config.model = self.model_name
 
             # Step 3: If user explicitly configured a provider, ensure it's primary
             if self.provider not in ('local', 'auto') and self.api_key:
@@ -226,17 +216,25 @@ class AgenticStrategist:
             ### ON-CHAIN DATA: {onchain_serial}
             ### TRADE LOGS (Last 20):
             {history_summary}
-            
+
+            ### PROVEN STRATEGY (backtested 6 months: 72% WR, PF 1.19):
+            EMA(8) Trend Line: Enter on new EMA line (direction change), ride trend, exit on EMA reversal.
+            - Entry score >= 7 required. EMA line = primary SL. Hard stop -2% emergency only.
+            - EMA exit ONLY when profitable (100% WR). Losing trades handled by SL (68-78% WR).
+            - Winners avg 1-3 hours. Losers die in <40 min. Never cut winners early.
+            - 28% of trades hit hard stop — these share: late entry, declining volume, fighting macro trend.
+
             ### CONTEXTUAL FRAMEWORK:
-            1. MARKET STRUCTURE: Is this a Bull Market, Bear Market, or Altcoin Season? Consider Bitcoin Dominance.
-            2. PSYCHOLOGY: Monitor for FOMO (buying high on hype) or FUD (selling low on fear). Ensure Emotional Discipline.
+            1. MARKET STRUCTURE: Is this a Bull Market, Bear Market, or Altcoin Season? Our EMA strategy works in TRENDING markets. In CHOPPY/RANGING, reduce trade frequency.
+            2. PSYCHOLOGY: Monitor for FOMO (buying high on hype) or FUD (selling low on fear). Our entry score >= 7 filter eliminates most emotional trades.
             3. FUNDAMENTALS (FA): Consider project Whitepapers, Tokenomics, and Use Cases if implied in news.
-            4. TECHNICALS (TA): Support/Resistance, RSI (Overbought/Oversold), and MACD Momentum.
-            5. RISK: Strict Position Sizing (1-2% rule) and Risk/Reward (1:2 ratio).
-            
+            4. TECHNICALS (TA): EMA(8) is primary. Support/Resistance, RSI (55-75 for BUY, 25-45 for SELL), ADX > 25 for trend confirmation.
+            5. RISK: Position sizing capped at 5% equity. Hard stop -2%. EMA line-following SL. Breakeven at 1.0% profit.
+
             ### TASK:
             Analyze why we are winning/losing. Is the current 'market_regime' correctly identified?
-            - If we are losing under 'CHOPPY' conditions, suggest increasing stop-loss distance.
+            - If we are losing: are we entering in RANGING conditions (EMA flat, ADX < 20)? Suggest blocking trades.
+            - If we are winning: which exit mechanism is capturing profits (EMA exit vs SL ratchet)?
             - If 'funding_rates' are high, suggest a bearish 'macro_bias' (deleveraging risk).
             - If 'whale_sentiment' is BEARISH, be cautious with long positions.
             - Provide a specific reasoning trace that references the Framework above.
@@ -691,13 +689,15 @@ STRATEGY RULES:
 
     def _preferred_fallback_chain(self) -> Optional[List[str]]:
         """
-        Prefer local Ollama → remote tunnel (if registered) → cloud APIs → rule-based.
+        Prefer remote GPU Ollama → cloud APIs → local Ollama → rule-based.
+        The remote_gpu provider is the Cloudflare tunnel to the GPU machine.
         """
         if not self._llm_router:
             return None
         providers = list(self._llm_router.providers.keys())
+        # Priority: remote_gpu (fast GPU) → gemini (cloud) → local (CPU ollama)
         preferred = []
-        for p in ['local', 'remote_gpu', 'gemini']:
+        for p in ['remote_gpu', 'gemini', 'local']:
             if p in providers:
                 preferred.append(p)
         # Add any remaining providers

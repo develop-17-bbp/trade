@@ -12,6 +12,14 @@ import threading
 import yaml
 from dotenv import load_dotenv
 
+# Force UTF-8 output on Windows (prevents UnicodeEncodeError with cp1252)
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 # Ensure project root is on sys.path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -51,6 +59,7 @@ def main():
             logging.FileHandler(
                 os.path.join(PROJECT_ROOT, 'logs', 'system_output.log'),
                 mode='a',
+                encoding='utf-8',
             ),
         ],
     )
@@ -106,39 +115,5 @@ def main():
         executor.run()
 
 
-def _open_dashboard_browser(delay_sec: float = 1.0) -> None:
-    import threading
-    import time
-    import webbrowser
-
-    def _go():
-        time.sleep(delay_sec)
-        webbrowser.open('http://127.0.0.1:5000/')
-
-    threading.Thread(target=_go, daemon=True).start()
-
-
 if __name__ == '__main__':
-    argv = sys.argv[1:]
-    dash_only = '--broker-dashboard' in argv
-    dash_with_bot = '--dashboard' in argv
-
-    if dash_only or dash_with_bot:
-        from src.broker_dashboard.app import run_app
-        import threading
-
-        _open_dashboard_browser(1.0 if dash_with_bot else 0.6)
-
-        if dash_with_bot:
-            def _serve():
-                run_app(host='127.0.0.1', port=5000)
-
-            threading.Thread(target=_serve, daemon=True).start()
-            print('  Trade Desk: http://127.0.0.1:5000 (opening in browser)')
-            print('  Trading engine starting in parallel…')
-            main()
-        else:
-            print('  Trade Desk: http://127.0.0.1:5000 (opening in browser)')
-            run_app(host='127.0.0.1', port=5000)
-    else:
-        main()
+    main()
