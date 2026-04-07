@@ -35,6 +35,7 @@ def main():
     parser.add_argument('--max-score', type=int, default=None, help='Max entry score cap (default: no cap)')
     parser.add_argument('--hard-stop', type=float, default=None, help='Hard stop pct (e.g. -2.5)')
     parser.add_argument('--cooldown', type=int, default=None, help='Post-close cooldown in minutes')
+    parser.add_argument('--short-penalty', type=int, default=None, help='Extra score needed for SHORT entries')
     parser.add_argument('--csv', type=str, default=None, help='Export trades to CSV')
     parser.add_argument('--verbose', '-v', action='store_true', help='Print bar-by-bar output')
     parser.add_argument('--exchange', type=str, default='binance', help='Data source exchange')
@@ -61,6 +62,8 @@ def main():
         config['hard_stop_pct'] = args.hard_stop
     if hasattr(args, 'cooldown') and args.cooldown is not None:
         config['post_close_cooldown_min'] = args.cooldown
+    if hasattr(args, 'short_penalty') and args.short_penalty is not None:
+        config['short_score_penalty'] = args.short_penalty
 
     config['initial_capital'] = args.capital
     config['risk_per_trade_pct'] = config.get('risk_per_trade_pct', 2.0)

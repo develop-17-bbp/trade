@@ -2022,14 +2022,13 @@ class TradingExecutor:
         if utc_hour < 6 or utc_hour >= 18:
             math_filter_warnings.append(f"TIME: overnight session (UTC {utc_hour}:00) -- historically weaker")
 
-        # ── JOURNAL-LEARNED: Dangerous hours hard block ──
-        # Data: Hours 19-04 lose money consistently (L1 death rate 60%+)
-        # Profitable hours: 06-13 (WR 57%, net +$1,164)
-        # Journal data: UTC 19-03 has 2-17% win rate, lost -$192K combined
-        # Enable by default — worst hours are a proven money pit
-        dangerous_hours = self.config.get('filters', {}).get('dangerous_hours', [19, 20, 21, 22, 23, 0, 1, 2, 3])
-        if utc_hour in dangerous_hours:
-            print(f"  [{self._ex_tag}:{asset}] HOUR BLOCK: UTC {utc_hour}:00 is a high-loss hour (2-17% WR in journal)")
+        # ── DANGEROUS HOURS: DISABLED for crypto (24/7 market) ──
+        # v13 backtest finding: blocking hours caused artificial trade clustering at UTC 04
+        # (all pent-up signals fire when block lifts → 17% of trades in worst hour)
+        # Removing the filter spread trades evenly and improved PF from 0.97 → 1.01
+        dangerous_hours = self.config.get('filters', {}).get('dangerous_hours', [])  # Empty = no block
+        if dangerous_hours and utc_hour in dangerous_hours:
+            print(f"  [{self._ex_tag}:{asset}] HOUR BLOCK: UTC {utc_hour}:00 is a high-loss hour")
             return
 
         # Flag for position sizing: reduce size during off-hours
@@ -2182,6 +2181,18 @@ class TradingExecutor:
             if (signal == "BUY" and _obv == 'RISING') or (signal == "SELL" and _obv == 'FALLING'):
                 entry_score += 1
                 score_reasons.append(f"obv_{_obv}")
+
+            # 10. HORIZONTAL S/R LEVELS (v13: -2 to +1 points)
+            try:
+                from src.indicators.trendlines import get_sr_score_adjustment
+                sr_ctx = get_sr_score_adjustment(highs, lows, closes, signal, lookback=100)
+                sr_adj = sr_ctx.get('sr_score_adj', 0)
+                if sr_adj != 0:
+                    entry_score += sr_adj
+                    sr_detail = sr_ctx.get('sr_details', f'sr={sr_adj}')
+                    score_reasons.append(sr_detail)
+            except Exception:
+                pass
 
         except Exception:
             pass  # Don't block if indicator boosting fails
@@ -2733,17 +2744,34 @@ class TradingExecutor:
         # Store ML context for bear agent and other downstream uses
         self._last_ml_context = ml_context
 
-        # ── ENTRY SCORE HARD GATE ──
-        # After all ML boosting, check if score meets minimum threshold
+        # ── ENTRY SCORE HARD GATE (v13 optimized) ──
+        # After all ML boosting, check score range [min, max]
+        # v13 finding: high scores (8+) are momentum traps → cap at 7
+        # v13 finding: SHORTs need +3 extra score (LONG bias in crypto)
         min_entry_score = self.config.get('adaptive', {}).get('min_entry_score', 4)
-        if entry_score < min_entry_score:
-            print(f"  [{self._ex_tag}:{asset}] LOW SCORE BLOCK: {entry_score}/{min_entry_score} ({', '.join(score_reasons)}) — skipping LLM call")
+        max_entry_score = self.config.get('adaptive', {}).get('max_entry_score', 7)
+        short_score_penalty = self.config.get('adaptive', {}).get('short_score_penalty', 3)
+        effective_min = min_entry_score
+        if signal == "SELL":  # SHORT entry needs higher score
+            effective_min += short_score_penalty
+        if entry_score < effective_min:
+            print(f"  [{self._ex_tag}:{asset}] LOW SCORE BLOCK: {entry_score}/{effective_min} ({', '.join(score_reasons)}) — skipping LLM call")
+            return
+        if entry_score > max_entry_score:
+            print(f"  [{self._ex_tag}:{asset}] HIGH SCORE BLOCK: {entry_score}>{max_entry_score} (momentum trap) — skipping")
             return
 
-        # Quality gate: ATR ratio
+        # Quality gate: ATR ratio (minimum)
         atr_ratio = current_atr / price if price > 0 else 0
         if atr_ratio < self.min_atr_ratio:
             return
+
+        # v13 Volatility block: ATR > 2x recent average = extreme vol, block entry
+        if len(atr_vals) >= 20:
+            avg_atr = sum(atr_vals[-20:]) / 20
+            if avg_atr > 0 and current_atr / avg_atr > 2.0:
+                print(f"  [{self._ex_tag}:{asset}] VOL BLOCK: ATR {current_atr/avg_atr:.1f}x average — extreme volatility")
+                return
 
         # Build candle data for LLM prompt (last 20 candles)
         n_candles = min(20, len(closes))
