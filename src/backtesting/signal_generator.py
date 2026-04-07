@@ -390,7 +390,21 @@ def compute_entry_score(signal: str, ohlcv: dict, ema_vals: list,
         entry_score += tl_score_adj  # Negative = penalty
         score_reasons.append(f"near_trendline(adj={tl_score_adj})")
 
-    # 11. Volatility filter — BLOCK entries during extreme volatility spikes
+    # 11. Horizontal S/R levels — penalize entries near opposing levels
+    try:
+        from src.indicators.trendlines import get_sr_score_adjustment
+        sr_ctx = get_sr_score_adjustment(
+            ohlcv['highs'], ohlcv['lows'], ohlcv['closes'],
+            signal, lookback=100
+        )
+        sr_adj = sr_ctx.get('sr_score_adj', 0)
+        if sr_adj != 0:
+            entry_score += sr_adj
+            score_reasons.append(sr_ctx.get('sr_details', f'sr_adj={sr_adj}'))
+    except Exception:
+        pass
+
+    # 12. Volatility filter — BLOCK entries during extreme volatility spikes
     # Instead of adjusting score (which shifts distribution), use as hard gate
     # Only block at extreme levels (ATR > 2x) to avoid entering during crashes/pumps
     atr_vals = indicator_context.get('atr_vals', [])

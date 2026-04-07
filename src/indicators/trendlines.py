@@ -500,6 +500,153 @@ def multi_timeframe_trendlines(ohlcv_by_tf: Dict[str, Dict],
     }
 
 
+def detect_sr_levels(highs: List[float], lows: List[float], closes: List[float],
+                     lookback: int = 100, zone_pct: float = 0.3,
+                     min_touches: int = 3) -> List[Dict]:
+    """Detect horizontal support/resistance levels from swing point clusters.
+
+    Groups swing highs and lows into price zones. Zones with multiple touches
+    (price reversals at similar levels) become S/R levels.
+
+    Args:
+        lookback: bars to analyze
+        zone_pct: % width of each zone (prices within this band count as same level)
+        min_touches: minimum touches to qualify as S/R level
+
+    Returns:
+        List of {price, type, touches, strength, distance_pct} sorted by strength
+    """
+    n = len(closes)
+    if n < 30:
+        return []
+
+    start = max(0, n - lookback)
+    h = highs[start:]
+    l = lows[start:]
+    c = closes[start:]
+    current = c[-1]
+
+    # Find swing highs and swing lows (window=3)
+    swing_highs = []
+    swing_lows = []
+    for i in range(2, len(h) - 2):
+        if h[i] >= h[i-1] and h[i] >= h[i-2] and h[i] >= h[i+1] and h[i] >= h[i+2]:
+            swing_highs.append(h[i])
+        if l[i] <= l[i-1] and l[i] <= l[i-2] and l[i] <= l[i+1] and l[i] <= l[i+2]:
+            swing_lows.append(l[i])
+
+    # Combine all swing points
+    all_points = [(p, 'high') for p in swing_highs] + [(p, 'low') for p in swing_lows]
+    if not all_points:
+        return []
+
+    # Cluster points into zones
+    all_points.sort(key=lambda x: x[0])
+    zones = []
+    used = [False] * len(all_points)
+
+    for i in range(len(all_points)):
+        if used[i]:
+            continue
+        center = all_points[i][0]
+        zone_width = center * zone_pct / 100.0
+        zone_points = []
+
+        for j in range(i, len(all_points)):
+            if abs(all_points[j][0] - center) <= zone_width:
+                zone_points.append(all_points[j])
+                used[j] = True
+
+        if len(zone_points) >= min_touches:
+            avg_price = sum(p for p, _ in zone_points) / len(zone_points)
+            n_highs = sum(1 for _, t in zone_points if t == 'high')
+            n_lows = sum(1 for _, t in zone_points if t == 'low')
+
+            if avg_price > current:
+                level_type = 'resistance'
+            else:
+                level_type = 'support'
+
+            dist_pct = (avg_price - current) / current * 100
+
+            zones.append({
+                'price': round(avg_price, 2),
+                'type': level_type,
+                'touches': len(zone_points),
+                'strength': len(zone_points) / max(1, len(all_points)) * 10,
+                'distance_pct': round(dist_pct, 3),
+            })
+
+    zones.sort(key=lambda z: abs(z['distance_pct']))
+    return zones[:10]
+
+
+def get_sr_score_adjustment(highs: List[float], lows: List[float],
+                            closes: List[float], signal: str,
+                            lookback: int = 100) -> Dict:
+    """Get S/R-based entry score adjustment.
+
+    Penalizes entries near opposing S/R levels:
+    - LONG near strong resistance → penalty
+    - SHORT near strong support → penalty
+    - Breakout through S/R → bonus
+
+    Returns:
+        Dict with sr_score_adj, nearest_resistance, nearest_support, sr_details
+    """
+    levels = detect_sr_levels(highs, lows, closes, lookback=lookback)
+    if not levels:
+        return {'sr_score_adj': 0, 'sr_details': ''}
+
+    current = closes[-1]
+    score_adj = 0
+    details = []
+
+    nearest_res = None
+    nearest_sup = None
+
+    for lv in levels:
+        if lv['type'] == 'resistance' and (nearest_res is None or abs(lv['distance_pct']) < abs(nearest_res['distance_pct'])):
+            nearest_res = lv
+        if lv['type'] == 'support' and (nearest_sup is None or abs(lv['distance_pct']) < abs(nearest_sup['distance_pct'])):
+            nearest_sup = lv
+
+    # LONG near resistance = bad (price likely to bounce down)
+    if signal == 'BUY' and nearest_res and 0 < nearest_res['distance_pct'] < 0.5:
+        penalty = -1 if nearest_res['touches'] < 4 else -2
+        score_adj += penalty
+        details.append(f"near_res({nearest_res['price']:.0f},{nearest_res['touches']}t,{nearest_res['distance_pct']:+.2f}%)")
+
+    # SHORT near support = bad (price likely to bounce up)
+    if signal == 'SELL' and nearest_sup and -0.5 < nearest_sup['distance_pct'] < 0:
+        penalty = -1 if nearest_sup['touches'] < 4 else -2
+        score_adj += penalty
+        details.append(f"near_sup({nearest_sup['price']:.0f},{nearest_sup['touches']}t,{nearest_sup['distance_pct']:+.2f}%)")
+
+    # LONG breaking above resistance = strong signal
+    if signal == 'BUY' and nearest_res and -0.3 < nearest_res['distance_pct'] < 0:
+        # Price just broke above resistance
+        bonus = 1 if nearest_res['touches'] >= 3 else 0
+        score_adj += bonus
+        if bonus:
+            details.append(f"break_res({nearest_res['price']:.0f},{nearest_res['touches']}t)")
+
+    # SHORT breaking below support = strong signal
+    if signal == 'SELL' and nearest_sup and 0 < nearest_sup['distance_pct'] < 0.3:
+        bonus = 1 if nearest_sup['touches'] >= 3 else 0
+        score_adj += bonus
+        if bonus:
+            details.append(f"break_sup({nearest_sup['price']:.0f},{nearest_sup['touches']}t)")
+
+    return {
+        'sr_score_adj': score_adj,
+        'nearest_resistance': nearest_res,
+        'nearest_support': nearest_sup,
+        'sr_levels': levels,
+        'sr_details': ', '.join(details),
+    }
+
+
 def _compute_score_adjustment(contexts: Dict) -> int:
     """
     Compute entry score adjustment based on trendline analysis.
