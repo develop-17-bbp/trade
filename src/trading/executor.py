@@ -248,8 +248,41 @@ class TradingExecutor:
         # the crossover pattern vs live EMA (previous closed bar must have touched EMA).
         self.early_ema_switch_entry: bool = bool(_exec.get('early_ema_switch_entry', False))
         self.early_switch_size_mult: float = max(1.0, float(_exec.get('early_switch_size_mult', 1.3)))
-        # USDT linear: exchange leverage sets IM ≈ notional/leverage; we size notional as margin% × equity × leverage.
-        self._order_leverage: float = max(1.0, float(_exec.get('leverage', 1) or 1))
+        # USDT linear: exchange leverage sets IM ≈ notional/leverage; notional = margin% × equity × leverage.
+        _lm = str(_exec.get('leverage_mode', 'fixed') or 'fixed').strip().lower()
+        self._leverage_mode: str = _lm if _lm in ('fixed', 'dynamic') else 'fixed'
+        self._leverage_min: float = max(1.0, float(_exec.get('leverage_min', 1) or 1))
+        _lmax_raw = _exec.get('leverage_max', _exec.get('leverage', 10))
+        self._leverage_max: float = max(
+            self._leverage_min,
+            float(_lmax_raw if _lmax_raw is not None else 10) or 10,
+        )
+        if self._leverage_mode == 'fixed':
+            self._order_leverage: float = max(
+                1.0, float(_exec.get('leverage', 1) or 1)
+            )
+            self._leverage_max = self._order_leverage
+            self._leverage_min = self._order_leverage
+        else:
+            self._order_leverage: float = self._leverage_max
+        # Taker fee % per side (e.g. Bybit 0.055 = 0.055%). Round-trip ≈ 2×; use for min move vs fees.
+        self._taker_fee_pct_per_side: float = max(
+            0.0, float(_exec.get('taker_fee_pct_per_side', 0.055) or 0.0)
+        )
+        _fee_buf = max(1.0, float(_exec.get('fee_coverage_safety_buffer', 1.35) or 1.0))
+        self._fee_coverage_safety_buffer: float = _fee_buf
+        _side_frac = self._taker_fee_pct_per_side / 100.0
+        self._roundtrip_taker_fee_frac: float = 2.0 * _side_frac
+        self._min_price_edge_pct_after_fees: float = (
+            self._roundtrip_taker_fee_frac * 100.0 * _fee_buf
+        )
+        self._fee_gate_skip_if_atr_low: bool = bool(
+            _exec.get('fee_gate_skip_if_atr_low', True)
+        )
+        # Subtract model taker fees from PnL for peak trail / early giveback / journal extras (est.; not exchange audit).
+        self._account_fees_in_pnl: bool = bool(
+            _exec.get('account_taker_fees_in_pnl_logic', True)
+        )
 
         # Trailing SL: early-window giveback protection + dynamic ATR trail (see _manage_position)
         _tr = _exec.get('trailing') if isinstance(_exec.get('trailing'), dict) else {}
@@ -266,6 +299,25 @@ class TradingExecutor:
         self._trail_min_sl_move_usd: float = max(0.01, float(_tr.get('min_sl_move_usd', 0.50)))
         self._trail_min_sl_move_pct: float = max(1e-6, float(_tr.get('min_sl_move_price_pct', 0.0001)))
         self._trail_in_profit_min_move_scale: float = max(0.15, min(1.0, float(_tr.get('in_profit_min_move_scale', 0.40))))
+        # Peak PnL% trail: once favorable price PnL% >= activate, track max PnL%; market-close if PnL% drops
+        # by giveback (absolute percentage points) below that peak — ride trends, exit on first meaningful dip.
+        self._peak_pnl_trail_enabled: bool = bool(_tr.get('peak_pnl_trail_enabled', False))
+        self._peak_pnl_trail_activate_pct: float = max(
+            0.0, float(_tr.get('peak_pnl_trail_activate_pct', 0.10))
+        )
+        self._peak_pnl_trail_giveback_pct: float = max(
+            1e-6, float(_tr.get('peak_pnl_trail_giveback_pct', 0.05))
+        )
+        # Gross-only floor for peak trail activate (ATR gate uses fees separately). When net PnL drives trail, skip this bump.
+        if (
+            self._peak_pnl_trail_enabled
+            and self._min_price_edge_pct_after_fees > 0
+            and not self._account_fees_in_pnl
+        ):
+            self._peak_pnl_trail_activate_pct = max(
+                self._peak_pnl_trail_activate_pct,
+                self._min_price_edge_pct_after_fees,
+            )
 
         # Position sizing — % of equity + USD cap; dynamic scales with conviction + optional daily target
         _sz = _exec.get('sizing') if isinstance(_exec.get('sizing'), dict) else {}
@@ -1047,6 +1099,94 @@ class TradingExecutor:
             max_usd = min(self._sizing_max_trade_usd, cap_from_eq)
         return max_pct, max_usd, self._sizing_max_equity_fraction
 
+    def _leverage_for_trade(self, confidence: float, unified: dict) -> float:
+        """Fixed: config leverage. Dynamic: interpolate between leverage_min and leverage_max from LLM signals."""
+        if self._leverage_mode == 'fixed':
+            return max(1.0, float(self._order_leverage))
+        conf = max(0.0, min(1.0, float(confidence)))
+        tq = max(0.0, min(10.0, float(unified.get('trade_quality', 5))))
+        blend = 0.55 * conf + 0.45 * (tq / 10.0)
+        span = self._leverage_max - self._leverage_min
+        lev = self._leverage_min + span * blend
+        lev = int(round(max(self._leverage_min, min(self._leverage_max, lev))))
+        return max(1, lev)
+
+    def _set_exchange_leverage_symbol(self, asset: str, leverage: float) -> None:
+        try:
+            if not self._exchange_client:
+                return
+            sym = self._get_symbol(asset)
+            lv = int(round(min(max(1.0, float(leverage)), 125)))
+            self._exchange_client.exchange.set_leverage(lv, sym)
+        except Exception:
+            pass
+
+    def _coin_mult_for_position(self, asset: str, contract_size: float) -> float:
+        cs = float(contract_size or 0.0)
+        if cs > 0:
+            return cs
+        if self._exchange_name == 'delta':
+            return {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001)
+        return 1.0
+
+    def _notional_usd(self, qty: float, px: float, asset: str, contract_size: float) -> float:
+        m = self._coin_mult_for_position(asset, contract_size)
+        return abs(float(qty)) * float(px) * m
+
+    def _est_taker_fee_usd(self, notional_usd: float) -> float:
+        if self._taker_fee_pct_per_side <= 0:
+            return 0.0
+        return max(0.0, float(notional_usd)) * (self._taker_fee_pct_per_side / 100.0)
+
+    def _fee_adjusted_upnl_usd(
+        self,
+        asset: str,
+        pos: dict,
+        direction: str,
+        entry: float,
+        mark: float,
+        qty: float,
+        contract_size: float,
+    ) -> Tuple[float, float, float, float]:
+        """
+        Returns (gross_upnl_usd, entry_fee_est, exit_fee_est, net_upnl_usd).
+        Net ≈ gross − entry taker est − exit taker est at current mark.
+        """
+        gross = _unrealized_pnl_usd(direction, entry, mark, qty, contract_size)
+        if not self._account_fees_in_pnl or self._taker_fee_pct_per_side <= 0:
+            return gross, 0.0, 0.0, gross
+        n_ent = float(
+            pos.get('entry_notional_usd')
+            or self._notional_usd(qty, entry, asset, contract_size)
+        )
+        n_mk = self._notional_usd(qty, mark, asset, contract_size)
+        ef = float(pos.get('entry_fee_usd_est') or self._est_taker_fee_usd(n_ent))
+        xf = self._est_taker_fee_usd(n_mk)
+        return gross, ef, xf, gross - ef - xf
+
+    def _pnl_pct_peak_trail(
+        self,
+        asset: str,
+        pos: dict,
+        direction: str,
+        entry: float,
+        mark: float,
+        qty: float,
+        contract_size: float,
+        gross_pnl_pct: float,
+    ) -> float:
+        """Peak trail uses net % vs entry notional when fee accounting is on."""
+        if not self._account_fees_in_pnl or self._taker_fee_pct_per_side <= 0:
+            return gross_pnl_pct
+        _, _, _, net_u = self._fee_adjusted_upnl_usd(
+            asset, pos, direction, entry, mark, qty, contract_size
+        )
+        den = max(
+            float(pos.get('entry_notional_usd') or self._notional_usd(qty, entry, asset, contract_size)),
+            1e-9,
+        )
+        return (net_u / den) * 100.0
+
     def _conviction_score(self, unified: dict) -> float:
         """0–1 aggregate from LLM + MTF + risk (higher = scale toward max position %)."""
         conf = max(0.0, min(1.0, float(unified.get('confidence', 0.5))))
@@ -1312,10 +1452,15 @@ class TradingExecutor:
             _cap_note = "∞ max_trade (equity×lev cap after connect)"
         else:
             _cap_note = f"≤${self._sizing_max_trade_usd:,.0f} (after connect)"
+        _lev_banner = (
+            f"{self._order_leverage:.0f}x fixed"
+            if self._leverage_mode == 'fixed'
+            else f"dynamic {self._leverage_min:.0f}x–{self._leverage_max:.0f}x (caps use max)"
+        )
         print(
-            f"  Leverage: {self._order_leverage:.0f}x (execution.leverage) | "
+            f"  Leverage: {_lev_banner} | "
             f"Sizing: {self._sizing_mode} | max {_mxp:.0f}% margin / "
-            f"{_cap_note} notional cap ({_mxf:.0%} equity × {self._order_leverage:.0f}x)"
+            f"{_cap_note} notional cap ({_mxf:.0%} equity × {self._order_leverage:.0f}x max)"
             + (
                 (
                     f" | daily plan ramp ${self._sizing_daily_target_usd:,.0f} "
@@ -1330,6 +1475,19 @@ class TradingExecutor:
                 )
             )
         )
+        if self._taker_fee_pct_per_side > 0:
+            print(
+                f"  Fees: {self._taker_fee_pct_per_side:.3f}%/side (model taker) → "
+                f"~{self._roundtrip_taker_fee_frac * 100:.3f}% round-trip; "
+                f"min ATR% for entry ≥ {self._min_price_edge_pct_after_fees:.3f}% "
+                f"(×{self._fee_coverage_safety_buffer:.2f} buffer, "
+                f"gate {'on' if self._fee_gate_skip_if_atr_low else 'off'})"
+            )
+        if self._account_fees_in_pnl:
+            print(
+                "  Fee accounting: ON — peak trail / early uPnL giveback use est. net vs taker fees; "
+                "journal logs gross pnl_usd + extra pnl_usd_net_est"
+            )
         if self._use_claude and self._claude_client:
             print(f"  LLM: Claude API ({self._claude_model}) -- Anthropic")
         else:
@@ -2225,6 +2383,8 @@ class TradingExecutor:
                                             sync_sl = entry_p - _md
                                         else:
                                             sync_sl = entry_p + _md
+                                _sync_n = self._notional_usd(contracts, entry_p, asset, _sync_cs)
+                                _sync_fe = self._est_taker_fee_usd(_sync_n)
                                 self.positions[asset] = {
                                     'direction': synced_direction,
                                     'side': 'buy' if pos_side == 'long' else 'sell',
@@ -2240,6 +2400,10 @@ class TradingExecutor:
                                     'max_loss_usd_cap': _max_l,
                                     'bounce_loss_relief': False,
                                     'peak_upnl_usd': 0.0,
+                                    'peak_trail_armed': False,
+                                    'peak_trail_pnl_pct': 0.0,
+                                    'entry_notional_usd': _sync_n,
+                                    'entry_fee_usd_est': _sync_fe,
                                 }
                                 print(f"  [{self._ex_tag}:{asset}] SYNCED {pos_side} position ({contracts}) ${pos_notional:,.0f} | SL=${sync_sl:,.2f}")
                             # Don't return — let _manage_position handle it
@@ -2454,6 +2618,23 @@ class TradingExecutor:
             self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
         self.bear_veto_stats[asset]['passed'] += 1
 
+        # ── Fee-aware gate: skip if typical volatility (ATR %) can't cover round-trip taker fees × buffer ──
+        if (
+            self._fee_gate_skip_if_atr_low
+            and self._min_price_edge_pct_after_fees > 0
+            and price > 0
+            and current_atr > 0
+        ):
+            atr_pct = (current_atr / price) * 100.0
+            if atr_pct + 1e-12 < self._min_price_edge_pct_after_fees:
+                print(
+                    f"  [{self._ex_tag}:{asset}] SKIP (fees): ATR {atr_pct:.3f}% < "
+                    f"{self._min_price_edge_pct_after_fees:.3f}% min edge "
+                    f"(2×{self._taker_fee_pct_per_side:.3f}% taker × {self._fee_coverage_safety_buffer:.2f} buffer) "
+                    f"— unlikely net profit after ~{self._roundtrip_taker_fee_frac*100:.3f}% round-trip fees"
+                )
+                return
+
         # ── Edge Positioning: adjust size by historical win rate ──
         if (
             self.edge_enabled
@@ -2477,8 +2658,11 @@ class TradingExecutor:
             print(f"  [{self._ex_tag}:{asset}] SKIP: no equity available")
             return
 
+        trade_lev = self._leverage_for_trade(confidence, unified)
+        self._set_exchange_leverage_symbol(asset, trade_lev)
+
         margin_alloc = self.equity * (size_pct / 100.0)
-        notional = margin_alloc * self._order_leverage
+        notional = margin_alloc * float(trade_lev)
         notional = min(notional, max_trade)
 
         if (
@@ -2486,14 +2670,24 @@ class TradingExecutor:
             or self._sizing_mode in ('dynamic', 'llm_direct')
         ):
             _cap_s = "∞" if math.isinf(max_trade) else f"${max_trade:,.0f}"
+            _lm = (
+                f"{trade_lev:.0f}x"
+                if self._leverage_mode == 'fixed'
+                else f"{trade_lev:.0f}x (dynamic {self._leverage_min:.0f}-{self._leverage_max:.0f})"
+            )
             print(
                 f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.1f}% margin of ${self.equity:,.0f} "
-                f"× {self._order_leverage:.0f}x → ${notional:,.0f} notional (cap {_cap_s}) | {sizing_note}"
+                f"× {_lm} → ${notional:,.0f} notional (cap {_cap_s}) | {sizing_note}"
             )
         else:
             _cap_s = "∞" if math.isinf(max_trade) else f"${max_trade:,.0f}"
+            _lm = (
+                f"{trade_lev:.0f}x"
+                if self._leverage_mode == 'fixed'
+                else f"{trade_lev:.0f}x (dyn)"
+            )
             print(
-                f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.0f}% margin × {self._order_leverage:.0f}x "
+                f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.0f}% margin × {_lm} "
                 f"→ ${notional:,.0f} notional (cap {_cap_s})"
             )
 
@@ -2514,7 +2708,7 @@ class TradingExecutor:
             qty = max(1, int(notional / contract_value))  # number of contracts
             actual_notional = qty * contract_value
             print(f"  [{self._ex_tag}:{asset}] DELTA: {qty} contracts x ${contract_value:,.2f} = ${actual_notional:,.2f} notional")
-            _max_n = self.equity * self._sizing_max_equity_fraction * self._order_leverage
+            _max_n = self.equity * self._sizing_max_equity_fraction * float(trade_lev)
             if actual_notional > _max_n + 1e-9 and qty > 1:
                 qty = max(1, int(_max_n / contract_value))
                 actual_notional = qty * contract_value
@@ -2727,6 +2921,14 @@ class TradingExecutor:
             # Exchange SL was creating orphan positions that cost $2-3 each to close
             sl_order_id = None
 
+            _ent_n = self._notional_usd(qty, price, asset, _pos_cs)
+            _ent_fe = self._est_taker_fee_usd(_ent_n)
+            if self._account_fees_in_pnl and _ent_fe > 0:
+                print(
+                    f"  [{self._ex_tag}:{asset}] FEE ACCT: est entry taker ~${_ent_fe:,.2f} "
+                    f"on ${_ent_n:,.0f} notional ({self._taker_fee_pct_per_side:.3f}%/side model)"
+                )
+
             # Record position
             self.positions[asset] = {
                 'direction': action,          # LONG or SHORT
@@ -2750,6 +2952,11 @@ class TradingExecutor:
                 'peak_upnl_usd': max(
                     0.0, _unrealized_pnl_usd(action, price, price, qty, _pos_cs)
                 ),
+                'peak_trail_armed': False,
+                'peak_trail_pnl_pct': 0.0,
+                'trade_leverage': float(trade_lev),
+                'entry_notional_usd': _ent_n,
+                'entry_fee_usd_est': _ent_fe,
             }
             self.last_trade_time[asset] = time.time()
         else:
@@ -2798,10 +3005,14 @@ class TradingExecutor:
         in_early = self._trail_early_window_sec > 0 and age_sec < self._trail_early_window_sec
         _pcs = float(pos.get('contract_size', 0) or 0)
         upnl_usd = _unrealized_pnl_usd(direction, entry, price, qty, _pcs)
+        _, _, _, _net_u = self._fee_adjusted_upnl_usd(
+            asset, pos, direction, entry, price, qty, _pcs
+        )
+        upnl_for_peak_rules = _net_u if self._account_fees_in_pnl else upnl_usd
         _pku = float(pos.get('peak_upnl_usd', 0) or 0)
-        if upnl_usd > _pku:
-            pos['peak_upnl_usd'] = upnl_usd
-            _pku = upnl_usd
+        if upnl_for_peak_rules > _pku:
+            pos['peak_upnl_usd'] = upnl_for_peak_rules
+            _pku = upnl_for_peak_rules
 
         extra_sl_long_floor: Optional[float] = None
         extra_sl_short_ceiling: Optional[float] = None
@@ -2812,17 +3023,18 @@ class TradingExecutor:
             if (
                 self._trail_close_on_early_giveback
                 and _pku > 1e-9
-                and upnl_usd > 0
-                and upnl_usd <= _pku * (1.0 - self._trail_peak_usd_pullback)
+                and upnl_for_peak_rules > 0
+                and upnl_for_peak_rules <= _pku * (1.0 - self._trail_peak_usd_pullback)
             ):
+                _ulab = "net" if self._account_fees_in_pnl else "gross"
                 print(
-                    f"  [{self._ex_tag}:{asset}] EARLY uPnL GIVEBACK: ${upnl_usd:,.0f} vs peak ${_pku:,.0f} "
+                    f"  [{self._ex_tag}:{asset}] EARLY uPnL GIVEBACK ({_ulab}): ${upnl_for_peak_rules:,.0f} vs peak ${_pku:,.0f} "
                     f"(>{self._trail_peak_usd_pullback:.0%} off peak @ {age_sec:.0f}s) — banking profit"
                 )
                 self._close_position(
                     asset,
                     price,
-                    f"Early uPnL giveback (${upnl_usd:,.0f} <= {(1-self._trail_peak_usd_pullback):.0%} of peak ${_pku:,.0f})",
+                    f"Early uPnL giveback ({_ulab} ${upnl_for_peak_rules:,.0f} <= {(1-self._trail_peak_usd_pullback):.0%} of peak ${_pku:,.0f})",
                 )
                 return
             if direction == 'LONG' and peak > entry:
@@ -2834,7 +3046,7 @@ class TradingExecutor:
                     if (
                         frac >= self._trail_giveback_close_mfe_frac
                         and self._trail_close_on_early_giveback
-                        and pnl_pct > 0
+                        and (_net_u > 0 if self._account_fees_in_pnl else pnl_pct > 0)
                     ):
                         print(
                             f"  [{self._ex_tag}:{asset}] EARLY MFE GIVEBACK: retraced {frac:.0%} of spike "
@@ -2857,7 +3069,7 @@ class TradingExecutor:
                     if (
                         frac >= self._trail_giveback_close_mfe_frac
                         and self._trail_close_on_early_giveback
-                        and pnl_pct > 0
+                        and (_net_u > 0 if self._account_fees_in_pnl else pnl_pct > 0)
                     ):
                         print(
                             f"  [{self._ex_tag}:{asset}] EARLY MFE GIVEBACK: retraced {frac:.0%} of dip "
@@ -2899,6 +3111,43 @@ class TradingExecutor:
                 f"Hard stop equity cap (${upnl_usd:,.0f} <= -${emergency_usd:,.0f})",
             )
             return
+
+        # ── 2a. Peak PnL% trail — uses net % vs notional (after est. taker fees) when fee accounting on ──
+        pnl_trail_pct = self._pnl_pct_peak_trail(
+            asset, pos, direction, entry, price, qty, _pcs, pnl_pct
+        )
+        _trail_ok = pnl_trail_pct > 0 if self._account_fees_in_pnl else pnl_pct > 0
+        if (
+            self._peak_pnl_trail_enabled
+            and not is_stuck
+            and qty > 0
+            and _trail_ok
+        ):
+            peak_tp = float(pos.get('peak_trail_pnl_pct', 0.0) or 0.0)
+            if pnl_trail_pct >= self._peak_pnl_trail_activate_pct:
+                pos['peak_trail_armed'] = True
+                if pnl_trail_pct > peak_tp:
+                    pos['peak_trail_pnl_pct'] = pnl_trail_pct
+                    peak_tp = pnl_trail_pct
+            if (
+                pos.get('peak_trail_armed')
+                and peak_tp >= self._peak_pnl_trail_activate_pct
+            ):
+                giveback_pp = peak_tp - pnl_trail_pct
+                if giveback_pp >= self._peak_pnl_trail_giveback_pct:
+                    _tlab = "net" if self._account_fees_in_pnl else "gross"
+                    print(
+                        f"  [{self._ex_tag}:{asset}] PEAK PnL% TRAIL ({_tlab}): peak +{peak_tp:.2f}% "
+                        f"→ now +{pnl_trail_pct:.2f}% (Δ {giveback_pp:.2f}% ≥ "
+                        f"{self._peak_pnl_trail_giveback_pct:.2f}% giveback) — exit to lock profit "
+                        f"| price P&L {pnl_pct:+.2f}%"
+                    )
+                    self._close_position(
+                        asset,
+                        price,
+                        f"Peak PnL% trail ({_tlab} +{peak_tp:.2f}% peak, +{pnl_trail_pct:.2f}% now)",
+                    )
+                    return
 
         # ── 2b. TIME-BASED EXIT: close zombie positions (Freqtrade pattern) ──
         duration_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
@@ -3389,17 +3638,33 @@ class TradingExecutor:
             pnl_pct = ((entry - price) / entry) * 100.0
             pnl_usd = (entry - price) * q_for_pnl * cs
 
+        n_ent = self._notional_usd(q_for_pnl, entry, asset, cs)
+        n_x = self._notional_usd(q_for_pnl, price, asset, cs)
+        est_fees_rt = 0.0
+        pnl_net_est = float(pnl_usd)
+        if self._account_fees_in_pnl and self._taker_fee_pct_per_side > 0:
+            est_fees_rt = self._est_taker_fee_usd(n_ent) + self._est_taker_fee_usd(n_x)
+            pnl_net_est = float(pnl_usd) - est_fees_rt
+
         sl_chain = '->'.join(pos.get('sl_levels', ['L1']))
         duration_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
 
-        print(
-            f"  [{self._ex_tag}:{asset}] CLOSED: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} "
-            f"(est.; fees/spread not deducted — exchange row can be worse)"
-        )
+        if self._account_fees_in_pnl and est_fees_rt > 0:
+            print(
+                f"  [{self._ex_tag}:{asset}] CLOSED: gross {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | "
+                f"net≈${pnl_net_est:+,.2f} after est. fees ${est_fees_rt:,.2f} "
+                f"(2×{self._taker_fee_pct_per_side:.3f}% taker model) | {reason}"
+            )
+        else:
+            print(
+                f"  [{self._ex_tag}:{asset}] CLOSED: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} "
+                f"(gross; exchange fees separate)"
+            )
 
-        # Track realized PnL for drawdown limits
-        self.session_realized_pnl += pnl_usd
-        self.daily_realized_pnl += pnl_usd
+        # Track realized PnL for drawdown limits (net est. when fee accounting on)
+        _pnl_sess = pnl_net_est if self._account_fees_in_pnl else pnl_usd
+        self.session_realized_pnl += _pnl_sess
+        self.daily_realized_pnl += _pnl_sess
 
         # Update agent orchestrator weights (learn from outcome)
         if self._orchestrator and pos.get('agent_votes'):
@@ -3407,22 +3672,30 @@ class TradingExecutor:
                 self._orchestrator.record_outcome(
                     asset=asset,
                     direction=1 if direction == 'LONG' else -1,
-                    pnl=pnl_usd,
+                    pnl=_pnl_sess,
                 )
             except Exception:
                 pass  # Don't block close on feedback error
 
-        # Update edge stats
+        # Update edge stats (wins use net est. when fee accounting on)
         if asset in self.edge_stats:
             self.edge_stats[asset]['total'] += 1
-            if pnl_pct > 0:
+            _win = pnl_net_est > 0 if self._account_fees_in_pnl else pnl_pct > 0
+            if _win:
                 self.edge_stats[asset]['wins'] += 1
             else:
                 self.edge_stats[asset]['losses'] += 1
             s = self.edge_stats[asset]
             s['win_rate'] = s['wins'] / s['total'] if s['total'] > 0 else 0.5
 
-        # Log to journal
+        # Log to journal (pnl_usd = gross; extra holds model fees + net est.)
+        _extra = None
+        if self._account_fees_in_pnl:
+            _extra = {
+                'est_roundtrip_fees_usd': round(est_fees_rt, 4),
+                'pnl_usd_net_est': round(pnl_net_est, 2),
+                'pnl_usd_gross': round(float(pnl_usd), 2),
+            }
         try:
             self.journal.log_trade(
                 asset=asset,
@@ -3439,6 +3712,7 @@ class TradingExecutor:
                 order_type='market',
                 duration_minutes=duration_min,
                 order_id=pos.get('order_id', ''),
+                extra=_extra,
             )
         except Exception as e:
             logger.warning(f"Journal log failed: {e}")

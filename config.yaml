@@ -101,8 +101,17 @@ execution:
   entry_type: "market"
   exit_type: "market"
   bybit_hedge_mode: true
-  # USDT linear: margin ≈ notional/leverage. Notional = (equity × position_size_pct% as margin) × leverage.
+  # Leverage: fixed = single execution.leverage. dynamic = integer x between leverage_min..leverage_max from LLM confidence + trade_quality (set on exchange before each entry).
+  leverage_mode: dynamic
+  leverage_min: 1
+  leverage_max: 10
   leverage: 10
+  # Model taker fee % per side (e.g. Bybit 0.055). Round-trip fee ≈ 2×. Skip new entries if ATR/price < that × fee_coverage_safety_buffer (coarse net-profit filter).
+  taker_fee_pct_per_side: 0.055
+  fee_coverage_safety_buffer: 1.35
+  fee_gate_skip_if_atr_low: true
+  # Model taker fees in profit logic: peak PnL trail & early giveback use net uPnL; close log + journal extra show net est.
+  account_taker_fees_in_pnl_logic: true
   # signal_timeframe: bar size for EMA on the signal chart. With signal_timing: live, the current tick replaces the forming bar's close (no wait for bar close).
   # Shorter TF (e.g. 5m) = faster updates; longer = smoother EMA.
   signal_timeframe: "5m"
@@ -140,6 +149,13 @@ execution:
     min_sl_move_usd: 0.35             # SL tick noise filter (smaller when in profit via in_profit_min_move_scale)
     min_sl_move_price_pct: 0.0001
     in_profit_min_move_scale: 0.40    # multiply min SL step by this while P&L > 0.35% (trail updates more often)
+    # Peak PnL% trail: uses favorable *price* PnL % on the position (same scale as typical chart move % on the pair).
+    # Arm once PnL% ≥ activate; track the highest PnL% seen while in the trade; market-close when current PnL%
+    # falls at least giveback *percentage points* below that peak (e.g. peak +1.00%, now +0.95% → Δ0.05% → exit).
+    peak_pnl_trail_enabled: true
+    # Floor raised at runtime to cover round-trip taker fees × buffer when execution.taker_fee_pct_per_side is set.
+    peak_pnl_trail_activate_pct: 0.10
+    peak_pnl_trail_giveback_pct: 0.05
   # Position sizing: llm_direct uses LLM position_size_pct only (still capped by max_pct / equity×lev / max_trade_usd).
   # dynamic = blend with conviction + optional daily ramp. conservative = small legacy caps.
   sizing:
