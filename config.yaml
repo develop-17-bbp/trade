@@ -43,12 +43,15 @@ risk:
   risk_per_trade_pct: 0.5
   atr_stop_mult: 1.5
   atr_tp_mult: 4.5
+  # Hard ceiling on loss per trade in USDT (includes model exit taker fee when account_taker_fees_in_pnl_logic is true).
+  # Capped by the smaller of this and (equity × max_loss_per_trade_equity_pct × relief).
+  max_loss_usd_total: 10.0
   # Max loss if initial SL fills ≈ this % of account equity at entry (then tightened to fit).
-  max_loss_per_trade_equity_pct: 1.0
+  max_loss_per_trade_equity_pct: 0.12
   # If order-book SL or strong bid/ask imbalance suggests absorption / bounce, allow wider SL up to this × the % above.
-  bounce_loss_relief_mult: 1.25
+  bounce_loss_relief_mult: 1.0
   # Emergency market close if unrealized loss exceeds (capped SL $ loss) × this (slippage / gap buffer).
-  hard_stop_loss_slippage_mult: 1.15
+  hard_stop_loss_slippage_mult: 1.05
 
 # ── AI / LLM ──
 # Local Ollama: same host/model as `ollama serve` + `ollama run qwen2.5:3b` (see also OLLAMA_HOST / OLLAMA_MODEL in .env)
@@ -166,7 +169,7 @@ execution:
     min_pct: 5
     conviction_power: 1.15
     llm_weight: 0.32
-    # null or ≤0 = no extra USD ceiling (only equity × max_equity_fraction × leverage).
+    # null = no USD notional cap on winners (size still bounded by max_pct / equity×lev). Loss per trade capped by risk.max_loss_usd_total via SL/hard stop.
     max_trade_usd: null
     max_equity_fraction: 0.95
     # Daily ramp vs session PnL (realized + unrealized): goal = wins × $/win (default 10 × $20 = $200).

@@ -371,6 +371,13 @@ class TradingExecutor:
         self.hard_stop_loss_slippage_mult: float = max(
             1.0, float(risk.get('hard_stop_loss_slippage_mult', 1.15))
         )
+        # Optional hard USD ceiling on loss per trade (see _max_loss_price_move_usd).
+        _mlusd_raw = risk.get('max_loss_usd_total')
+        if _mlusd_raw is None:
+            self.max_loss_usd_total: Optional[float] = None
+        else:
+            _mlv = float(_mlusd_raw)
+            self.max_loss_usd_total = _mlv if _mlv > 0 else None
 
         # AI / LLM settings — local Ollama first (OLLAMA_HOST / BASE), then tunnel (OLLAMA_REMOTE_URL)
         ai_cfg = config.get('ai', {})
@@ -1137,6 +1144,28 @@ class TradingExecutor:
         if self._taker_fee_pct_per_side <= 0:
             return 0.0
         return max(0.0, float(notional_usd)) * (self._taker_fee_pct_per_side / 100.0)
+
+    def _max_loss_price_move_usd(
+        self,
+        eq_ref: float,
+        relief: float,
+        entry_notional_usd: float,
+    ) -> float:
+        """
+        Max adverse *price* PnL at SL in USD (gross move vs entry), before exit taker fee.
+        Uses min(equity % budget, optional max_loss_usd_total); when fee PnL accounting is on,
+        reserves one exit-side taker fee on entry notional so net loss stays within the cap.
+        """
+        cap = float(eq_ref) * (self.max_loss_per_trade_equity_pct / 100.0) * max(1.0, float(relief))
+        if self.max_loss_usd_total is not None:
+            cap = min(cap, float(self.max_loss_usd_total))
+        if (
+            self._account_fees_in_pnl
+            and self._taker_fee_pct_per_side > 0
+            and entry_notional_usd > 0
+        ):
+            cap = max(0.0, cap - self._est_taker_fee_usd(entry_notional_usd))
+        return cap
 
     def _fee_adjusted_upnl_usd(
         self,
@@ -2370,8 +2399,9 @@ class TradingExecutor:
                                 _sync_cs = 0.0
                                 if self._exchange_name == 'delta':
                                     _sync_cs = {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001)
+                                _sync_n = self._notional_usd(contracts, entry_p, asset, _sync_cs)
                                 _eqs = max(float(self.equity), 1.0)
-                                _max_l = _eqs * (self.max_loss_per_trade_equity_pct / 100.0)
+                                _max_l = self._max_loss_price_move_usd(_eqs, 1.0, _sync_n)
                                 _ls = _loss_usd_at_price(
                                     synced_direction, entry_p, sync_sl, contracts, _sync_cs
                                 )
@@ -2383,7 +2413,6 @@ class TradingExecutor:
                                             sync_sl = entry_p - _md
                                         else:
                                             sync_sl = entry_p + _md
-                                _sync_n = self._notional_usd(contracts, entry_p, asset, _sync_cs)
                                 _sync_fe = self._est_taker_fee_usd(_sync_n)
                                 self.positions[asset] = {
                                     'direction': synced_direction,
@@ -2855,6 +2884,11 @@ class TradingExecutor:
                 pass
             price = fill_price  # Use actual fill for all subsequent calculations
 
+            _pos_cs = 0.0
+            if self._exchange_name == 'delta':
+                _pos_cs = {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001)
+            _ent_n = self._notional_usd(qty, price, asset, _pos_cs)
+
             # Compute initial stop-loss (L1) using ORDER BOOK + ATR
             # Priority: order book wall > ATR-based > percentage fallback
             sl_distance = current_atr * self.atr_stop_mult
@@ -2887,14 +2921,11 @@ class TradingExecutor:
                         sl_price = ob_sl
                         sl_source = f"OB_ASK_WALL@${ask_wall:,.2f}"
 
-            # Cap loss at SL to max % of equity (wider cap when book suggests bounce/absorption).
+            # Cap loss at SL: equity %, optional max_loss_usd_total, exit-fee reserve when fee PnL on.
             eq_ref = max(float(self.equity), 1.0)
             bounce_ok = _bounce_relief_from_ob(action, _obl, sl_source)
             relief = self.bounce_loss_relief_mult if bounce_ok else 1.0
-            max_loss_usd = eq_ref * (self.max_loss_per_trade_equity_pct / 100.0) * relief
-            _pos_cs = 0.0
-            if self._exchange_name == 'delta':
-                _pos_cs = {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001)
+            max_loss_usd = self._max_loss_price_move_usd(eq_ref, relief, _ent_n)
             loss_sl = _loss_usd_at_price(action, price, sl_price, qty, _pos_cs)
             if loss_sl > max_loss_usd > 0 and qty > 0:
                 qm = _linear_qty_multiplier(qty, _pos_cs)
@@ -2904,11 +2935,15 @@ class TradingExecutor:
                         sl_price = price - max_dist
                     else:
                         sl_price = price + max_dist
+                    _cap_note = (
+                        f"${self.max_loss_usd_total:,.0f} max/trade"
+                        if self.max_loss_usd_total is not None
+                        else f"{self.max_loss_per_trade_equity_pct:.2f}% equity"
+                    )
                     print(
-                        f"  [{self._ex_tag}:{asset}] RISK CAP: SL tightened to keep loss ≤ "
-                        f"{self.max_loss_per_trade_equity_pct:.2f}% equity"
-                        f"{' × ' + str(round(relief, 2)) + ' bounce relief' if bounce_ok else ''} "
-                        f"(~${max_loss_usd:,.0f} @ SL)"
+                        f"  [{self._ex_tag}:{asset}] RISK CAP: SL tightened — price PnL @ SL ≤ ~${max_loss_usd:,.2f} "
+                        f"({_cap_note}"
+                        f"{' × ' + str(round(relief, 2)) + ' bounce relief' if bounce_ok else ''})"
                     )
 
             imb = _obl.get('imbalance', 0)
@@ -2921,7 +2956,6 @@ class TradingExecutor:
             # Exchange SL was creating orphan positions that cost $2-3 each to close
             sl_order_id = None
 
-            _ent_n = self._notional_usd(qty, price, asset, _pos_cs)
             _ent_fe = self._est_taker_fee_usd(_ent_n)
             if self._account_fees_in_pnl and _ent_fe > 0:
                 print(
@@ -3084,31 +3118,37 @@ class TradingExecutor:
                     if frac >= self._trail_giveback_mfe_frac:
                         extra_sl_short_ceiling = entry - mfe * self._trail_giveback_lock_ratio
 
-        # ── 2. HARD STOP: max loss vs equity at entry (+ slippage buffer) — USD-based ──
+        # ── 2. HARD STOP: max loss vs equity / max_loss_usd_total (+ slip) — USD-based ──
         eq_ref = float(pos.get('risk_equity_ref', self.equity) or self.equity)
         max_loss_cap = pos.get('max_loss_usd_cap')
         if max_loss_cap is None or float(max_loss_cap) <= 0:
-            max_loss_cap = eq_ref * (self.max_loss_per_trade_equity_pct / 100.0)
+            _n_fb = float(
+                pos.get('entry_notional_usd')
+                or self._notional_usd(qty, entry, asset, _pcs)
+            )
+            max_loss_cap = self._max_loss_price_move_usd(eq_ref, 1.0, _n_fb)
         else:
             max_loss_cap = float(max_loss_cap)
         emergency_usd = max_loss_cap * self.hard_stop_loss_slippage_mult
-        if upnl_usd <= -emergency_usd:
+        upnl_for_hard = _net_u if self._account_fees_in_pnl else upnl_usd
+        if upnl_for_hard <= -emergency_usd:
             if is_stuck:
                 print(
                     f"  [{self._ex_tag}:{asset}] STUCK hard-stop zone "
-                    f"(${upnl_usd:,.0f} vs -${emergency_usd:,.0f} cap) — can't close"
+                    f"(${upnl_for_hard:,.0f} vs -${emergency_usd:,.0f} cap) — can't close"
                 )
                 return
+            _hn = "net" if self._account_fees_in_pnl else "gross"
             print(
-                f"  [{self._ex_tag}:{asset}] HARD STOP (equity cap) at ${price:,.2f} | "
-                f"unrealized ${upnl_usd:,.0f} ≤ -${emergency_usd:,.0f} "
-                f"({self.max_loss_per_trade_equity_pct:.2f}% ref equity × "
-                f"{self.hard_stop_loss_slippage_mult:.2f} slip) | price P&L {pnl_pct:+.2f}%"
+                f"  [{self._ex_tag}:{asset}] HARD STOP at ${price:,.2f} | "
+                f"{_hn} uPnL ${upnl_for_hard:,.0f} ≤ -${emergency_usd:,.0f} "
+                f"(price-move cap ~${max_loss_cap:,.2f} × {self.hard_stop_loss_slippage_mult:.2f} slip) "
+                f"| price P&L {pnl_pct:+.2f}%"
             )
             self._close_position(
                 asset,
                 price,
-                f"Hard stop equity cap (${upnl_usd:,.0f} <= -${emergency_usd:,.0f})",
+                f"Hard stop ({_hn} ${upnl_for_hard:,.0f} <= -${emergency_usd:,.0f})",
             )
             return
 
