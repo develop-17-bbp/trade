@@ -155,6 +155,13 @@ try:
 except Exception:
     ALPHA_DECAY_AVAILABLE = False
 
+# RL EMA Strategy Agent (Q-learning optimizer for entry/sizing/SL)
+try:
+    from src.ai.reinforcement_learning import EMAStrategyRL
+    RL_AVAILABLE = True
+except Exception:
+    RL_AVAILABLE = False
+
 # MetaTrader 5 Bridge — mirror or execute trades on MT5 terminal
 try:
     from src.trading.mt5_bridge import MT5Bridge
@@ -479,6 +486,35 @@ class TradingExecutor:
                     print(f"  [ML] Alpha Decay initialized (default params)")
             except Exception as e:
                 print(f"  [ML] Alpha Decay init failed ({e})")
+
+        # ── RL EMA Strategy Agent (Q-learning optimizer) ──
+        self._rl_per_asset: Dict[str, Any] = {}
+        if RL_AVAILABLE:
+            for _asset in self.assets:
+                try:
+                    rl_path = os.path.join('models', f'rl_ema_{_asset.lower()}.json')
+                    if os.path.exists(rl_path):
+                        _rl = EMAStrategyRL()
+                        _rl.load(rl_path)
+                        self._rl_per_asset[_asset] = _rl
+                        print(f"  [ML] RL Agent ({_asset}) ACTIVE — {len(_rl.q_table)} states, epsilon={_rl.epsilon:.3f}")
+                    else:
+                        print(f"  [ML] RL Agent ({_asset}): no model at {rl_path}")
+                except Exception as e:
+                    print(f"  [ML] RL Agent ({_asset}) init failed ({e})")
+
+        # ── Pre-initialize GARCH models (avoid ad-hoc loading per tick) ──
+        self._garch_per_asset: Dict[str, Any] = {}
+        try:
+            import pickle as _pkl
+            for _asset in self.assets:
+                garch_path = os.path.join('models', f'garch_{_asset.lower()}.pkl')
+                if os.path.exists(garch_path):
+                    with open(garch_path, 'rb') as _f:
+                        self._garch_per_asset[_asset] = _pkl.load(_f)
+                    print(f"  [ML] GARCH ({_asset}) ACTIVE — pre-loaded from {garch_path}")
+        except Exception as e:
+            print(f"  [ML] GARCH pre-load failed ({e})")
 
         # ── Load fitted HMM from disk if available ──
         if self._hmm:
@@ -2648,14 +2684,11 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        # ── GARCH VOLATILITY FORECAST ──
+        # ── GARCH VOLATILITY FORECAST (pre-loaded) ──
         if len(closes) >= 100:
             try:
-                import pickle as _pkl
-                garch_path = os.path.join('models', f'garch_{asset.lower() if isinstance(asset, str) else "btc"}.pkl')
-                if os.path.exists(garch_path):
-                    with open(garch_path, 'rb') as _f:
-                        _garch = _pkl.load(_f)
+                _garch = self._garch_per_asset.get(asset)
+                if _garch:
                     garch_forecast = _garch.forecast(list(closes[-100:]))
                     if garch_forecast:
                         current_vol = garch_forecast[-1]
@@ -2666,6 +2699,49 @@ class TradingExecutor:
                             math_filter_warnings.append(f"GARCH: volatility 50%+ above average -> expect wild swings")
             except Exception:
                 pass
+
+        # ── RL AGENT (Q-learning optimizer) ──
+        # Advises: enter/skip, size multiplier, SL buffer, patience
+        rl_decision = None
+        _rl = self._rl_per_asset.get(asset) if hasattr(self, '_rl_per_asset') else None
+        if _rl and signal in ('BUY', 'SELL'):
+            try:
+                from src.ai.reinforcement_learning import EMATradeState
+                _ema_slope = (ema_vals[-1] - ema_vals[-2]) / ema_vals[-2] * 100 if len(ema_vals) >= 2 else 0
+                _atr_pctile = 0.5
+                if len(atr_vals) >= 100:
+                    _sorted = sorted(atr_vals[-100:])
+                    _rank = sum(1 for v in _sorted if v <= current_atr)
+                    _atr_pctile = _rank / len(_sorted)
+                _vol_ratio = volumes[-1] / (sum(volumes[-20:]) / 20) if len(volumes) >= 20 and sum(volumes[-20:]) > 0 else 1.0
+                _state = EMATradeState(
+                    ema_slope=_ema_slope,
+                    ema_slope_bars=int(ml_context.get('new_line_bars', 1)),
+                    price_ema_distance_atr=(price - ema_vals[-1]) / current_atr if current_atr > 0 else 0,
+                    ema_acceleration=0.0,
+                    trend_bars_since_flip=int(ml_context.get('prior_trend_bars', 3)),
+                    trend_consistency=0.8,
+                    higher_tf_alignment=ml_context.get('htf_alignment', 0),
+                    atr_percentile=_atr_pctile,
+                    volume_ratio=_vol_ratio,
+                    spread_atr_ratio=0.1,
+                    recent_win_rate=self.edge_stats.get(asset, {}).get('win_rate', 0.5),
+                    daily_pnl_pct=self.daily_realized_pnl / max(self.equity, 1) * 100,
+                    open_positions=len(self.positions),
+                    consecutive_losses=0,
+                    hour_of_day=datetime.utcnow().hour,
+                    day_of_week=datetime.utcnow().weekday(),
+                )
+                rl_decision = _rl.decide(_state)
+                ml_context['rl_action'] = rl_decision.reasoning
+                ml_context['rl_enter'] = rl_decision.enter_trade
+                ml_context['rl_size_mult'] = rl_decision.position_size_mult
+                ml_context['rl_sl_mult'] = rl_decision.sl_buffer_mult
+                ml_context['rl_quality'] = round(rl_decision.quality_score, 2)
+                if not rl_decision.enter_trade:
+                    math_filter_warnings.append(f"RL: SKIP recommended ({rl_decision.reasoning})")
+            except Exception as e:
+                logger.debug(f"RL agent error: {e}")
 
         # ── LIGHTGBM PRE-FILTER GATE ──
         # Uses 100+ features to predict L3+ runner vs L1 death
