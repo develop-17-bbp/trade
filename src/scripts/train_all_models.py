@@ -36,12 +36,54 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
+def _parquet_to_data(df, bars=0):
+    """Convert a parquet DataFrame to training data dict, handling datetime timestamps."""
+    import pandas as pd
+    if len(df) < 100:
+        return None
+    if bars > 0 and len(df) > bars:
+        df = df.tail(bars).reset_index(drop=True)
+
+    # Normalize column names to lowercase
+    df.columns = [c.lower() for c in df.columns]
+
+    # Handle timestamp: datetime64 → milliseconds, int → keep as-is
+    timestamps = []
+    if 'timestamp' in df.columns:
+        ts_col = df['timestamp']
+        if pd.api.types.is_datetime64_any_dtype(ts_col):
+            timestamps = (ts_col.astype('int64') // 10**6).tolist()
+        elif pd.api.types.is_numeric_dtype(ts_col):
+            timestamps = ts_col.astype(int).tolist()
+        else:
+            try:
+                timestamps = pd.to_datetime(ts_col).astype('int64').div(10**6).astype(int).tolist()
+            except Exception:
+                timestamps = list(range(len(df)))
+    else:
+        timestamps = list(range(len(df)))
+
+    data = {'timestamps': timestamps}
+    for src, dst in [('open', 'opens'), ('high', 'highs'), ('low', 'lows'),
+                     ('close', 'closes'), ('volume', 'volumes')]:
+        if src in df.columns:
+            data[dst] = df[src].astype(float).tolist()
+
+    if 'closes' in data and len(data['closes']) >= 100:
+        return data
+    return None
+
+
 def load_local_data(asset='BTC', timeframe='5m', bars=0):
     """
-    Load OHLCV from local data files (backtest_cache JSON or data/ parquet).
+    Load OHLCV from local data files. Search order:
+      1. data/backtest_cache/{ASSET}_{tf}_*.json  (largest JSON files, 906K+ bars)
+      2. data/training_cache/{SYMBOL}-{tf}.parquet (server parquet cache, 4.5M+ bars)
+      3. data/{SYMBOL}-{tf}.parquet               (local parquet files)
     Returns data dict or None if not found.
     bars=0 means load ALL available data (for max training).
     """
+    import pandas as pd
     symbol = f"{asset}USDT"
     base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
 
@@ -62,7 +104,6 @@ def load_local_data(asset='BTC', timeframe='5m', bars=0):
                 if isinstance(d, dict) and 'closes' in d and len(d['closes']) >= 100:
                     n = len(d['closes'])
                     if bars > 0 and n > bars:
-                        # Take most recent bars
                         start = n - bars
                         d = {k: v[start:] for k, v in d.items()}
                         n = bars
@@ -71,36 +112,28 @@ def load_local_data(asset='BTC', timeframe='5m', bars=0):
             except Exception as e:
                 print(f"  LOCAL: Failed to load {os.path.basename(fpath)}: {e}")
 
-    # 2. Check parquet files in data/ directory
-    for pattern_name in [f"{symbol}-{timeframe}.parquet", f"{symbol}_{timeframe}.parquet"]:
-        fpath = os.path.join(base_dir, pattern_name)
-        if os.path.isfile(fpath):
-            try:
-                import pandas as pd
-                df = pd.read_parquet(fpath)
-                if len(df) >= 100:
-                    if bars > 0 and len(df) > bars:
-                        df = df.tail(bars).reset_index(drop=True)
-                    # Normalize column names
-                    col_map = {}
-                    for col in df.columns:
-                        cl = col.lower()
-                        if cl in ('open',): col_map[col] = 'opens'
-                        elif cl in ('high',): col_map[col] = 'highs'
-                        elif cl in ('low',): col_map[col] = 'lows'
-                        elif cl in ('close',): col_map[col] = 'closes'
-                        elif cl in ('volume',): col_map[col] = 'volumes'
-                        elif cl in ('timestamp',): col_map[col] = 'timestamps'
-                    df = df.rename(columns=col_map)
-                    data = {}
-                    for key in ['timestamps', 'opens', 'highs', 'lows', 'closes', 'volumes']:
-                        if key in df.columns:
-                            data[key] = df[key].astype(float).tolist()
-                    if 'closes' in data and len(data['closes']) >= 100:
-                        print(f"  LOCAL: Loaded {len(data['closes']):,} bars from {pattern_name}")
+    # 2. Check training_cache parquet files (server has these: 4.5M+ 1m bars)
+    # 3. Check data/ parquet files
+    search_dirs = [
+        os.path.join(base_dir, 'training_cache'),
+        base_dir,
+    ]
+    parquet_names = [f"{symbol}-{timeframe}.parquet", f"{symbol}_{timeframe}.parquet"]
+
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        for pname in parquet_names:
+            fpath = os.path.join(search_dir, pname)
+            if os.path.isfile(fpath):
+                try:
+                    df = pd.read_parquet(fpath)
+                    data = _parquet_to_data(df, bars)
+                    if data:
+                        print(f"  LOCAL: Loaded {len(data['closes']):,} bars from {os.path.relpath(fpath, base_dir)}")
                         return data
-            except Exception as e:
-                print(f"  LOCAL: Failed to load {pattern_name}: {e}")
+                except Exception as e:
+                    print(f"  LOCAL: Failed to load {pname}: {e}")
 
     return None
 
@@ -179,7 +212,7 @@ def fetch_training_data(asset='BTC', timeframe='5m', bars=5000):
             'sandbox': True,
         })
         symbol = f"{asset}/USDT:USDT"
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=min(200, bars))
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=min(200, bars) if bars > 0 else 200)
         if ohlcv:
             data = {
                 'timestamps': [x[0] for x in ohlcv],
@@ -202,28 +235,14 @@ def fetch_training_data(asset='BTC', timeframe='5m', bars=5000):
         print(f"  Trying Binance Vision S3 for {symbol} ({timeframe})...")
         df = fetch_vision_ohlcv(symbol, timeframe=timeframe, start_year=2017, data_dir='data/training_cache')
         if df is not None and len(df) >= 100:
-            # Trim to requested bar count (take most recent)
-            if len(df) > bars:
+            # Trim to requested bar count (take most recent), bars=0 means ALL
+            if bars > 0 and len(df) > bars:
                 df = df.tail(bars).reset_index(drop=True)
-            # Convert timestamp to milliseconds
-            if 'timestamp' in df.columns:
-                ts = df['timestamp']
-                if hasattr(ts.iloc[0], 'timestamp'):
-                    timestamps = [int(t.timestamp() * 1000) for t in ts]
-                else:
-                    timestamps = ts.astype(int).tolist()
-            else:
-                timestamps = list(range(len(df)))
-            data = {
-                'timestamps': timestamps,
-                'opens': df['open'].astype(float).tolist(),
-                'highs': df['high'].astype(float).tolist(),
-                'lows': df['low'].astype(float).tolist(),
-                'closes': df['close'].astype(float).tolist(),
-                'volumes': df['volume'].astype(float).tolist(),
-            }
-            print(f"  Fetched {len(df)} bars from Binance Vision S3")
-            return data
+            # Use shared parquet converter (handles datetime timestamps)
+            data = _parquet_to_data(df, bars=0)  # already trimmed above
+            if data:
+                print(f"  Fetched {len(data['closes']):,} bars from Binance Vision S3 / local cache")
+                return data
     except Exception as e:
         print(f"  Binance Vision fetch failed: {e}")
 
