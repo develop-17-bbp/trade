@@ -494,8 +494,7 @@ class TradingExecutor:
                 try:
                     rl_path = os.path.join('models', f'rl_ema_{_asset.lower()}.json')
                     if os.path.exists(rl_path):
-                        _rl = EMAStrategyRL()
-                        _rl.load(rl_path)
+                        _rl = EMAStrategyRL({'rl_model_path': rl_path})
                         self._rl_per_asset[_asset] = _rl
                         print(f"  [ML] RL Agent ({_asset}) ACTIVE — {len(_rl.q_table)} states, epsilon={_rl.epsilon:.3f}")
                     else:
@@ -1263,11 +1262,7 @@ class TradingExecutor:
         """BTC -> exchange-specific symbol format."""
         if self._exchange_name == 'delta':
             return f"{asset}USD"  # Delta uses BTCUSD
-        # MT5: use the MT5 bridge's resolved symbol
-        if self._mt5 and self._mt5.mode == 'execute':
-            mt5_sym = self._mt5.get_mt5_symbol(asset)
-            if mt5_sym:
-                return mt5_sym
+        # Bybit always uses CCXT format — MT5 symbols are for MT5 execution only
         return f"{asset}/USDT:USDT"  # Bybit uses BTC/USDT:USDT
 
     def _get_spot_symbol(self, asset: str) -> str:
