@@ -77,8 +77,12 @@ class LightGBMClassifier:
         
         # --- CORE QUANT ENGINE FEATURES ---
         'sma_10_50_ratio', 'ema_10_20_ratio', 'rsi_14', 'macd_hist',
-        'adx_14', 'bb_width_20', 'stoch_k', 'stoch_d', 
-        'cycle_phase_encoded', 'dominant_period', 'sentiment_mean', 'sentiment_z_score'
+        'adx_14', 'bb_width_20', 'stoch_k', 'stoch_d',
+        'cycle_phase_encoded', 'dominant_period', 'sentiment_mean', 'sentiment_z_score',
+
+        # --- CATEGORY B RISK/ML FEATURES ---
+        'evt_var_99', 'evt_tail_ratio', 'mc_risk_score', 'mc_position_scale',
+        'hawkes_intensity', 'tft_forecast_bps', 'tft_confidence',
     ]
 
     CONFIDENCE_THRESHOLD = 0.65  # minimum to pass signal to risk engine
@@ -309,6 +313,15 @@ class LightGBMClassifier:
                 f['sentiment_mean'] = 0.0
                 f['sentiment_z_score'] = 0.0
             
+            # ── Category B Risk/ML Features ──
+            f['evt_var_99'] = float(ef.get('evt_var_99', 0.0))
+            f['evt_tail_ratio'] = float(np.clip(ef.get('evt_tail_ratio', 1.0), 0.0, 5.0))
+            f['mc_risk_score'] = float(np.clip(ef.get('mc_risk_score', 0.5), 0.0, 1.0))
+            f['mc_position_scale'] = float(np.clip(ef.get('mc_position_scale', 1.0), 0.05, 1.0))
+            f['hawkes_intensity'] = float(np.clip(ef.get('hawkes_intensity', 0.05), 0.0, 2.0))
+            f['tft_forecast_bps'] = float(np.clip(ef.get('tft_forecast_bps', 0.0), -100, 100))
+            f['tft_confidence'] = float(np.clip(ef.get('tft_confidence', 0.0), 0.0, 1.0))
+
             # ── Fix A: 5 new high-signal features ──
 
             # Mean Reversion Strength

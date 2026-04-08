@@ -233,6 +233,42 @@ class EVTRisk:
             'n_exceedances': fit_result.get('n_exceedances', 0),
         }
 
+    # ------------------------------------------------------------------
+    # Online / Rolling Window Support
+    # ------------------------------------------------------------------
+    def rolling_fit_and_assess(self, returns: np.ndarray, window: int = 500) -> Dict:
+        """
+        Rolling window EVT: use only the last `window` returns for fitting.
+        Call this every bar for online tail risk estimation.
+        """
+        returns = np.asarray(returns, dtype=float)
+        returns = returns[np.isfinite(returns)]
+        if len(returns) > window:
+            returns = returns[-window:]
+        return self.fit_and_assess(returns)
+
+    def online_update(self, new_return: float):
+        """
+        Lightweight online update: EWMA of fitted parameters.
+        Call after each new bar instead of full refit.
+
+        Uses exponential smoothing on ξ and σ to track parameter drift
+        without expensive full MLE on every bar.
+        """
+        if not self._fitted:
+            return
+
+        alpha = 0.02  # EWMA smoothing factor (slow adaptation)
+        loss = -new_return if new_return < 0 else 0
+
+        if loss > self.threshold:
+            # New exceedance — update params
+            exceedance = loss - self.threshold
+            # EWMA update of sigma (scale)
+            self.sigma = self.sigma * (1 - alpha) + exceedance * alpha
+            # Drift threshold slowly
+            self.threshold = self.threshold * (1 - alpha * 0.1) + loss * alpha * 0.1
+
     def _default_params(self) -> Dict:
         self._fitted = False
         return {

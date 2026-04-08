@@ -68,26 +68,43 @@ class FinBERTService:
         self._loaded = True
         
         import os
-        if os.environ.get('DISABLE_FINBERT', '1') == '1':
-            print("[FinBERT] Disabled via config. Using enhanced rule-based fallback.")
+        # Enable by default — set DISABLE_FINBERT=1 to explicitly disable
+        if os.environ.get('DISABLE_FINBERT', '0') == '1':
+            print("[FinBERT] Disabled via DISABLE_FINBERT=1. Using enhanced rule-based fallback.")
             self._pipeline = None
             self._available = False
             return
-            
+
         try:
             from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+
+            # Auto-detect GPU
+            device = self.device
+            if device == 'cpu':
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        device = 'cuda'
+                        print(f"[FinBERT] GPU detected — using CUDA")
+                except ImportError:
+                    pass
+
             tokenizer = AutoTokenizer.from_pretrained(self.model_path)
             model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
             self._pipeline = pipeline(
                 'sentiment-analysis',
                 model=model,
                 tokenizer=tokenizer,
-                device=self.device if self.device != 'cpu' else -1,
+                device=0 if device == 'cuda' else -1,
                 truncation=True,
                 max_length=512,
             )
             self._available = True
-            print(f"[FinBERT] Loaded {self.model_path} on {self.device}")
+            print(f"[FinBERT] Loaded {self.model_path} on {device}")
+        except ImportError:
+            print(f"[FinBERT] transformers not installed. Using enhanced rule-based fallback.")
+            self._pipeline = None
+            self._available = False
         except Exception as e:
             print(f"[FinBERT] Model unavailable ({e}). Using enhanced rule-based fallback.")
             self._pipeline = None

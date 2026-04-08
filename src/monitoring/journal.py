@@ -24,6 +24,7 @@ class TradeJournal:
     def __init__(self, filepath: Optional[str] = None):
         self.filepath = filepath or DEFAULT_JOURNAL_PATH
         self._ensure_directory()
+        self._recent_trades: Dict[str, float] = {}  # asset -> last_log_time for dedup
 
     def _ensure_directory(self):
         """Create the parent directory if it does not exist."""
@@ -54,6 +55,20 @@ class TradeJournal:
         extra: Optional[Dict] = None,
     ) -> dict:
         """Append a single trade record as one JSON line."""
+        # Dedup: prevent logging the same asset close twice within 30 seconds
+        now = time.time()
+        dedup_key = f"{asset}_{action}_{entry_price}_{exit_price}"
+        last_log = self._recent_trades.get(dedup_key, 0)
+        if now - last_log < 30:
+            logger.warning("Journal: DEDUP blocked duplicate %s trade for %s (%.0fs since last)", action, asset, now - last_log)
+            return {}
+        self._recent_trades[dedup_key] = now
+        # Clean old dedup entries (keep last 50)
+        if len(self._recent_trades) > 50:
+            oldest_keys = sorted(self._recent_trades, key=self._recent_trades.get)[:25]
+            for k in oldest_keys:
+                del self._recent_trades[k]
+
         record = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "asset": asset,

@@ -169,6 +169,128 @@ try:
 except Exception:
     MT5_AVAILABLE = False
 
+# LLM Router — universal multi-provider LLM abstraction (Ollama, Claude, Gemini, etc.)
+try:
+    from src.ai.llm_provider import LLMRouter, LLMConfig
+    LLM_ROUTER_AVAILABLE = True
+except Exception:
+    LLM_ROUTER_AVAILABLE = False
+
+# Prompt Constraints — safety layer + response validation for LLM outputs
+try:
+    from src.ai.prompt_constraints import PromptConstraintEngine
+    PROMPT_CONSTRAINTS_AVAILABLE = True
+except Exception:
+    PROMPT_CONSTRAINTS_AVAILABLE = False
+
+# AlertManager — Slack/Telegram/webhook notifications for critical events
+try:
+    from src.monitoring.alerting import AlertManager
+    ALERTING_AVAILABLE = True
+except Exception:
+    ALERTING_AVAILABLE = False
+
+# Position Sizing — ATR-based dynamic sizing (replaces fixed %)
+try:
+    from src.risk.position_sizing import atr_position_size, optimal_position_size
+    POSITION_SIZING_AVAILABLE = True
+except Exception:
+    POSITION_SIZING_AVAILABLE = False
+
+# Dynamic Risk Manager — circuit breakers, VaR, kill switch (monitoring only, NOT stop management)
+try:
+    from src.risk.dynamic_manager import DynamicRiskManager, RiskLimits
+    DYNAMIC_RISK_AVAILABLE = True
+except Exception:
+    DYNAMIC_RISK_AVAILABLE = False
+
+# MetaSizer — Half-Kelly position scaling (risk-calibrated multiplier 0.1-1.0)
+try:
+    from src.models.meta_sizer import MetaSizer
+    META_SIZER_AVAILABLE = True
+except Exception:
+    META_SIZER_AVAILABLE = False
+
+# VolatilityRegimeDetector — ATR+realized vol regime classification
+try:
+    from src.models.volatility_regime import VolatilityRegimeDetector, VolatilityRegime
+    VOL_REGIME_DETECTOR_AVAILABLE = True
+except Exception:
+    VOL_REGIME_DETECTOR_AVAILABLE = False
+
+# TradeTrace — structured trade records for memory/audit
+try:
+    from src.models.trade_trace import TradeTrace
+    TRADE_TRACE_AVAILABLE = True
+except Exception:
+    TRADE_TRACE_AVAILABLE = False
+
+# FFT Cycle Detection — dominant cycle period estimation
+try:
+    from src.models.cycle import rolling_fft_period
+    FFT_CYCLE_AVAILABLE = True
+except Exception:
+    FFT_CYCLE_AVAILABLE = False
+
+# SystemHealthChecker — background 24/7 health monitoring
+try:
+    from src.monitoring.health_checker import SystemHealthChecker
+    HEALTH_CHECKER_AVAILABLE = True
+except Exception:
+    HEALTH_CHECKER_AVAILABLE = False
+
+# ── Advanced Learning Engine (runtime meta-optimizer — online training loop) ──
+try:
+    from src.ai.advanced_learning import (
+        AdvancedLearningEngine, MarketAnomalyDetector, MarketRegimeClassifier,
+        AlphaDecayTracker, PipelineOverlay,
+    )
+    ADVANCED_LEARNING_AVAILABLE = True
+except Exception:
+    ADVANCED_LEARNING_AVAILABLE = False
+
+# ── EVT Tail Risk (Extreme Value Theory — fat-tail VaR for crypto) ──
+try:
+    from src.risk.evt_risk import EVTRisk
+    EVT_RISK_AVAILABLE = True
+except Exception:
+    EVT_RISK_AVAILABLE = False
+
+# ── Monte Carlo Risk (forward-looking VaR/CVaR simulation) ──
+try:
+    from src.risk.monte_carlo_risk import MonteCarloRisk
+    MC_RISK_AVAILABLE = True
+except Exception:
+    MC_RISK_AVAILABLE = False
+
+# ── Sentiment Pipeline (rule-based fast + optional FinBERT transformer) ──
+try:
+    from src.ai.sentiment import SentimentPipeline
+    SENTIMENT_AVAILABLE = True
+except Exception:
+    SENTIMENT_AVAILABLE = False
+
+# ── Temporal Transformer (multi-horizon attention-based forecaster) ──
+try:
+    from src.ai.temporal_transformer import TemporalTransformer
+    TEMPORAL_TRANSFORMER_AVAILABLE = True
+except Exception:
+    TEMPORAL_TRANSFORMER_AVAILABLE = False
+
+# ── Hawkes Process (self-exciting event clustering — predicts vol spikes) ──
+try:
+    from src.models.hawkes_process import HawkesProcess
+    HAWKES_AVAILABLE = True
+except Exception:
+    HAWKES_AVAILABLE = False
+
+# ── Market Event Guard (calendar-based trading pause for high-risk events) ──
+try:
+    from src.monitoring.event_guard import MarketEventGuard
+    EVENT_GUARD_AVAILABLE = True
+except Exception:
+    EVENT_GUARD_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -442,7 +564,7 @@ class TradingExecutor:
             for _asset in self.config.get('assets', ['BTC', 'ETH']):
                 try:
                     model_dir = f'models/lstm_ensemble_{_asset.lower()}'
-                    n_features = 40  # 30 strategy + 5 Kalman + 5 EMA inflection
+                    n_features = 50  # 30 strategy + 5 Kalman + 5 EMA inflection + 10 Category B risk/ML
                     _lstm = LSTMEnsemble(input_dim=n_features, seq_len=30,
                                          num_classes=2, model_dir=model_dir)
                     self._lstm_per_asset[_asset] = _lstm
@@ -618,6 +740,176 @@ class TradingExecutor:
                 print(f"  [MEMORY] Trade memory vault loaded (semantic search)")
             except Exception as e:
                 logger.warning(f"Memory vault init failed (needs sentence-transformers): {e}")
+
+        # ── LLM Router (universal multi-provider abstraction) ──
+        self._llm_router = None
+        if LLM_ROUTER_AVAILABLE:
+            try:
+                self._llm_router = LLMRouter()
+                # Register Ollama as primary provider
+                self._llm_router.add_provider('ollama', LLMConfig(
+                    provider='ollama',
+                    base_url=self.ollama_base_url,
+                    model=self.ollama_model,
+                    temperature=0.3,
+                    max_tokens=1024,
+                    timeout=60,
+                ))
+                # Register Claude as fallback if available
+                if self._claude_api_key:
+                    self._llm_router.add_provider('claude', LLMConfig(
+                        provider='anthropic',
+                        api_key=self._claude_api_key,
+                        model=self._claude_model,
+                        temperature=0.3,
+                        max_tokens=1024,
+                    ))
+                # Auto-detect any other providers from env vars
+                self._llm_router.add_from_env()
+                providers = self._llm_router.list_providers()
+                print(f"  [LLM] Router ACTIVE — providers: {providers}")
+            except Exception as e:
+                print(f"  [LLM] Router init failed ({e}) — using legacy direct calls")
+                self._llm_router = None
+
+        # ── Prompt Constraint Engine (safety + response validation) ──
+        self._prompt_constraints = None
+        if PROMPT_CONSTRAINTS_AVAILABLE:
+            try:
+                self._prompt_constraints = PromptConstraintEngine()
+                print(f"  [SAFETY] Prompt Constraints ACTIVE — LLM response validation enabled")
+            except Exception as e:
+                print(f"  [SAFETY] Prompt Constraints init failed ({e})")
+
+        # ── Alert Manager (Slack/Telegram/webhook notifications) ──
+        self._alert_manager = None
+        if ALERTING_AVAILABLE:
+            try:
+                alert_cfg = config.get('alerts', {})
+                self._alert_manager = AlertManager(alert_cfg)
+                print(f"  [ALERT] AlertManager ACTIVE — notifications enabled")
+            except Exception as e:
+                print(f"  [ALERT] AlertManager init failed ({e})")
+
+        # ── MetaSizer (Half-Kelly position scaling) ──
+        self._meta_sizer = None
+        if META_SIZER_AVAILABLE:
+            try:
+                self._meta_sizer = MetaSizer()
+                print(f"  [SIZING] MetaSizer ACTIVE — Half-Kelly position scaling (0.1x-1.0x)")
+            except Exception as e:
+                print(f"  [SIZING] MetaSizer init failed ({e})")
+
+        # ── VolatilityRegimeDetector (ATR + realized vol classification) ──
+        self._vol_regime_detector = None
+        if VOL_REGIME_DETECTOR_AVAILABLE:
+            try:
+                self._vol_regime_detector = VolatilityRegimeDetector(lookback=100)
+                print(f"  [VOL] VolatilityRegimeDetector ACTIVE — LOW_VOL_RANGE/TREND_EXPANSION/HIGH_VOL_PANIC/NORMAL")
+            except Exception as e:
+                print(f"  [VOL] VolatilityRegimeDetector init failed ({e})")
+
+        # ── SystemHealthChecker (background monitoring) ──
+        self._health_checker = None
+        if HEALTH_CHECKER_AVAILABLE:
+            try:
+                self._health_checker = SystemHealthChecker(check_interval_sec=120)
+                # Register critical components
+                self._health_checker.register_component('price_source',
+                    lambda: self.price_source is not None and self.price_source.exchange is not None)
+                self._health_checker.register_component('equity_positive',
+                    lambda: self.equity > 0)
+                self._health_checker.register_component('not_halted',
+                    lambda: not self.trading_halted)
+                self._health_checker.start()
+                print(f"  [HEALTH] SystemHealthChecker ACTIVE — monitoring {len(self._health_checker.components)} components every 120s")
+            except Exception as e:
+                print(f"  [HEALTH] SystemHealthChecker init failed ({e})")
+
+        # ── Dynamic Risk Manager (circuit breakers + VaR — monitoring only) ──
+        self._dynamic_risk = None
+        if DYNAMIC_RISK_AVAILABLE:
+            try:
+                self._dynamic_risk = DynamicRiskManager(initial_capital=self.initial_capital)
+                # Align risk limits with executor's config
+                self._dynamic_risk.risk_limits.max_daily_loss_pct = self.daily_loss_limit_pct / 100.0
+                self._dynamic_risk.risk_limits.max_drawdown_limit_pct = self.max_drawdown_pct / 100.0
+                self._dynamic_risk.risk_limits.kill_switch_daily_loss_pct = (self.daily_loss_limit_pct * 1.5) / 100.0
+                # Match executor's actual sizing: 5% for normal, 20% for small accounts
+                max_trade_pct = 0.20 if self.initial_capital < 500 else 0.05
+                self._dynamic_risk.risk_limits.max_single_trade_pct = max_trade_pct
+                self._dynamic_risk.risk_limits.max_portfolio_heat_pct = max_trade_pct * len(self.assets)
+                print(f"  [RISK] DynamicRiskManager ACTIVE — 7 circuit breakers, VaR/ES, kill switch")
+            except Exception as e:
+                print(f"  [RISK] DynamicRiskManager init failed ({e})")
+
+        # ── Advanced Learning Engine (runtime meta-optimizer + online training) ──
+        self._advanced_learning = None
+        if ADVANCED_LEARNING_AVAILABLE:
+            try:
+                meta_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'models', 'meta_learning_model.json')
+                self._advanced_learning = AdvancedLearningEngine(meta_model_path=meta_path)
+                print(f"  [META] AdvancedLearningEngine ACTIVE — online training (anomaly + regime + overlay + alpha decay)")
+            except Exception as e:
+                print(f"  [META] AdvancedLearningEngine init failed ({e})")
+
+        # ── EVT Tail Risk (fat-tail VaR) ──
+        self._evt_risk = None
+        if EVT_RISK_AVAILABLE:
+            try:
+                self._evt_risk = EVTRisk(threshold_quantile=0.90, var_level=0.99)
+                print(f"  [RISK] EVT Tail Risk ACTIVE — GPD-based fat-tail VaR (99%)")
+            except Exception as e:
+                print(f"  [RISK] EVT init failed ({e})")
+
+        # ── Monte Carlo Risk (forward VaR/CVaR simulation) ──
+        self._mc_risk = None
+        if MC_RISK_AVAILABLE:
+            try:
+                self._mc_risk = MonteCarloRisk(n_simulations=5000, horizon=24, var_confidence=0.95)
+                print(f"  [RISK] Monte Carlo Risk ACTIVE — 5K sims, 24-bar horizon, VaR/CVaR")
+            except Exception as e:
+                print(f"  [RISK] Monte Carlo init failed ({e})")
+
+        # ── Sentiment Pipeline (rule-based fast tier + optional FinBERT) ──
+        self._sentiment = None
+        if SENTIMENT_AVAILABLE:
+            try:
+                self._sentiment = SentimentPipeline()
+                print(f"  [SENT] SentimentPipeline ACTIVE — rule-based (optional FinBERT transformer)")
+            except Exception as e:
+                print(f"  [SENT] SentimentPipeline init failed ({e})")
+
+        # ── Temporal Transformer (attention-based multi-horizon forecaster) ──
+        self._temporal_transformer = None
+        if TEMPORAL_TRANSFORMER_AVAILABLE:
+            try:
+                self._temporal_transformer = TemporalTransformer(d_model=64, n_heads=4, context_len=120)
+                print(f"  [ML] TemporalTransformer ACTIVE — attention-based forecaster")
+            except Exception as e:
+                print(f"  [ML] TemporalTransformer init failed ({e})")
+
+        # ── Hawkes Process (event clustering intensity) ──
+        self._hawkes = None
+        if HAWKES_AVAILABLE:
+            try:
+                self._hawkes = HawkesProcess(mu=0.1, alpha=0.5, beta=1.0)
+                print(f"  [ML] HawkesProcess ACTIVE — self-exciting event clustering")
+            except Exception as e:
+                print(f"  [ML] HawkesProcess init failed ({e})")
+
+        # ── Market Event Guard (calendar-based risk pause) ──
+        self._event_guard = None
+        if EVENT_GUARD_AVAILABLE:
+            try:
+                self._event_guard = MarketEventGuard()
+                print(f"  [GUARD] MarketEventGuard ACTIVE — calendar-based high-risk pause")
+            except Exception as e:
+                print(f"  [GUARD] MarketEventGuard init failed ({e})")
+
+        # ── Online training state: last full analysis timestamp ──
+        self._last_full_meta_analysis = 0  # timestamp of last full cross-asset analysis
+        self._meta_analysis_interval = 1800  # every 30 minutes
 
     # ------------------------------------------------------------------
     # Agent Orchestrator — run 10 math agents + debate, format for LLM
@@ -1102,6 +1394,14 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Portfolio Drawdown Check
     # ------------------------------------------------------------------
+    def _send_alert(self, level: str, title: str, message: str, data: dict = None):
+        """Send alert via AlertManager if available. Never blocks trading on failure."""
+        if self._alert_manager:
+            try:
+                self._alert_manager.send_alert(level, title, message, data)
+            except Exception:
+                pass  # Alerting failure must never block trading
+
     def _check_drawdown_limits(self) -> bool:
         """Check if trading should be halted due to drawdown limits.
         Returns True if trading is OK, False if halted."""
@@ -1121,6 +1421,9 @@ class TradingExecutor:
             if self.daily_realized_pnl < 0 and daily_loss_pct >= self.daily_loss_limit_pct:
                 self.trading_halted = True
                 self.halt_reason = f"daily loss {daily_loss_pct:.1f}% >= {self.daily_loss_limit_pct}%"
+                self._send_alert('CRITICAL', f'{self._ex_tag} HALTED',
+                    f'Daily loss limit breached: {daily_loss_pct:.1f}% >= {self.daily_loss_limit_pct}%',
+                    {'equity': self.equity, 'daily_pnl': self.daily_realized_pnl})
                 return False
 
         # Check max drawdown from session start
@@ -1129,7 +1432,28 @@ class TradingExecutor:
             if self.session_realized_pnl < 0 and session_dd_pct >= self.max_drawdown_pct:
                 self.trading_halted = True
                 self.halt_reason = f"max drawdown {session_dd_pct:.1f}% >= {self.max_drawdown_pct}%"
+                self._send_alert('CRITICAL', f'{self._ex_tag} MAX DRAWDOWN',
+                    f'Session drawdown limit breached: {session_dd_pct:.1f}% >= {self.max_drawdown_pct}%',
+                    {'equity': self.equity, 'session_pnl': self.session_realized_pnl})
                 return False
+
+        # ── Dynamic Risk Manager circuit breakers (advanced monitoring) ──
+        if self._dynamic_risk:
+            try:
+                self._dynamic_risk.current_capital = self.equity
+                halt, reason, severity = self._dynamic_risk.check_halt_conditions(
+                    self.equity, self.daily_realized_pnl)
+                if halt and severity == 'HALT':
+                    self.trading_halted = True
+                    self.halt_reason = f"DRM: {reason}"
+                    self._send_alert('CRITICAL', f'{self._ex_tag} CIRCUIT BREAKER', reason,
+                        {'severity': severity, 'equity': self.equity})
+                    return False
+                elif halt and severity == 'PAUSE':
+                    # Pause = warn but don't kill
+                    print(f"  [{self._ex_tag}] DRM CAUTION: {reason} (severity={severity})")
+            except Exception as drm_err:
+                logger.debug(f"DRM check error: {drm_err}")
 
         return True
 
@@ -1476,9 +1800,16 @@ class TradingExecutor:
                         print(f"  [{self._ex_tag}:{asset}] ERROR: {e}")
                         logger.exception(f"Error processing {asset}")
 
-                # ── AUTONOMOUS ML RETRAIN (every 6 hours) ──
+                # ── AUTONOMOUS ML RETRAIN ──
+                # 1. HMM quick retrain: every 6 hours (fast, uses live OHLCV)
+                # 2. LightGBM full retrain: weekly Sunday 3 AM UTC (background thread)
                 if not hasattr(self, '_last_retrain_time'):
                     self._last_retrain_time = time.time()
+                if not hasattr(self, '_last_lgbm_retrain_check'):
+                    self._last_lgbm_retrain_check = 0
+                if not hasattr(self, '_lgbm_retrain_running'):
+                    self._lgbm_retrain_running = False
+
                 retrain_interval = 6 * 3600  # 6 hours
                 if time.time() - self._last_retrain_time > retrain_interval:
                     try:
@@ -1507,6 +1838,160 @@ class TradingExecutor:
                                     logger.debug(f"HMM retrain error: {he}")
                     except Exception as re:
                         logger.debug(f"Auto-retrain error: {re}")
+
+                # Weekly LightGBM retrain: Sunday 3 AM UTC (background thread)
+                now_utc = datetime.utcnow()
+                if (now_utc.weekday() == 6 and now_utc.hour == 3
+                        and not self._lgbm_retrain_running
+                        and time.time() - self._last_lgbm_retrain_check > 3600):
+                    self._last_lgbm_retrain_check = time.time()
+                    self._lgbm_retrain_running = True
+                    print(f"  [{self._ex_tag}] WEEKLY RETRAIN: launching LightGBM retrain in background thread")
+
+                    def _retrain_lgbm_background():
+                        try:
+                            from src.models.scheduled_retrain import retrain_all
+                            results = retrain_all(assets=[a for a in self.assets], dry_run=False)
+                            for r in results:
+                                status = r.get('status', 'unknown')
+                                acc = r.get('accuracy', 0)
+                                print(f"  [{self._ex_tag}] RETRAIN DONE: {r['asset']} — {status} (acc={acc:.4f})")
+                            # Hot-reload updated models
+                            for asset in self.assets:
+                                model_path = os.path.join('models', f'lgbm_{asset.lower()}_trained.txt')
+                                if os.path.exists(model_path):
+                                    try:
+                                        import lightgbm as lgb
+                                        self._lgbm_raw[asset] = lgb.Booster(model_file=model_path)
+                                        print(f"  [{self._ex_tag}:{asset}] HOT-RELOAD: LightGBM model updated from retrain")
+                                    except Exception as le:
+                                        logger.warning(f"LightGBM hot-reload failed for {asset}: {le}")
+                        except Exception as e:
+                            logger.error(f"Weekly LightGBM retrain failed: {e}")
+                        finally:
+                            self._lgbm_retrain_running = False
+
+                    import threading as _thr
+                    _thr.Thread(target=_retrain_lgbm_background, daemon=True, name="lgbm-retrain").start()
+
+                # ── AUTONOMOUS ONLINE TRAINING: Advanced Learning Engine ──
+                # Per-bar: update anomaly detector, regime classifier, pipeline overlay for each asset
+                # Every 30 min: full cross-asset analysis (patterns, correlations, meta-learning)
+                if self._advanced_learning:
+                    try:
+                        for asset in self.assets:
+                            try:
+                                symbol = self._get_symbol(asset)
+                                raw = self.price_source.fetch_ohlcv(symbol, timeframe='5m', limit=200)
+                                if raw:
+                                    _oh = PriceFetcher.extract_ohlcv(raw)
+                                    if len(_oh['closes']) >= 50:
+                                        import numpy as _np
+                                        _c = _np.array(_oh['closes'], dtype=float)
+                                        _h = _np.array(_oh['highs'], dtype=float)
+                                        _l = _np.array(_oh['lows'], dtype=float)
+                                        _v = _np.array(_oh['volumes'], dtype=float)
+                                        # Per-bar online update (anomaly + regime + overlay)
+                                        bar_result = self._advanced_learning.process_bar(asset, _c, _h, _l, _v)
+                                        _ov = bar_result.get('overlay')
+                                        if _ov:
+                                            _regime_tag = bar_result.get('regime')
+                                            _regime_str = _regime_tag.regime_type if _regime_tag else '?'
+                                            _anom = bar_result.get('anomaly', {})
+                                            _anom_tag = f" ANOMALY:{_anom.get('type', 'NONE')}" if _anom and _anom.get('is_anomaly') else ""
+                                            print(f"  [{self._ex_tag}:{asset}] META: regime={_regime_str} bear_veto={_ov.bear_veto_threshold} conf>={_ov.min_confidence:.2f} risk_mult={_ov.risk_multiplier:.2f}{_anom_tag}")
+
+                                        # ── Category B online learning: update models with new bar data ──
+                                        _log_rets = _np.diff(_np.log(_c + 1e-12))
+                                        _bar_ret = float(_log_rets[-1]) if len(_log_rets) > 0 else 0.0
+
+                                        # EVT: update rolling tail risk estimate per bar
+                                        if self._evt_risk and len(_log_rets) >= 50:
+                                            try:
+                                                self._evt_risk.online_update(_bar_ret)
+                                            except Exception:
+                                                pass
+
+                                        # Hawkes: update with new event time if large move detected
+                                        if self._hawkes and len(_log_rets) >= 10:
+                                            try:
+                                                _abs_rets = _np.abs(_log_rets[-50:])
+                                                _thresh = float(_np.mean(_abs_rets) + 2.0 * _np.std(_abs_rets))
+                                                if abs(_bar_ret) > _thresh:
+                                                    _ev_times = _np.where(_np.abs(_log_rets[-50:]) > _thresh)[0].astype(float)
+                                                    self._hawkes.online_update(float(len(_log_rets)), _ev_times.tolist())
+                                            except Exception:
+                                                pass
+
+                                        # Temporal Transformer: online gradient update with realized return
+                                        if self._temporal_transformer and len(_c) >= 120:
+                                            try:
+                                                _pct = _np.diff(_c[-121:]) / _c[-121:-1]
+                                                _hpct = (_h[-120:] - _c[-121:-1]) / _c[-121:-1]
+                                                _lpct = (_l[-120:] - _c[-121:-1]) / _c[-121:-1]
+                                                _vpct = _np.diff(_v[-121:]) / (_v[-121:-1] + 1e-12)
+                                                _hist = _np.column_stack([_pct, _hpct, _lpct, _vpct])
+                                                if _hist.shape[1] < self._temporal_transformer.d_model:
+                                                    _pad = _np.zeros((_hist.shape[0], self._temporal_transformer.d_model - _hist.shape[1]))
+                                                    _hist = _np.hstack([_hist, _pad])
+                                                self._temporal_transformer.online_update(_hist, float(_bar_ret))
+                                            except Exception:
+                                                pass
+
+                                        # Sentiment: compute real values from price-action proxy
+                                        if self._sentiment and len(_c) >= 20:
+                                            try:
+                                                _up_v = sum(float(_v[j]) for j in range(-20, 0) if _c[j] > _c[j-1])
+                                                _dn_v = sum(float(_v[j]) for j in range(-20, 0) if _c[j] < _c[j-1])
+                                                _total = _up_v + _dn_v + 1e-10
+                                                _sent_mean = (_up_v - _dn_v) / _total
+                                                # Z-score: compare current sentiment to 50-bar rolling
+                                                _sent_history = []
+                                                for _si in range(max(0, len(_c)-50), len(_c)-20):
+                                                    _uv = sum(float(_v[j]) for j in range(_si, _si+20) if j+1 < len(_c) and _c[j+1] > _c[j])
+                                                    _dv = sum(float(_v[j]) for j in range(_si, _si+20) if j+1 < len(_c) and _c[j+1] < _c[j])
+                                                    _sent_history.append((_uv - _dv) / (_uv + _dv + 1e-10))
+                                                _sent_std = float(_np.std(_sent_history)) if len(_sent_history) > 5 else 0.3
+                                                _sent_z = (_sent_mean - float(_np.mean(_sent_history))) / (_sent_std + 1e-10) if _sent_history else 0.0
+                                                # Store for use in _evaluate_entry
+                                                if not hasattr(self, '_sentiment_cache'):
+                                                    self._sentiment_cache = {}
+                                                self._sentiment_cache[asset] = {
+                                                    'sentiment_mean': float(_np.clip(_sent_mean, -1, 1)),
+                                                    'sentiment_z_score': float(_np.clip(_sent_z, -3, 3)),
+                                                }
+                                            except Exception:
+                                                pass
+
+                            except Exception as ae:
+                                logger.debug(f"Meta bar update error for {asset}: {ae}")
+
+                        # Full cross-asset analysis every 30 min
+                        if time.time() - self._last_full_meta_analysis > self._meta_analysis_interval:
+                            self._last_full_meta_analysis = time.time()
+                            try:
+                                import pandas as _pd
+                                multi_data = {}
+                                for asset in self.assets:
+                                    symbol = self._get_symbol(asset)
+                                    raw = self.price_source.fetch_ohlcv(symbol, timeframe='5m', limit=200)
+                                    if raw:
+                                        _oh = PriceFetcher.extract_ohlcv(raw)
+                                        multi_data[asset] = _pd.DataFrame({
+                                            'close': _oh['closes'], 'high': _oh['highs'],
+                                            'low': _oh['lows'], 'volume': _oh['volumes'],
+                                        })
+                                if len(multi_data) >= 2:
+                                    full_result = self._advanced_learning.process_market_data(multi_data)
+                                    _corrs = full_result.get('correlations', {})
+                                    _pats = full_result.get('patterns', {})
+                                    _active_pats = [k for k, v in _pats.items() if v]
+                                    print(f"  [{self._ex_tag}] META FULL: correlations={_corrs} active_patterns={_active_pats}")
+                                    self._advanced_learning.save_learned_models()
+                            except Exception as fe:
+                                logger.debug(f"Full meta-analysis error: {fe}")
+                    except Exception as me:
+                        logger.debug(f"Advanced learning loop error: {me}")
 
                 # Sleep until next bar
                 elapsed = time.time() - loop_start
@@ -1581,16 +2066,36 @@ class TradingExecutor:
                 return
 
         # ── TESTNET PRICE SANITY ──
+        # 1. Reject candle-to-candle jumps > 25%
         if len(closes) >= 3:
             for i in range(-2, 0):
                 prev_c = closes[i - 1]
                 curr_c = closes[i]
                 if prev_c > 0:
                     jump_pct = abs(curr_c - prev_c) / prev_c * 100
-                    # Testnet has wild price jumps — use 25% threshold (was 8%)
                     if jump_pct > 25.0:
                         print(f"  [{self._ex_tag}:{asset}] PRICE JUMP: {jump_pct:.1f}% between candles (${prev_c:,.0f} -> ${curr_c:,.0f}) — skipping")
                         return
+
+        # 2. Reject absolute fantasy prices (testnet returns $873K BTC, $345K BTC etc.)
+        # Use hardcoded sane ranges — these are generous 10x bands around expected prices
+        _sane_ranges = {'BTC': (5_000, 500_000), 'ETH': (200, 50_000)}
+        _sane = _sane_ranges.get(asset)
+        if _sane and len(closes) >= 1:
+            last_price = closes[-1]
+            if last_price < _sane[0] or last_price > _sane[1]:
+                print(f"  [{self._ex_tag}:{asset}] FANTASY PRICE: ${last_price:,.0f} outside sane range ${_sane[0]:,}-${_sane[1]:,} — testnet garbage, skipping")
+                return
+
+        # 3. Cross-check: compare OHLCV median vs live ticker — large divergence = bad data
+        if len(closes) >= 10:
+            _sorted_closes = sorted(closes[-10:])
+            _median_price = _sorted_closes[len(_sorted_closes) // 2]
+            if _median_price > 0 and closes[-1] > 0:
+                _divergence = abs(closes[-1] - _median_price) / _median_price * 100
+                if _divergence > 50:
+                    print(f"  [{self._ex_tag}:{asset}] PRICE DIVERGENCE: last=${closes[-1]:,.0f} vs median=${_median_price:,.0f} ({_divergence:.0f}%) — testnet noise, skipping")
+                    return
 
         # ── Live tick price for SL management ──
         try:
@@ -2527,8 +3032,8 @@ class TradingExecutor:
                 elif hurst_regime == 'random' and hurst_conf > 0.7:
                     # Random walk — add warning but don't block (weaker signal)
                     math_filter_warnings.append(f"HURST: H={hurst_value:.2f} random walk — trend may not persist")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Hurst computation error: {e}")
 
         # ── VPIN TOXIC FLOW CHECK ──
         # If order flow is one-sided (informed traders), our entries get front-run
@@ -2540,8 +3045,8 @@ class TradingExecutor:
                     math_filter_warnings.append(f"VPIN: {vpin_status['vpin']:.2f} TOXIC flow — informed traders detected")
                 elif vpin_status['risk_action'] == 'REDUCE':
                     math_filter_warnings.append(f"VPIN: {vpin_status['vpin']:.2f} elevated — watch for adverse selection")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"VPIN check error: {e}")
 
         # ── ML MODEL PREDICTIONS ──
         ml_context = {}
@@ -2572,8 +3077,8 @@ class TradingExecutor:
                     if ml_context['hmm_regime'] == 'CRISIS' and crisis_prob > 0.5:
                         print(f"  [{self._ex_tag}:{asset}] HMM CRISIS BLOCK: {ml_context['hmm_regime']} (crisis_prob={crisis_prob:.2f})")
                         return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"HMM regime error: {e}")
 
         # Kalman Trend Filter
         if self._kalman and len(closes) >= 30:
@@ -2585,10 +3090,10 @@ class TradingExecutor:
                     ml_context['kalman_snr'] = round(kalman_result.get('snr', 0), 2)
                     slope_dir = 'UP' if kalman_result.get('slope', 0) > 0 else 'DOWN'
                     ml_context['kalman_trend'] = slope_dir
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Kalman filter error: {e}")
 
-        # Volatility Regime
+        # Volatility Regime — dual detection: basic + advanced detector
         if VOLATILITY_MODEL_AVAILABLE and len(closes) >= 30:
             try:
                 import numpy as _np
@@ -2597,10 +3102,36 @@ class TradingExecutor:
                 if vol_regime:
                     ml_context['vol_regime'] = str(vol_regime.get('regime', 'NORMAL'))
                     ml_context['vol_percentile'] = round(vol_regime.get('percentile', 50), 0)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Volatility regime error: {e}")
 
-        # Cycle Detection
+        # ── Advanced Volatility Regime (ATR + clustering + z-score) ──
+        if self._vol_regime_detector and len(closes) >= 50:
+            try:
+                vrd_result = self._vol_regime_detector.detect_regime(closes, highs, lows)
+                ml_context['vol_regime_adv'] = vrd_result.get('vol_regime', 'NORMAL')
+                ml_context['vol_cluster_score'] = round(vrd_result.get('vol_cluster_score', 1.0), 2)
+                ml_context['atr_z_score'] = round(vrd_result.get('atr_z_score', 0.0), 2)
+                ml_context['realized_vol_annual'] = round(vrd_result.get('realized_vol_annual', 0.0), 4)
+
+                # HIGH_VOL_PANIC: reduce entry score (EMA signals are unreliable in panic)
+                if vrd_result.get('vol_regime') == 'HIGH_VOL_PANIC':
+                    entry_score -= 2
+                    score_reasons.append("vol_PANIC")
+                    math_filter_warnings.append(f"VolRegime: HIGH_VOL_PANIC (cluster={vrd_result['vol_cluster_score']:.1f}x, ATR z={vrd_result['atr_z_score']:.1f})")
+                # TREND_EXPANSION: boost entry score (EMA thrives in expanding trends)
+                elif vrd_result.get('vol_regime') == 'TREND_EXPANSION':
+                    entry_score += 1
+                    score_reasons.append("vol_EXPANSION")
+                # LOW_VOL_RANGE: penalize (EMA chops in ranges)
+                elif vrd_result.get('vol_regime') == 'LOW_VOL_RANGE':
+                    entry_score -= 1
+                    score_reasons.append("vol_LOW_RANGE")
+                    math_filter_warnings.append("VolRegime: LOW_VOL_RANGE — EMA signals chop in tight ranges")
+            except Exception as e:
+                logger.debug(f"Advanced volatility regime error: {e}")
+
+        # Cycle Detection (primary: detect_dominant_cycles, secondary: FFT rolling)
         if CYCLE_AVAILABLE and len(closes) >= 50:
             try:
                 import numpy as _np
@@ -2608,8 +3139,29 @@ class TradingExecutor:
                 if cycle_result:
                     ml_context['dominant_cycle'] = cycle_result.get('period', 0)
                     ml_context['cycle_phase'] = cycle_result.get('phase', 'UNKNOWN')
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Cycle detection error: {e}")
+
+        # ── FFT Cycle Period (complementary — precise period estimation) ──
+        if FFT_CYCLE_AVAILABLE and len(closes) >= 128:
+            try:
+                fft_periods = rolling_fft_period(closes[-200:], window=128, top_k=1)
+                # Use the latest valid period
+                latest_fft = None
+                for p in reversed(fft_periods):
+                    if p is not None and 4 < p < 100:  # Sane range: 4-100 bars
+                        latest_fft = p
+                        break
+                if latest_fft:
+                    ml_context['fft_cycle_period'] = round(latest_fft, 1)
+                    # Cross-validate: if FFT and primary cycle detector agree, boost confidence
+                    primary_cycle = ml_context.get('dominant_cycle', 0)
+                    if primary_cycle > 0 and abs(latest_fft - primary_cycle) < primary_cycle * 0.3:
+                        ml_context['cycle_agreement'] = True
+                    else:
+                        ml_context['cycle_agreement'] = False
+            except Exception as e:
+                logger.debug(f"FFT cycle detection error: {e}")
 
         # ── LSTM ENSEMBLE PREDICTION (BINARY: SKIP vs TRADE) ──
         # ML learned from trailing SL simulation: TRADE = setup where SL locks profit (L2+)
@@ -2619,7 +3171,7 @@ class TradingExecutor:
                 from src.scripts.train_all_models import compute_strategy_features
                 import numpy as _np
                 opens_list = ohlcv.get('opens', closes)
-                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=30, n_features=40)
+                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=30, n_features=50)
                 if X_seq is not None and len(X_seq) > 0:
                     lstm_pred = _lstm_model.predict(X_seq[-1])
                     if lstm_pred and lstm_pred.get('confidence', 0) > 0.1:
@@ -2637,8 +3189,12 @@ class TradingExecutor:
                         elif trade_quality == 'TRADE' and trade_conf > 0.40:
                             entry_score += 1
                             score_reasons.append(f"lstm_trade_weak({trade_conf:.0%})")
+                        elif trade_quality == 'SKIP' and trade_conf > 0.75:
+                            # HARD BLOCK: LSTM is very confident this setup dies at L1
+                            print(f"  [{self._ex_tag}:{asset}] LSTM HARD SKIP: conf={trade_conf:.0%} — ML predicts L1 death")
+                            return
                         elif trade_quality == 'SKIP' and trade_conf > 0.60:
-                            entry_score -= 2
+                            entry_score -= 3
                             score_reasons.append(f"lstm_SKIP({trade_conf:.0%})")
                             math_filter_warnings.append(f"LSTM: SKIP signal ({trade_conf:.0%}) - setup predicts L1 death")
                         elif trade_quality == 'SKIP' and trade_conf > 0.40:
@@ -2661,11 +3217,23 @@ class TradingExecutor:
                         entry_score -= 2
                         score_reasons.append(f"ptst_shock={ptst_pred['liquidity_shock_prob']:.0%}")
                         math_filter_warnings.append(f"PatchTST: {ptst_pred['liquidity_shock_prob']:.0%} liquidity shock probability")
-                    # Direction agreement
+                    # Direction agreement / conflict
                     signal_dir = 1 if signal == "BUY" else -1
-                    if ptst_pred.get('prediction', 0) == signal_dir and ptst_pred.get('confidence', 0) > 0.2:
+                    ptst_dir = ptst_pred.get('prediction', 0)
+                    ptst_conf = ptst_pred.get('confidence', 0)
+                    if ptst_dir == signal_dir and ptst_conf > 0.2:
                         entry_score += 1
                         score_reasons.append(f"ptst_{ml_context['patchtst_direction']}")
+                    elif ptst_dir != 0 and ptst_dir != signal_dir and ptst_conf > 0.3:
+                        # PatchTST DISAGREES with signal direction
+                        if ptst_conf > 0.6:
+                            # High confidence disagreement = hard block
+                            print(f"  [{self._ex_tag}:{asset}] PatchTST CONFLICT: predicts {ml_context['patchtst_direction']} (conf={ptst_conf:.0%}) vs signal {'LONG' if signal=='BUY' else 'SHORT'}")
+                            return
+                        else:
+                            entry_score -= 2
+                            score_reasons.append(f"ptst_CONFLICT({ml_context['patchtst_direction']}_{ptst_conf:.0%})")
+                            math_filter_warnings.append(f"PatchTST: predicts {ml_context['patchtst_direction']} ({ptst_conf:.0%}) — OPPOSITE to signal")
             except Exception as e:
                 logger.debug(f"PatchTST prediction error: {e}")
 
@@ -2676,8 +3244,8 @@ class TradingExecutor:
                 ml_context['alpha_freshness'] = round(ad_feats.get('alpha_freshness', 1.0), 2)
                 ml_context['alpha_optimal_hold'] = int(ad_feats.get('alpha_optimal_hold', 6))
                 ml_context['alpha_half_life'] = round(ad_feats.get('alpha_half_life', 7.0), 1)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Alpha decay error: {e}")
 
         # ── GARCH VOLATILITY FORECAST (pre-loaded) ──
         if len(closes) >= 100:
@@ -2692,8 +3260,8 @@ class TradingExecutor:
                         ml_context['garch_vol_expanding'] = current_vol > avg_vol * 1.2
                         if current_vol > avg_vol * 1.5:
                             math_filter_warnings.append(f"GARCH: volatility 50%+ above average -> expect wild swings")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"GARCH forecast error: {e}")
 
         # ── RL AGENT (Q-learning optimizer) ──
         # Advises: enter/skip, size multiplier, SL buffer, patience
@@ -2752,7 +3320,7 @@ class TradingExecutor:
                 opens_list = ohlcv.get('opens', closes)
                 # Build flat features (last bar only) using same 35 features as training
                 feat = _np.zeros((1, 40), dtype=_np.float32)
-                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=1, n_features=40)
+                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=1, n_features=50)
                 if X_seq is not None and len(X_seq) > 0:
                     feat = X_seq[-1].reshape(1, -1)[:, :40]  # Flatten last seq, take 40 features
                     trade_prob = _lgbm_raw.predict(feat)[0]  # Binary: probability of TRADE class
@@ -2764,15 +3332,19 @@ class TradingExecutor:
                     lgbm_prediction = 1 if is_trade else 0
                     lgbm_confidence = ml_context['lgbm_confidence']
 
-                    # Binary gate: TRADE boosts, SKIP penalizes
+                    # Binary gate: TRADE boosts, SKIP penalizes or HARD BLOCKS
                     if is_trade and trade_conf > 0.60:
                         entry_score += 2
                         score_reasons.append(f"lgbm_TRADE({trade_conf:.0%})")
                     elif is_trade and trade_conf > 0.45:
                         entry_score += 1
                         score_reasons.append(f"lgbm_trade_weak({trade_conf:.0%})")
-                    elif not is_trade and (1 - trade_conf) > 0.65:
-                        entry_score -= 2
+                    elif not is_trade and (1 - trade_conf) > 0.75:
+                        # HARD BLOCK: ML is very confident this setup dies at L1
+                        print(f"  [{self._ex_tag}:{asset}] LGBM HARD SKIP: conf={1-trade_conf:.0%} — ML predicts L1 death")
+                        return
+                    elif not is_trade and (1 - trade_conf) > 0.60:
+                        entry_score -= 3
                         score_reasons.append(f"lgbm_SKIP({1-trade_conf:.0%})")
                         math_filter_warnings.append(f"LGBM: SKIP signal ({1-trade_conf:.0%}) — L1 death predicted by ML")
                     elif not is_trade and (1 - trade_conf) > 0.45:
@@ -2786,15 +3358,31 @@ class TradingExecutor:
         # Fallback: old LightGBM wrapper with generic features
         elif self._lgbm and len(closes) >= 55:
             try:
+                # Build Category B enriched external features
+                _catb_external = {
+                    'vol_regime_encoded': float({'LOW': 0, 'NORMAL': 1, 'HIGH': 2, 'EXTREME': 3}.get(
+                        ml_context.get('vol_regime', 'NORMAL'), 1)),
+                    'cycle_phase_encoded': float({'BOTTOM': 0, 'RISING': 1, 'TOP': 2, 'FALLING': 3}.get(
+                        ml_context.get('cycle_phase', 'RISING'), 1)),
+                    'dominant_period': float(ml_context.get('dominant_cycle', 30)),
+                    # Category B risk features → LightGBM
+                    'evt_var_99': float(ml_context.get('evt_var_99', 0)),
+                    'evt_tail_ratio': float(ml_context.get('evt_tail_ratio', 1.0)),
+                    'mc_risk_score': float(ml_context.get('mc_risk_score', 0.5)),
+                    'mc_position_scale': float(ml_context.get('mc_position_scale', 1.0)),
+                    'hawkes_intensity': float(ml_context.get('hawkes_intensity', 0.05)),
+                    'tft_forecast_bps': float(ml_context.get('tft_forecast_bps', 0)),
+                    'tft_confidence': float(ml_context.get('tft_confidence', 0)),
+                }
+                # Build Category B sentiment features
+                _catb_sentiment = {
+                    'sentiment_mean': float(ml_context.get('sentiment_mean', 0.0)),
+                    'sentiment_z_score': float(ml_context.get('sentiment_z_score', 0.0)),
+                }
                 features = self._lgbm.extract_features(
                     closes=closes, highs=highs, lows=lows, volumes=volumes,
-                    external_features={
-                        'vol_regime_encoded': float({'LOW': 0, 'NORMAL': 1, 'HIGH': 2, 'EXTREME': 3}.get(
-                            ml_context.get('vol_regime', 'NORMAL'), 1)),
-                        'cycle_phase_encoded': float({'BOTTOM': 0, 'RISING': 1, 'TOP': 2, 'FALLING': 3}.get(
-                            ml_context.get('cycle_phase', 'RISING'), 1)),
-                        'dominant_period': float(ml_context.get('dominant_cycle', 30)),
-                    },
+                    external_features=_catb_external,
+                    sentiment_features=_catb_sentiment,
                 )
                 if features and features[-1]:
                     preds = self._lgbm.predict([features[-1]])
@@ -2817,6 +3405,217 @@ class TradingExecutor:
 
         # Store ML context for bear agent and other downstream uses
         self._last_ml_context = ml_context
+
+        # ── ADVANCED LEARNING: Anomaly Detection (HARD VETO — flash crash / liquidity sweep) ──
+        if self._advanced_learning and len(closes) >= 50:
+            try:
+                import numpy as _np
+                _c = _np.array(closes[-100:], dtype=float)
+                _v = _np.array(volumes[-100:], dtype=float)
+                anomaly = self._advanced_learning.anomaly_detector.detect_anomalies(_c, _v)
+                ml_context['anomaly_type'] = anomaly.get('type', 'NONE')
+                ml_context['anomaly_severity'] = anomaly.get('severity', 0)
+                if anomaly.get('is_anomaly'):
+                    print(f"  [{self._ex_tag}:{asset}] ANOMALY VETO: {anomaly['type']} severity={anomaly['severity']} z={anomaly['z_score']} vol_spike={anomaly['vol_spike']}x — BLOCKING ENTRY")
+                    return
+            except Exception as e:
+                logger.debug(f"Anomaly detection error: {e}")
+
+        # ── ADVANCED LEARNING: Regime Classification (enriches ml_context, no score change) ──
+        if self._advanced_learning and len(closes) >= 100:
+            try:
+                import numpy as _np
+                _c = _np.array(closes[-200:], dtype=float)
+                _h = _np.array(highs[-200:], dtype=float)
+                _l = _np.array(lows[-200:], dtype=float)
+                _v = _np.array(volumes[-200:], dtype=float)
+                regime = self._advanced_learning.regime_classifier.classify_regime(_c, _h, _l, _v)
+                ml_context['adv_regime'] = regime.regime_type
+                ml_context['adv_regime_confidence'] = round(regime.confidence, 1)
+                ml_context['adv_optimal_strategy'] = regime.optimal_strategy
+                ml_context['adv_trend_strength'] = round(regime.trend_strength, 3)
+            except Exception as e:
+                logger.debug(f"Regime classification error: {e}")
+
+        # ── ADVANCED LEARNING: Pipeline Overlay (adjusts SECONDARY knobs only) ──
+        # SAFE: Never touches v13/v14 core (min/max_entry_score, short_score_penalty, sr_assets)
+        _overlay = None
+        if self._advanced_learning and asset in self._advanced_learning.active_overlays:
+            _overlay = self._advanced_learning.active_overlays[asset]
+            ml_context['meta_regime'] = _overlay.regime
+            ml_context['meta_risk_multiplier'] = _overlay.risk_multiplier
+            ml_context['meta_reasoning'] = _overlay.reasoning[:100]
+            # If overlay says HOLD: block entry entirely
+            if _overlay.hold_strategy:
+                print(f"  [{self._ex_tag}:{asset}] META HOLD: {_overlay.reasoning[:80]} — blocking entry")
+                return
+
+        # ── TEMPORAL TRANSFORMER: attention-based forecast (advisory, feeds ml_context) ──
+        if self._temporal_transformer and len(closes) >= 120:
+            try:
+                import numpy as _np
+                # Build relative OHLCV changes as input
+                _c = _np.array(closes[-120:], dtype=float)
+                _h = _np.array(highs[-120:], dtype=float)
+                _l = _np.array(lows[-120:], dtype=float)
+                _v = _np.array(volumes[-120:], dtype=float)
+                # Normalize to pct changes
+                _pct = _np.diff(_c) / _c[:-1]
+                _hpct = (_h[1:] - _c[:-1]) / _c[:-1]
+                _lpct = (_l[1:] - _c[:-1]) / _c[:-1]
+                _vpct = _np.diff(_v) / (_v[:-1] + 1e-12)
+                _history = _np.column_stack([_pct, _hpct, _lpct, _vpct])[-self._temporal_transformer.context_len:]
+                # Pad to d_model if needed
+                if _history.shape[1] < self._temporal_transformer.d_model:
+                    _pad = _np.zeros((_history.shape[0], self._temporal_transformer.d_model - _history.shape[1]))
+                    _history = _np.hstack([_history, _pad])
+                forecast = self._temporal_transformer.forecast_return(_history)
+                ml_context['tft_forecast_bps'] = round(forecast.get('forecast_return_bps', 0), 1)
+                ml_context['tft_confidence'] = round(forecast.get('confidence', 0), 2)
+            except Exception as e:
+                logger.debug(f"TemporalTransformer error: {e}")
+
+        # ── HAWKES PROCESS: event clustering intensity (advisory) ──
+        if self._hawkes and len(closes) >= 50:
+            try:
+                import numpy as _np
+                # Detect large moves as "events" (returns > 2 std devs)
+                _rets = _np.abs(_np.diff(_np.array(closes[-100:], dtype=float)) / _np.array(closes[-100:-1], dtype=float))
+                _mean_r = _np.mean(_rets)
+                _std_r = _np.std(_rets)
+                _threshold = _mean_r + 2.0 * _std_r
+                _event_indices = _np.where(_rets > _threshold)[0]
+                if len(_event_indices) >= 3:
+                    _event_times = _event_indices.astype(float)
+                    intensity = self._hawkes.current_intensity(_event_times)
+                    ml_context['hawkes_intensity'] = round(float(intensity), 3)
+                    ml_context['hawkes_event_count'] = len(_event_indices)
+                    # High intensity = event clustering = caution
+                    if intensity > 0.5:
+                        math_filter_warnings.append(f"HAWKES: intensity={intensity:.2f} (event clustering — caution)")
+            except Exception as e:
+                logger.debug(f"Hawkes process error: {e}")
+
+        # ── EVT TAIL RISK: fat-tail VaR assessment (advisory, feeds risk context) ──
+        if self._evt_risk and len(closes) >= 100:
+            try:
+                import numpy as _np
+                _rets = _np.diff(_np.log(_np.array(closes[-500:], dtype=float) + 1e-12))
+                if len(_rets) >= 50:
+                    evt_result = self._evt_risk.fit_and_assess(_rets)
+                    ml_context['evt_var_99'] = round(evt_result.get('evt_var_99', 0), 4)
+                    ml_context['evt_tail_index'] = round(evt_result.get('tail_index', 3.0), 2)
+                    ml_context['evt_tail_ratio'] = round(evt_result.get('tail_ratio', 1.0), 2)
+            except Exception as e:
+                logger.debug(f"EVT risk error: {e}")
+
+        # ── MONTE CARLO RISK: forward VaR simulation (advisory) ──
+        if self._mc_risk and len(closes) >= 50 and price > 0:
+            try:
+                import numpy as _np
+                _rets = _np.diff(_np.array(closes[-100:], dtype=float)) / _np.array(closes[-100:-1], dtype=float)
+                _vol = float(_np.std(_rets))
+                _drift = float(_np.mean(_rets))
+                _regime = ml_context.get('adv_regime', 'NEUTRAL').lower()
+                _regime_map = {'trending_up': 'bull', 'trending_down': 'bear', 'volatile': 'crisis', 'ranging': 'sideways'}
+                mc_regime = _regime_map.get(_regime, 'normal')
+                mc_result = self._mc_risk.simulate(current_price=price, volatility=_vol, drift=_drift, regime=mc_regime)
+                ml_context['mc_var_95'] = round(mc_result.get('mc_var_95', 0), 4)
+                ml_context['mc_risk_score'] = round(mc_result.get('mc_risk_score', 0.5), 2)
+                ml_context['mc_position_scale'] = round(mc_result.get('mc_position_scale', 1.0), 2)
+            except Exception as e:
+                logger.debug(f"Monte Carlo risk error: {e}")
+
+        # ── SENTIMENT: real values from per-bar online computation ──
+        if self._sentiment and hasattr(self, '_sentiment_cache'):
+            try:
+                _sent = self._sentiment_cache.get(asset, {})
+                ml_context['sentiment_mean'] = _sent.get('sentiment_mean', 0.0)
+                ml_context['sentiment_z_score'] = _sent.get('sentiment_z_score', 0.0)
+                ml_context['sentiment_available'] = True
+            except Exception:
+                ml_context['sentiment_mean'] = 0.0
+                ml_context['sentiment_z_score'] = 0.0
+
+        # ── CATEGORY B DIRECT SCORE MODIFIERS ──
+        # These quantitative risk signals directly adjust entry_score like LGBM/LSTM/PatchTST do.
+        # They are NOT advisory — they are hard quantitative vetoes and boosts.
+
+        # EVT: Extreme tail risk → penalize entry
+        _evt_var = ml_context.get('evt_var_99', 0)
+        _evt_tail_ratio = ml_context.get('evt_tail_ratio', 1.0)
+        if _evt_var < -0.08:  # VaR worse than -8% at 99% confidence
+            entry_score -= 2
+            score_reasons.append(f"evt_extreme_tail({_evt_var:.3f})")
+        elif _evt_tail_ratio > 2.0:  # Fat tails 2x worse than normal
+            entry_score -= 1
+            score_reasons.append(f"evt_fat_tail({_evt_tail_ratio:.1f}x)")
+
+        # Monte Carlo: High forward risk → penalize
+        _mc_risk = ml_context.get('mc_risk_score', 0.5)
+        _mc_pos_scale = ml_context.get('mc_position_scale', 1.0)
+        if _mc_risk > 0.8:  # VaR exceeds 80% of risk budget
+            entry_score -= 2
+            score_reasons.append(f"mc_high_risk({_mc_risk:.2f})")
+        elif _mc_risk > 0.6:
+            entry_score -= 1
+            score_reasons.append(f"mc_elevated_risk({_mc_risk:.2f})")
+
+        # Hawkes: Event clustering → penalize (cascade risk)
+        _hawkes_intensity = ml_context.get('hawkes_intensity', 0.0)
+        if _hawkes_intensity > 0.8:  # Strong event clustering
+            entry_score -= 2
+            score_reasons.append(f"hawkes_clustering({_hawkes_intensity:.2f})")
+        elif _hawkes_intensity > 0.5:
+            entry_score -= 1
+            score_reasons.append(f"hawkes_elevated({_hawkes_intensity:.2f})")
+
+        # Temporal Transformer: Direction conflict → penalize
+        _tft_bps = ml_context.get('tft_forecast_bps', 0)
+        _tft_conf = ml_context.get('tft_confidence', 0)
+        if _tft_conf > 0.3:  # Only act on confident forecasts
+            _tft_bullish = _tft_bps > 0
+            _signal_bullish = signal == 'BUY'
+            if _tft_bullish != _signal_bullish and abs(_tft_bps) > 5:
+                entry_score -= 1
+                score_reasons.append(f"tft_disagree({_tft_bps:+.0f}bps)")
+            elif _tft_bullish == _signal_bullish and abs(_tft_bps) > 10:
+                entry_score += 1
+                score_reasons.append(f"tft_confirm({_tft_bps:+.0f}bps)")
+
+        # ── ML ENSEMBLE VOTE: if 2+ models agree SKIP, hard block ──
+        # Individual models can be wrong, but when multiple agree the signal is bad, trust them
+        ml_skip_votes = []
+        if ml_context.get('lgbm_direction') == 'SKIP' and ml_context.get('lgbm_confidence', 0) > 0.55:
+            ml_skip_votes.append(f"LGBM({ml_context['lgbm_confidence']:.0%})")
+        if ml_context.get('lstm_quality') == 'SKIP' and ml_context.get('lstm_confidence', 0) > 0.55:
+            ml_skip_votes.append(f"LSTM({ml_context['lstm_confidence']:.0%})")
+        ptst_dir = ml_context.get('patchtst_direction', 'NEUTRAL')
+        signal_expected = 'UP' if signal == 'BUY' else 'DOWN'
+        if ptst_dir != 'NEUTRAL' and ptst_dir != signal_expected and ml_context.get('patchtst_prob_up', 0.5) not in (0.5,):
+            ml_skip_votes.append(f"PatchTST({ptst_dir})")
+        if ml_context.get('rl_enter') is False:
+            ml_skip_votes.append("RL(SKIP)")
+        if ml_context.get('hmm_regime') == 'CRISIS':
+            ml_skip_votes.append("HMM(CRISIS)")
+
+        # Category B ensemble voters
+        if _hawkes_intensity > 0.8:
+            ml_skip_votes.append(f"Hawkes({_hawkes_intensity:.2f})")
+        if _mc_risk > 0.8:
+            ml_skip_votes.append(f"MC({_mc_risk:.2f})")
+        if _evt_var < -0.08:
+            ml_skip_votes.append(f"EVT({_evt_var:.3f})")
+        if _tft_conf > 0.4 and ((_tft_bps > 0) != (signal == 'BUY')) and abs(_tft_bps) > 15:
+            ml_skip_votes.append(f"TFT({_tft_bps:+.0f}bps)")
+
+        if len(ml_skip_votes) >= 3:
+            print(f"  [{self._ex_tag}:{asset}] ML CONSENSUS BLOCK: {len(ml_skip_votes)} models vote SKIP — {', '.join(ml_skip_votes)}")
+            return
+        elif len(ml_skip_votes) >= 2:
+            entry_score -= 3
+            score_reasons.append(f"ml_consensus_skip({len(ml_skip_votes)})")
+            math_filter_warnings.append(f"ML ENSEMBLE: {len(ml_skip_votes)} models vote SKIP — {', '.join(ml_skip_votes)}")
 
         # ── ENTRY SCORE HARD GATE (v13 optimized) ──
         # After all ML boosting, check score range [min, max]
@@ -3277,9 +4076,36 @@ class TradingExecutor:
         reasoning = str(unified.get('facilitator_verdict', ''))[:120]
         risk_score = unified.get('risk_score', 5)
 
+        # ── EVENT GUARD: calendar-based risk pause (blocks during known high-risk events) ──
+        if self._event_guard:
+            try:
+                if self._event_guard.is_risk_high():
+                    print(f"  [{self._ex_tag}:{asset}] EVENT GUARD: high-risk calendar event — blocking entry")
+                    return
+                if self._event_guard.paused:
+                    print(f"  [{self._ex_tag}:{asset}] EVENT GUARD: manually paused — blocking entry")
+                    return
+            except Exception as e:
+                logger.debug(f"EventGuard error: {e}")
+
+        # ── META OVERLAY: use adaptive thresholds if available (SECONDARY knobs only) ──
+        # v13/v14 core (min/max_entry_score, short_score_penalty, sr_assets) is NEVER changed
+        _active_bear_veto = self.bear_veto_threshold
+        _active_bear_reduce = self.bear_reduce_threshold
+        _active_min_confidence = self.min_confidence
+        _meta_risk_mult = 1.0
+        if _overlay:
+            _active_bear_veto = _overlay.bear_veto_threshold
+            _active_bear_reduce = _overlay.bear_reduce_threshold
+            _active_min_confidence = _overlay.min_confidence
+            _meta_risk_mult = _overlay.risk_multiplier
+            if _active_bear_veto != self.bear_veto_threshold or _active_min_confidence != self.min_confidence:
+                print(f"  [{self._ex_tag}:{asset}] META OVERLAY: bear_veto={_active_bear_veto} bear_reduce={_active_bear_reduce} min_conf={_active_min_confidence:.2f} risk_mult={_meta_risk_mult:.2f} | {_overlay.reasoning[:60]}")
+
         # ══════════════════════════════════════════════════════════
         # BEAR VETO AGENT — Separate LLM call, contrarian prompt
         # Same model, different perspective: "What could go WRONG?"
+        # Thresholds dynamically adjusted by meta-optimizer overlay
         # ══════════════════════════════════════════════════════════
         if self.bear_enabled:
             try:
@@ -3302,24 +4128,24 @@ class TradingExecutor:
                     print(f"  [{self._ex_tag}:{asset}] BEAR OVERRIDE: risk {risk_score} -> {bear_risk} (bear sees more danger)")
                     risk_score = bear_risk
 
-                # VETO: risk >= threshold → don't enter
-                if bear_risk >= self.bear_veto_threshold:
+                # VETO: risk >= threshold (adaptive from meta overlay)
+                if bear_risk >= _active_bear_veto:
                     if asset not in self.bear_veto_stats:
                         self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
                     self.bear_veto_stats[asset]['vetoed'] += 1
-                    print(f"  [{self._ex_tag}:{asset}] BEAR VETO: risk={bear_risk}/10 >= {self.bear_veto_threshold} | {bear_reason}")
+                    print(f"  [{self._ex_tag}:{asset}] BEAR VETO: risk={bear_risk}/10 >= {_active_bear_veto} | {bear_reason}")
                     return
             except Exception as e:
                 logger.warning(f"[{asset}] Bear agent error (proceeding without veto): {e}")
 
-        # ── Bear REDUCE: risk between reduce_threshold and veto_threshold → reduce but don't kill ──
-        if risk_score >= self.bear_reduce_threshold and risk_score < self.bear_veto_threshold:
+        # ── Bear REDUCE: risk between reduce and veto thresholds (adaptive) ──
+        if risk_score >= _active_bear_reduce and risk_score < _active_bear_veto:
             old_size = size_pct
             size_pct = max(1.0, size_pct * 0.7)  # Floor at 1% — never reduce to 0
             if asset not in self.bear_veto_stats:
                 self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
             self.bear_veto_stats[asset]['reduced'] += 1
-            print(f"  [{self._ex_tag}:{asset}] BEAR REDUCE: risk={risk_score}/10 (>={self.bear_reduce_threshold}) — size {old_size:.0f}% -> {size_pct:.0f}%")
+            print(f"  [{self._ex_tag}:{asset}] BEAR REDUCE: risk={risk_score}/10 (>={_active_bear_reduce}) — size {old_size:.0f}% -> {size_pct:.0f}%")
 
         # ── VPIN toxic flow → warn but don't reduce further (bear already handles risk) ──
         if vpin_status and vpin_status['is_toxic']:
@@ -3335,9 +4161,9 @@ class TradingExecutor:
         direction_label = chosen_dir
         chosen_tf = unified.get('chosen_timeframe', '5m')
 
-        # Quality gate: confidence
-        if confidence < self.min_confidence:
-            print(f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {self.min_confidence}")
+        # Quality gate: confidence (adaptive via meta overlay)
+        if confidence < _active_min_confidence:
+            print(f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {_active_min_confidence:.2f}")
             return
 
         # Track bear stats
@@ -3363,21 +4189,76 @@ class TradingExecutor:
                 if abs(mult - 1.0) > 0.05:
                     print(f"  [{self._ex_tag}:{asset}] EDGE: {mult:.2f}x ({edge['wins']}W/{edge['losses']}L) size {old_size:.0f}% -> {size_pct:.0f}%")
 
-        # Calculate position size — use ACTUAL account equity (not config default)
+        # Calculate position size — ATR-based dynamic sizing when available, fixed % fallback
         max_size_pct = 20 if self.equity < 500 else 5
         size_pct = max(1, min(max_size_pct, size_pct))
         if self.equity <= 0:
             print(f"  [{self._ex_tag}:{asset}] SKIP: no equity available")
             return
 
-        notional = self.equity * (size_pct / 100.0)
+        # ── ATR-based position sizing (risk-calibrated) ──
+        # Uses ATR to compute position size such that a 2xATR adverse move = risk_per_trade% loss
+        # This replaces LLM's flat position_size_pct with mathematically correct sizing
+        atr_sized = False
+        if POSITION_SIZING_AVAILABLE and current_atr > 0 and price > 0:
+            try:
+                risk_pct = self.config.get('risk', {}).get('risk_per_trade_pct', 1.0)
+                atr_qty = atr_position_size(
+                    account_balance=self.equity,
+                    atr_value=current_atr,
+                    risk_pct=risk_pct,
+                    atr_multiplier=2.0,  # 2xATR stop distance (matches trailing SL logic)
+                )
+                atr_notional = atr_qty * price
+                # Clamp ATR-sized notional to max_size_pct of equity
+                max_notional = self.equity * (max_size_pct / 100.0)
+                atr_notional = min(atr_notional, max_notional)
+
+                # ── MetaSizer: Half-Kelly multiplier based on win probability ──
+                kelly_mult = 1.0
+                if self._meta_sizer:
+                    try:
+                        # Use edge stats for win probability, or LightGBM confidence as proxy
+                        win_prob = 0.5
+                        win_loss_ratio = 2.0
+                        if asset in self.edge_stats and self.edge_stats[asset].get('total', 0) >= 5:
+                            win_prob = self.edge_stats[asset].get('win_rate', 0.5)
+                            wins = self.edge_stats[asset].get('wins', 1)
+                            losses = self.edge_stats[asset].get('losses', 1)
+                            # Approximate win/loss ratio from session performance
+                            if losses > 0 and wins > 0:
+                                win_loss_ratio = max(0.5, min(5.0, wins / losses))
+                        kelly_mult = self._meta_sizer.size({}, win_prob=win_prob, win_loss_ratio=win_loss_ratio)
+                        atr_notional *= kelly_mult
+                    except Exception:
+                        kelly_mult = 1.0
+
+                # Use the SMALLER of LLM-suggested and ATR-sized (conservative)
+                llm_notional = self.equity * (size_pct / 100.0)
+                notional = min(llm_notional, atr_notional)
+                atr_size_pct = (atr_notional / self.equity) * 100 if self.equity > 0 else 0
+                kelly_tag = f" x Kelly={kelly_mult:.2f}" if kelly_mult < 0.99 else ""
+                print(f"  [{self._ex_tag}:{asset}] ATR SIZING: risk={risk_pct}% x 2xATR=${current_atr:,.2f}{kelly_tag} -> ${atr_notional:,.0f} ({atr_size_pct:.1f}%) | LLM={size_pct:.0f}% -> using {'ATR' if atr_notional < llm_notional else 'LLM'}")
+                atr_sized = True
+            except Exception as sz_err:
+                logger.debug(f"ATR sizing error: {sz_err}")
+
+        if not atr_sized:
+            notional = self.equity * (size_pct / 100.0)
+
+        # ── META OVERLAY: apply risk multiplier to position size (SECONDARY knob) ──
+        if _meta_risk_mult != 1.0:
+            old_notional = notional
+            notional *= _meta_risk_mult
+            if abs(_meta_risk_mult - 1.0) > 0.05:
+                print(f"  [{self._ex_tag}:{asset}] META RISK: {_meta_risk_mult:.2f}x — notional ${old_notional:,.0f} -> ${notional:,.0f}")
 
         # Hard cap: max 5% of equity — prevents catastrophic position sizing
         # March 31: $270K-$764K positions on $30K equity = instant blowup
         max_trade = min(2000.0, self.equity * 0.05)
         notional = min(notional, max_trade)
 
-        print(f"  [{self._ex_tag}:{asset}] SIZING: {size_pct:.0f}% of ${self.equity:,.0f} = ${notional:,.0f} (max ${max_trade:,.0f})")
+        print(f"  [{self._ex_tag}:{asset}] SIZING: ${notional:,.0f} of ${self.equity:,.0f} (max ${max_trade:,.0f})")
 
         qty = notional / price if price > 0 else 0
         qty = round(qty, 6)
@@ -3687,6 +4568,24 @@ class TradingExecutor:
             }
             self.last_trade_time[asset] = time.time()
 
+            # ── Alert: Trade Entry ──
+            self._send_alert('INFO', f'{self._ex_tag} ENTRY {action} {asset}',
+                f'{action} {asset} @ ${price:,.2f} | size={size_pct:.0f}% | conf={confidence:.2f} | risk={risk_score}/10 | TF={chosen_tf}',
+                {'asset': asset, 'direction': action, 'price': price, 'size_pct': size_pct,
+                 'confidence': confidence, 'risk_score': risk_score, 'timeframe': chosen_tf})
+
+            # ── Dynamic Risk: Register trade for monitoring (NO stop management) ──
+            if self._dynamic_risk:
+                try:
+                    heat = sum(1 for _ in self.positions) / max(len(self.assets), 1)
+                    allowed, reason = self._dynamic_risk.check_trade_allowed(
+                        asset, size_pct / 100.0, heat)
+                    if not allowed:
+                        print(f"  [{self._ex_tag}:{asset}] DRM WARNING: {reason} (trade already placed, monitoring)")
+                    self._dynamic_risk.update_pnl(0)  # Register activity
+                except Exception as drm_err:
+                    logger.debug(f"DRM register error: {drm_err}")
+
             # ── MT5: Mirror/execute trade on MetaTrader 5 ──
             if self._mt5 and self._mt5.connected:
                 try:
@@ -3752,11 +4651,27 @@ class TradingExecutor:
         # ── 2. HARD STOP: max loss — non-negotiable ──
         # Bybit testnet has inflated prices → use wider stop to avoid noise hits
         hard_stop_pct = -2.5 if self._exchange_name == 'bybit' else -1.8  # 10yr analysis: -1.8% optimal (PF 1.14)
-        # But if asset is blacklisted (stuck, can't close), just log and skip
+        # But if asset is blacklisted (stuck, can't close), retry close if profitable or at hard stop
         is_stuck = asset in self.failed_close_assets
+        if is_stuck and pnl_pct >= 1.0:
+            # Profitable stuck position — retry close aggressively
+            print(f"  [{self._ex_tag}:{asset}] STUCK but PROFITABLE ({pnl_pct:+.2f}%) — retrying close")
+            self._close_position(asset, price, f"Stuck profitable retry (P&L={pnl_pct:+.2f}%)")
+            if asset not in self.positions:  # close succeeded
+                self.failed_close_assets.pop(asset, None)
+            return
         if pnl_pct <= hard_stop_pct:
             if is_stuck:
-                print(f"  [{self._ex_tag}:{asset}] STUCK {pnl_pct:+.2f}% (can't close — no liquidity)")
+                # Retry close even for stuck positions at hard stop — can't just ignore losses
+                elapsed = time.time() - self.failed_close_assets.get(asset, 0)
+                if elapsed >= 300:  # Retry every 5 min at hard stop (more urgent than normal 10 min)
+                    print(f"  [{self._ex_tag}:{asset}] STUCK HARD STOP {pnl_pct:+.2f}% — retrying close")
+                    self.failed_close_assets[asset] = time.time()
+                    self._close_position(asset, price, f"Stuck hard stop retry ({pnl_pct:+.2f}%)")
+                    if asset not in self.positions:
+                        self.failed_close_assets.pop(asset, None)
+                else:
+                    print(f"  [{self._ex_tag}:{asset}] STUCK {pnl_pct:+.2f}% — next retry in {int(300-elapsed)}s")
                 return
             print(f"  [{self._ex_tag}:{asset}] HARD STOP at ${price:,.2f} | P&L: {pnl_pct:+.2f}%")
             self._close_position(asset, price, f"Hard stop {pnl_pct:+.1f}%")
@@ -3848,7 +4763,13 @@ class TradingExecutor:
 
         if sl_hit:
             if is_stuck:
-                print(f"  [{self._ex_tag}:{asset}] STUCK SL {pnl_pct:+.2f}% (can't close — no liquidity)")
+                elapsed = time.time() - self.failed_close_assets.get(asset, 0)
+                if elapsed >= 300:
+                    print(f"  [{self._ex_tag}:{asset}] STUCK SL {pnl_pct:+.2f}% — retrying close")
+                    self.failed_close_assets[asset] = time.time()
+                    self._close_position(asset, price, f"Stuck SL retry ({pnl_pct:+.2f}%)")
+                    if asset not in self.positions:
+                        self.failed_close_assets.pop(asset, None)
                 return
             print(f"  [{self._ex_tag}:{asset}] SL {sl_levels[-1]} HIT at ${price:,.2f} (candle closed ${confirmed_close:,.2f} vs SL ${sl:,.2f}) | P&L: {pnl_pct:+.2f}%")
             self._close_position(asset, price, f"SL {sl_levels[-1]} hit (candle close ${confirmed_close:,.2f})")
@@ -4330,6 +5251,13 @@ class TradingExecutor:
         if asset not in self.positions:
             return
 
+        # Prevent re-entrant close (multiple exit conditions in same cycle)
+        if not hasattr(self, '_closing_in_progress'):
+            self._closing_in_progress = set()
+        if asset in self._closing_in_progress:
+            return
+        self._closing_in_progress.add(asset)
+
         pos = self.positions[asset]
         direction = pos['direction']
         entry = pos['entry_price']
@@ -4410,6 +5338,7 @@ class TradingExecutor:
                 if 'NoImmediate' in str(err) or 'cancel' in str(err).lower():
                     print(f"  [{self._ex_tag}:{asset}] CLOSE FAILED (no liquidity): {err}")
                     self.failed_close_assets[asset] = time.time()
+                    self._closing_in_progress.discard(asset)
                     return
                 else:
                     print(f"  [{self._ex_tag}:{asset}] CLOSE WARNING: {err}")
@@ -4431,6 +5360,7 @@ class TradingExecutor:
                     else:
                         print(f"  [{self._ex_tag}:{asset}] CLOSE INCOMPLETE — {remaining_qty} still open after 3 attempts")
                         self.failed_close_assets[asset] = time.time()
+                        self._closing_in_progress.discard(asset)
                         return
                 else:
                     break
@@ -4499,6 +5429,20 @@ class TradingExecutor:
 
         trade_tf_label = pos.get('trade_timeframe', '5m')
         print(f"  [{self._ex_tag}:{asset}] CLOSED [{trade_tf_label}]: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} | predicted={predicted_l} actual={actual_l_level} [{pred_hit}]")
+
+        # ── Alert: Trade Close ──
+        alert_level = 'WARNING' if pnl_usd < -5 else 'INFO'
+        self._send_alert(alert_level, f'{self._ex_tag} CLOSE {asset}',
+            f'{direction} {asset} closed: P&L {pnl_pct:+.2f}% (${pnl_usd:+,.2f}) | {reason} | {pred_hit}',
+            {'asset': asset, 'direction': direction, 'pnl_pct': pnl_pct, 'pnl_usd': pnl_usd,
+             'reason': reason, 'predicted': predicted_l, 'actual': actual_l_level})
+
+        # ── Dynamic Risk: Feed closed trade P&L ──
+        if self._dynamic_risk:
+            try:
+                self._dynamic_risk.update_pnl(pnl_usd)
+            except Exception:
+                pass
 
         # ── MT5: Close mirrored/executed position ──
         if self._mt5 and self._mt5.connected:
@@ -4589,6 +5533,63 @@ class TradingExecutor:
         except Exception as e:
             logger.warning(f"Journal log failed: {e}")
 
+        # ── TradeTrace: structured record for memory/audit ──
+        if TRADE_TRACE_AVAILABLE:
+            try:
+                trace = TradeTrace(
+                    timestamp=datetime.utcnow(),
+                    asset=asset,
+                    market_regime=self._last_ml_context.get('vol_regime_adv',
+                                  self._last_ml_context.get('vol_regime', 'UNKNOWN')),
+                    funding_rate=0.0,
+                    sentiment={'bullish': 0.5, 'bearish': 0.5, 'neutral': 0.0},
+                    agent_bias=0.0,
+                    proposed_signal=1 if direction == 'LONG' else -1,
+                    signal_confidence=pos.get('confidence', 0.5),
+                    price={'open': entry, 'high': pos.get('peak_price', entry),
+                           'low': min(entry, price), 'close': price},
+                    volume=0.0,
+                    entry_price=entry,
+                    exit_price=price,
+                    holding_bars=max(1, int(duration_min / 5)),
+                    pnl=pnl_usd,
+                    pnl_pct=pnl_pct,
+                    exit_reason=reason,
+                    reasoning_trace=pos.get('reasoning', '')[:200],
+                )
+                # Store for memory vault if available
+                if self._memory:
+                    try:
+                        self._memory.store(trace.to_embedding_text(), trace.to_metadata())
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug(f"TradeTrace error: {e}")
+
+        # ── ADVANCED LEARNING: Online training from trade outcome ──
+        # Updates: strategy generator EWMA stats, alpha decay tracker, meta-learner
+        if self._advanced_learning:
+            try:
+                _pred_l = pos.get('predicted_l_level', 0)
+                if isinstance(_pred_l, str):
+                    try:
+                        _pred_l = int(_pred_l.replace('L', '').replace('+', ''))
+                    except (ValueError, AttributeError):
+                        _pred_l = 0
+                _actual_l = 0
+                if pnl_pct > 0:
+                    # Approximate actual L-level from PnL %
+                    _actual_l = max(1, int(pnl_pct / 0.5))  # ~0.5% per L-level
+                self._advanced_learning.on_trade_close(
+                    asset=asset, pnl_usd=pnl_usd, pnl_pct=pnl_pct,
+                    predicted_l_level=_pred_l, actual_l_level=_actual_l,
+                )
+                _stats = self._advanced_learning.strategy_generator._running_stats.get(asset, {})
+                _edge = self._advanced_learning.edge_retention.get(asset, 1.0)
+                print(f"  [{self._ex_tag}:{asset}] META-LEARN: WR={_stats.get('win_rate', 0):.0%} edge={_edge:.2f} streak={'W' if _stats.get('win_streak', 0) > 0 else 'L'}{max(_stats.get('win_streak', 0), _stats.get('loss_streak', 0))}")
+            except Exception as e:
+                logger.debug(f"Advanced learning trade update error: {e}")
+
         # ── Log to LightGBM classifier for incremental learning ──
         # Fetch fresh 5m candles for feature extraction (not passed to _close_position)
         try:
@@ -4665,6 +5666,7 @@ class TradingExecutor:
 
         # Remove from positions
         del self.positions[asset]
+        self._closing_in_progress.discard(asset)
         now = time.time()
         self.last_close_time[asset] = now
         self.last_trade_time[asset] = now  # Also set trade cooldown to prevent immediate re-entry
@@ -4835,8 +5837,23 @@ class TradingExecutor:
     # Unified LLM router — picks Claude or Ollama based on exchange
     # ------------------------------------------------------------------
     def _query_llm_auto(self, prompt: str) -> str:
-        """Route LLM query to Claude (Delta) or Ollama (Bybit) automatically.
-        Any Claude failure falls back to Ollama llama3.2 — trading never stops."""
+        """Route LLM query through LLMRouter (multi-provider with fallback).
+        Falls back to legacy direct calls if router unavailable."""
+        # ── NEW: Use LLMRouter for robust multi-provider routing ──
+        if self._llm_router:
+            try:
+                # Build fallback chain: primary provider first, then others
+                if self._use_claude and 'claude' in self._llm_router.list_providers():
+                    chain = ['claude', 'ollama']
+                else:
+                    chain = ['ollama', 'claude'] if 'claude' in self._llm_router.list_providers() else ['ollama']
+                result = self._llm_router.query(prompt, fallback_chain=chain, cache=False)
+                if result:
+                    return json.dumps(result)
+            except Exception as e:
+                logger.warning(f"LLMRouter failed ({e}) — falling back to legacy calls")
+
+        # ── LEGACY FALLBACK: direct Ollama/Claude calls ──
         if self._use_claude and self._claude_client:
             try:
                 return self._query_claude(prompt)
@@ -5021,6 +6038,15 @@ CRITICAL: If no timeframe has a clean setup, set proceed=false. Capital preserva
             except json.JSONDecodeError:
                 raw = self._extract_json(raw)
                 result = json.loads(raw)
+
+            # ── Prompt Constraint Validation (safety layer) ──
+            if self._prompt_constraints:
+                try:
+                    result, violations = self._prompt_constraints.validate_response(result)
+                    if violations:
+                        print(f"  [{self._ex_tag}:{asset}] LLM VIOLATIONS: {'; '.join(violations[:3])}")
+                except Exception as vc_err:
+                    logger.debug(f"Prompt constraint validation error: {vc_err}")
 
             # Validate and clamp all fields
             result['proceed'] = bool(result.get('proceed', False))

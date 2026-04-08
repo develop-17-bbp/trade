@@ -527,16 +527,16 @@ def compute_mtf_features(all_data, seq_len=30, n_features=45):
     return X, y
 
 
-def compute_strategy_features(closes, highs, lows, opens, volumes, seq_len=30, n_features=40):
+def compute_strategy_features(closes, highs, lows, opens, volumes, seq_len=30, n_features=50):
     """
     Build feature sequences for 5m-only data.
-    40 features: 30 strategy + 5 Kalman + 5 EMA new-line inflection.
+    50 features: 30 strategy + 5 Kalman + 5 EMA new-line inflection + 10 Category B risk/ML.
 
-    The 5 inflection features teach ML models the EXACT entry pattern:
-    - When EMA was falling then starts rising = NEW UP LINE = profitable CALL entry
-    - When EMA was rising then starts falling = NEW DOWN LINE = profitable PUT entry
-    - How many bars the prior trend lasted (longer prior trend = stronger inflection)
-    - How fresh the new line is (1-3 bars = best entry zone)
+    Features 0-29:  Core strategy (EMA momentum, RSI, MACD, ATR, BB, volume, candle patterns)
+    Features 30-34: Kalman trend filter (slope, SNR, acceleration, residual, direction)
+    Features 35-39: EMA new line inflection (new bars, prior bars, is_new_line, is_fresh, price-EMA/ATR)
+    Features 40-49: Category B risk/ML (EVT tail, MC risk, Hawkes intensity, TFT forecast,
+                     sentiment, regime) — online autonomous features from risk engines
     """
     from src.indicators.indicators import ema, atr, rsi, macd, bollinger_bands, stochastic, obv, roc
 
@@ -679,6 +679,132 @@ def compute_strategy_features(closes, highs, lows, opens, volumes, seq_len=30, n
             # Feature 39: Price position relative to EMA at inflection
             # >0 = price above EMA (good for CALL new line), <0 = below (good for PUT)
             feat[i, 39] = (c - ema_8[i]) / (atr_14[i] + 1e-10) if atr_14[i] > 0 else 0
+
+        # ── CATEGORY B: RISK/ML FEATURES (40-49) ──
+        # These features capture tail risk, event clustering, temporal attention,
+        # and regime context that the core 40 features miss.
+        # Computed from the SAME price data — no external dependency needed for training.
+        if n_features >= 50 and i >= 100:
+            # --- Feature 40: EVT tail severity (rolling GPD ξ parameter) ---
+            # Positive ξ = heavy tail (Pareto), higher = fatter tails = more risk
+            # Computed from rolling window of log returns
+            _window_rets = np.diff(np.log(np.array(closes[max(0,i-500):i+1], dtype=float) + 1e-12))
+            if len(_window_rets) >= 50:
+                _losses = -_window_rets  # flip: positive = losses
+                _threshold_q = np.quantile(_losses, 0.90)
+                _exceedances = _losses[_losses > _threshold_q] - _threshold_q
+                if len(_exceedances) >= 10:
+                    _mean_exc = np.mean(_exceedances)
+                    _var_exc = np.var(_exceedances)
+                    _ratio = _mean_exc**2 / (_var_exc + 1e-12)
+                    _xi = 0.5 * (1 - _ratio)
+                    feat[i, 40] = float(np.clip(_xi, -0.5, 1.0))  # GPD shape param
+                else:
+                    feat[i, 40] = 0.0
+
+            # --- Feature 41: EVT tail ratio (EVT VaR / Normal VaR) ---
+            # >1 = fatter tails than normal distribution predicts
+            if len(_window_rets) >= 50:
+                _normal_var = float(np.mean(_window_rets) - 2.326 * np.std(_window_rets))
+                # Simple EVT VaR approximation using threshold + scale
+                if len(_exceedances) >= 10 and _mean_exc > 0:
+                    _evt_var = _threshold_q + _mean_exc * 1.5
+                    feat[i, 41] = float(np.clip(_evt_var / (abs(_normal_var) + 1e-12), 0.5, 5.0)) - 1.0
+                else:
+                    feat[i, 41] = 0.0
+
+            # --- Feature 42: Monte Carlo risk score (forward VaR severity) ---
+            # EWMA volatility (λ=0.94 RiskMetrics) → GBM simulation → VaR/risk_budget
+            _recent_rets = np.diff(np.array(closes[max(0,i-100):i+1], dtype=float)) / (np.array(closes[max(0,i-100):i], dtype=float) + 1e-12)
+            if len(_recent_rets) >= 20:
+                _lam = 0.94
+                _ewma_var = np.var(_recent_rets[:10]) if len(_recent_rets) >= 10 else np.var(_recent_rets)
+                for _r in _recent_rets[10:]:
+                    _ewma_var = _lam * _ewma_var + (1 - _lam) * _r ** 2
+                _vol = float(np.sqrt(max(_ewma_var, 1e-12)))
+                # Simplified MC: VaR ≈ vol * z_score * sqrt(horizon)
+                _mc_var_approx = _vol * 1.645 * np.sqrt(24)  # 95% VaR, 24-bar horizon
+                _risk_budget = 0.02
+                feat[i, 42] = float(np.clip(_mc_var_approx / (_risk_budget + 1e-10), 0.0, 1.0))
+            else:
+                feat[i, 42] = 0.5
+
+            # --- Feature 43: MC position scale (inverse of risk) ---
+            # How much position the risk budget allows: high = safe, low = dangerous
+            if feat[i, 42] > 0.01:
+                feat[i, 43] = float(np.clip(_risk_budget / (feat[i, 42] * _risk_budget + 1e-10), 0.05, 1.0))
+            else:
+                feat[i, 43] = 1.0
+
+            # --- Feature 44: Hawkes intensity (event clustering) ---
+            # Self-exciting: recent large moves increase probability of more large moves
+            _abs_rets = np.abs(_recent_rets)
+            _mean_abs = np.mean(_abs_rets)
+            _std_abs = np.std(_abs_rets)
+            _event_threshold = _mean_abs + 2.0 * _std_abs
+            _event_mask = _abs_rets > _event_threshold
+            _event_times = np.where(_event_mask)[0].astype(float)
+            if len(_event_times) >= 3:
+                # Hawkes intensity: μ + α * Σ exp(-β*(t-t_i))
+                _mu = 0.1; _alpha = 0.5; _beta = 1.0
+                _t_now = float(len(_recent_rets))
+                _excitation = _alpha * np.sum(np.exp(-_beta * (_t_now - _event_times)))
+                feat[i, 44] = float(np.clip((_mu + _excitation) / 2.0, 0.0, 2.0))
+            else:
+                feat[i, 44] = 0.05  # baseline
+
+            # --- Feature 45: Temporal attention forecast direction ---
+            # Simplified attention-based directional signal from recent returns
+            if len(_recent_rets) >= 30:
+                _context = _recent_rets[-30:]
+                _norm = (_context - np.mean(_context)) / (np.std(_context) + 1e-9)
+                # Exponential recency weighting (attention proxy)
+                _weights = np.exp(np.linspace(-2, 0, len(_norm)))
+                _weights /= _weights.sum()
+                _weighted_signal = np.sum(_norm * _weights)
+                feat[i, 45] = float(np.clip(_weighted_signal, -2.0, 2.0))
+            else:
+                feat[i, 45] = 0.0
+
+            # --- Feature 46: Temporal forecast confidence ---
+            # Higher when recent returns are consistent (low dispersion in attention)
+            if len(_recent_rets) >= 30:
+                _recent_std = np.std(_recent_rets[-10:])
+                _older_std = np.std(_recent_rets[-30:-10])
+                _consistency = 1.0 - float(np.clip(_recent_std / (_older_std + 1e-10), 0, 2))
+                feat[i, 46] = float(np.clip(abs(_consistency), 0, 1))
+            else:
+                feat[i, 46] = 0.0
+
+            # --- Feature 47: Sentiment proxy from price action ---
+            # Ratio of up-volume to total volume (buying pressure proxy)
+            # In live trading this slot gets real FinBERT scores
+            _up_vol = sum(volumes[jj] for jj in range(max(0,i-20), i) if closes[jj] > closes[max(0,jj-1)])
+            _total_vol = sum(volumes[jj] for jj in range(max(0,i-20), i)) + 1e-10
+            feat[i, 47] = float((_up_vol / _total_vol) * 2.0 - 1.0)  # [-1, +1]
+
+            # --- Feature 48: Regime encoded ---
+            # -1 = bearish (declining EMA + high vol), 0 = neutral, +1 = bullish
+            _ema_trend = (ema_8[i] - ema_50[i]) / (c + 1e-10) if ema_50[i] > 0 else 0
+            _vol_ratio = (atr_14[i] / c * 100) if c > 0 else 0
+            _avg_vol_ratio = np.mean([atr_14[j] / closes[j] * 100 for j in range(max(0,i-50), i) if closes[j] > 0]) if i >= 50 else _vol_ratio
+            if _ema_trend > 0.005 and _vol_ratio < _avg_vol_ratio * 1.3:
+                feat[i, 48] = 1.0   # Bullish: trending up, vol not extreme
+            elif _ema_trend < -0.005 or _vol_ratio > _avg_vol_ratio * 1.5:
+                feat[i, 48] = -1.0  # Bearish: trending down or vol extreme
+            else:
+                feat[i, 48] = 0.0   # Neutral
+
+            # --- Feature 49: Anomaly severity (multi-factor z-score) ---
+            # High = current bar is anomalous (price z-score * vol z-score)
+            if i >= 20:
+                _price_mean = np.mean(closes[i-20:i])
+                _price_std = np.std(closes[i-20:i])
+                _price_z = abs(c - _price_mean) / (_price_std + 1e-10)
+                _vol_z = abs(v - np.mean(volumes[max(0,i-20):i])) / (np.std(volumes[max(0,i-20):i]) + 1e-10)
+                feat[i, 49] = float(np.clip(_price_z * _vol_z / 10.0, 0, 2.0))
+            else:
+                feat[i, 49] = 0.0
 
     feat = np.nan_to_num(feat, nan=0.0, posinf=2.0, neginf=-2.0)
     feat = np.clip(feat, -5.0, 5.0)
@@ -853,9 +979,9 @@ def train_lightgbm(data, asset='BTC', all_data=None):
         volumes = data['volumes']
         n = len(closes)
 
-        # ── Compute features: 40 = 30 base + 5 Kalman + 5 inflection ──
-        n_features = 40
-        print(f"  Using 40 strategy features (30 base + 5 Kalman + 5 inflection)")
+        # ── Compute features: 50 = 30 base + 5 Kalman + 5 inflection + 10 Category B ──
+        n_features = 50
+        print(f"  Using 50 strategy features (30 base + 5 Kalman + 5 inflection + 10 Category B)")
 
         # Compute flat feature matrix
         ema_8 = ema(closes, 8)
@@ -899,9 +1025,13 @@ def train_lightgbm(data, asset='BTC', all_data=None):
             'return_20bar', 'dist_to_resistance', 'dist_to_support', 'log_vol_norm',
             'kalman_slope', 'kalman_snr', 'kalman_accel', 'kalman_residual', 'kalman_signal',
             'new_line_bars', 'prior_trend_bars', 'is_new_line', 'is_fresh_entry', 'price_vs_ema_atr',
+            # Category B risk/ML features (40-49)
+            'evt_tail_severity', 'evt_tail_ratio', 'mc_risk_score', 'mc_position_scale',
+            'hawkes_intensity', 'tft_forecast_dir', 'tft_confidence',
+            'sentiment_proxy', 'regime_encoded', 'anomaly_severity',
         ]
 
-        feat = np.zeros((n, 40))
+        feat = np.zeros((n, 50))
         for i in range(55, n):
             c = closes[i]
             o = opens[i] if i < len(opens) else closes[i-1]
@@ -994,6 +1124,71 @@ def train_lightgbm(data, asset='BTC', all_data=None):
                 feat[i, 37] = 1.0 if prior_bars >= 3 and new_bars >= 1 else 0.0
                 feat[i, 38] = 1.0 if prior_bars >= 3 and 1 <= new_bars <= 5 else 0.0
                 feat[i, 39] = (c - ema_8[i]) / (atr_14[i] + 1e-10) if atr_14[i] > 0 else 0
+
+            # ── CATEGORY B RISK/ML FEATURES (40-49) ── same logic as compute_strategy_features
+            if i >= 100:
+                _window_rets = np.diff(np.log(np.array(closes[max(0,i-500):i+1], dtype=float) + 1e-12))
+                if len(_window_rets) >= 50:
+                    _losses = -_window_rets
+                    _threshold_q = np.quantile(_losses, 0.90)
+                    _exceedances = _losses[_losses > _threshold_q] - _threshold_q
+                    if len(_exceedances) >= 10:
+                        _mean_exc = np.mean(_exceedances)
+                        _var_exc = np.var(_exceedances)
+                        _ratio = _mean_exc**2 / (_var_exc + 1e-12)
+                        feat[i, 40] = float(np.clip(0.5 * (1 - _ratio), -0.5, 1.0))
+                    _normal_var = float(np.mean(_window_rets) - 2.326 * np.std(_window_rets))
+                    if len(_exceedances) >= 10 and _mean_exc > 0:
+                        _evt_var = _threshold_q + _mean_exc * 1.5
+                        feat[i, 41] = float(np.clip(_evt_var / (abs(_normal_var) + 1e-12), 0.5, 5.0)) - 1.0
+
+                _recent_rets = np.diff(np.array(closes[max(0,i-100):i+1], dtype=float)) / (np.array(closes[max(0,i-100):i], dtype=float) + 1e-12)
+                if len(_recent_rets) >= 20:
+                    _lam = 0.94
+                    _ewma_var = np.var(_recent_rets[:10]) if len(_recent_rets) >= 10 else np.var(_recent_rets)
+                    for _r in _recent_rets[10:]:
+                        _ewma_var = _lam * _ewma_var + (1 - _lam) * _r ** 2
+                    _vol = float(np.sqrt(max(_ewma_var, 1e-12)))
+                    _mc_var_approx = _vol * 1.645 * np.sqrt(24)
+                    _risk_budget = 0.02
+                    feat[i, 42] = float(np.clip(_mc_var_approx / (_risk_budget + 1e-10), 0.0, 1.0))
+                    feat[i, 43] = float(np.clip(_risk_budget / (feat[i, 42] * _risk_budget + 1e-10), 0.05, 1.0)) if feat[i, 42] > 0.01 else 1.0
+
+                    _abs_rets = np.abs(_recent_rets)
+                    _mean_abs = np.mean(_abs_rets); _std_abs = np.std(_abs_rets)
+                    _event_threshold = _mean_abs + 2.0 * _std_abs
+                    _event_times = np.where(_abs_rets > _event_threshold)[0].astype(float)
+                    if len(_event_times) >= 3:
+                        _t_now = float(len(_recent_rets))
+                        _excitation = 0.5 * np.sum(np.exp(-1.0 * (_t_now - _event_times)))
+                        feat[i, 44] = float(np.clip((0.1 + _excitation) / 2.0, 0.0, 2.0))
+                    else:
+                        feat[i, 44] = 0.05
+
+                    if len(_recent_rets) >= 30:
+                        _context = _recent_rets[-30:]
+                        _norm = (_context - np.mean(_context)) / (np.std(_context) + 1e-9)
+                        _weights = np.exp(np.linspace(-2, 0, len(_norm)))
+                        _weights /= _weights.sum()
+                        feat[i, 45] = float(np.clip(np.sum(_norm * _weights), -2.0, 2.0))
+                        _recent_std = np.std(_recent_rets[-10:])
+                        _older_std = np.std(_recent_rets[-30:-10])
+                        feat[i, 46] = float(np.clip(abs(1.0 - _recent_std / (_older_std + 1e-10)), 0, 1))
+
+                _up_vol = sum(volumes[jj] for jj in range(max(0,i-20), i) if closes[jj] > closes[max(0,jj-1)])
+                _total_vol = sum(volumes[jj] for jj in range(max(0,i-20), i)) + 1e-10
+                feat[i, 47] = float((_up_vol / _total_vol) * 2.0 - 1.0)
+
+                _ema_trend = (ema_8[i] - ema_50[i]) / (c + 1e-10) if ema_50[i] > 0 else 0
+                _vol_ratio = (atr_14[i] / c * 100) if c > 0 else 0
+                _avg_vol_r = np.mean([atr_14[j] / closes[j] * 100 for j in range(max(0,i-50), i) if closes[j] > 0]) if i >= 50 else _vol_ratio
+                feat[i, 48] = 1.0 if _ema_trend > 0.005 and _vol_ratio < _avg_vol_r * 1.3 else (-1.0 if _ema_trend < -0.005 or _vol_ratio > _avg_vol_r * 1.5 else 0.0)
+
+                if i >= 20:
+                    _price_mean = np.mean(closes[i-20:i]); _price_std = np.std(closes[i-20:i])
+                    _price_z = abs(c - _price_mean) / (_price_std + 1e-10)
+                    _vol_z = abs(v - np.mean(volumes[max(0,i-20):i])) / (np.std(volumes[max(0,i-20):i]) + 1e-10)
+                    feat[i, 49] = float(np.clip(_price_z * _vol_z / 10.0, 0, 2.0))
 
         feat = np.nan_to_num(feat, nan=0.0, posinf=2.0, neginf=-2.0)
         feat = np.clip(feat, -5.0, 5.0)
@@ -1230,14 +1425,14 @@ def train_lstm_ensemble(data, asset='BTC', all_data=None):
     try:
         from src.models.lstm_ensemble import LSTMEnsemble
 
-        # 40 features: 30 base + 5 Kalman + 5 EMA new-line inflection
-        print(f"  Using 40 strategy features (30 base + 5 Kalman + 5 inflection)")
+        # 50 features: 30 base + 5 Kalman + 5 EMA new-line inflection + 10 Category B
+        print(f"  Using 50 strategy features (30 base + 5 Kalman + 5 inflection + 10 Category B)")
         X, y = compute_strategy_features(
             data['closes'], data['highs'], data['lows'],
             data.get('opens', data['closes']), data['volumes'],
-            seq_len=30, n_features=40,
+            seq_len=30, n_features=50,
         )
-        n_features = 40
+        n_features = 50
 
         if X is None or len(X) < 200:
             print(f"  Not enough data ({0 if X is None else len(X)} samples, need 200+)")

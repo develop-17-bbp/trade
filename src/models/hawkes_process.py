@@ -178,6 +178,44 @@ class HawkesProcess:
 
         return result
 
+    def online_update(self, new_event_time: float, event_history: np.ndarray,
+                      lr: float = 0.01):
+        """
+        Incremental online parameter update when a new event arrives.
+        Uses stochastic gradient on log-likelihood of the new event.
+
+        Much faster than full refit — O(N) per update vs O(N*max_iter).
+        """
+        times = np.asarray(event_history, dtype=float)
+        if len(times) < 3:
+            return
+
+        t = new_event_time
+        past = times[times < t]
+        if len(past) == 0:
+            return
+
+        # Current intensity at new event
+        excitations = np.exp(-self.beta * (t - past))
+        lambda_t = self.mu + self.alpha * np.sum(excitations)
+        lambda_t = max(lambda_t, 1e-8)
+
+        # Gradients of log(λ(t)) w.r.t. parameters
+        # d/dμ log(λ(t)) = 1/λ(t)
+        grad_mu = 1.0 / lambda_t
+
+        # d/dα log(λ(t)) = Σexp(-β(t-t_i)) / λ(t)
+        grad_alpha = np.sum(excitations) / lambda_t
+
+        # d/dβ log(λ(t)) = -α·Σ(t-t_i)·exp(-β(t-t_i)) / λ(t)
+        grad_beta = -self.alpha * np.sum((t - past) * excitations) / lambda_t
+
+        # Gradient ascent (maximize log-likelihood)
+        self.mu = max(0.001, self.mu + lr * grad_mu)
+        self.alpha = max(0.001, min(2.0, self.alpha + lr * grad_alpha))
+        self.beta = max(0.01, min(10.0, self.beta + lr * grad_beta))
+        self._fitted = True
+
     def detect_events(self, prices: np.ndarray, threshold_pct: float = 0.02,
                       volume: Optional[np.ndarray] = None,
                       vol_threshold: float = 2.0) -> np.ndarray:

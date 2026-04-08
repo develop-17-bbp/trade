@@ -274,224 +274,166 @@ class MarketRegimeClassifier:
         return regime
 
 
+class PipelineOverlay:
+    """Runtime parameter overlay — adjusts SECONDARY pipeline knobs only.
+    NEVER touches v13/v14 core: min_entry_score, max_entry_score, short_score_penalty, sr_assets.
+    """
+    __slots__ = ('bear_veto_threshold', 'bear_reduce_threshold', 'min_confidence',
+                 'ml_weights', 'regime', 'regime_confidence', 'risk_multiplier',
+                 'hold_strategy', 'reasoning', 'timestamp')
+
+    def __init__(self, **kwargs):
+        self.bear_veto_threshold: int = kwargs.get('bear_veto_threshold', 9)
+        self.bear_reduce_threshold: int = kwargs.get('bear_reduce_threshold', 7)
+        self.min_confidence: float = kwargs.get('min_confidence', 0.60)
+        self.ml_weights: Dict[str, float] = kwargs.get('ml_weights', {
+            'lgbm': 1.0, 'lstm': 1.0, 'patchtst': 1.0, 'rl': 1.0, 'hmm': 1.0,
+        })
+        self.regime: str = kwargs.get('regime', 'NEUTRAL')
+        self.regime_confidence: float = kwargs.get('regime_confidence', 0.5)
+        self.risk_multiplier: float = kwargs.get('risk_multiplier', 1.0)
+        self.hold_strategy: bool = kwargs.get('hold_strategy', False)
+        self.reasoning: str = kwargs.get('reasoning', '')
+        self.timestamp: str = kwargs.get('timestamp', datetime.now().isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: getattr(self, k) for k in self.__slots__}
+
+
 class AdaptiveStrategyGenerator:
     """
-    Generates trading strategies dynamically based on current market conditions.
-    Self-modifying algorithms that adapt in real-time.
+    Runtime meta-optimizer: observes pipeline decisions + trade outcomes,
+    outputs PipelineOverlay adjustments (secondary knobs only).
+
+    SAFE: Never touches v13/v14 core params (min/max_entry_score, short_score_penalty, sr_assets).
+    Instead adjusts: bear thresholds, ML model weights, confidence gates, risk multipliers.
     """
-    
+
     def __init__(self):
-        self.strategy_library = {}
-        self.performance_history = defaultdict(list)
-        self.hyperparameter_space = self._define_hyperparameter_space()
-        self.generated_strategies = {}
-        
-    def _define_hyperparameter_space(self) -> Dict[str, Tuple[float, float]]:
+        self.performance_history: Dict[str, List[Dict]] = defaultdict(list)
+        self.overlay_history: Dict[str, List[PipelineOverlay]] = defaultdict(list)
+        # EWMA smoothing factor for online learning
+        self._ewma_alpha: float = 0.15
+        # Per-asset running stats (online — no batch needed)
+        self._running_stats: Dict[str, Dict[str, float]] = defaultdict(lambda: {
+            'win_rate': 0.5, 'avg_pnl': 0.0, 'loss_streak': 0, 'win_streak': 0,
+            'total_trades': 0, 'last_regime': 'NEUTRAL',
+        })
+
+    def generate_overlay(self, regime: MarketRegime, asset: str,
+                         recent_performance: Dict[str, float]) -> PipelineOverlay:
         """
-        Define the search space for dynamic strategy generation.
+        Generate pipeline parameter overlay based on current regime + performance.
+        Returns SECONDARY knobs only — v13/v14 core is NEVER modified.
         """
-        return {
-            "rsi_period": (7, 28),
-            "rsi_oversold": (20, 40),
-            "rsi_overbought": (60, 80),
-            "ma_fast": (5, 20),
-            "ma_slow": (30, 100),
-            "breakout_atr_mult": (1.5, 3.0),
-            "stop_loss_atr_mult": (1.5, 3.0),
-            "take_profit_mult": (1.5, 4.0),
-            "position_size_pct": (0.5, 2.5),
-            "volatility_filter": (0.01, 0.1),
-        }
-    
-    def generate_strategy_for_regime(self, regime: MarketRegime, 
-                                     recent_performance: Dict[str, float]) -> GeneratedStrategy:
-        """
-        Generate optimal strategy parameters for the identified regime.
-        """
-        strategy_id = f"{regime.regime_type}_{datetime.now().isoformat()}"
-        
+        stats = self._running_stats[asset]
+        win_rate = stats['win_rate']
+        loss_streak = stats['loss_streak']
+
+        # Base overlay — defaults match current pipeline config
+        overlay = PipelineOverlay(regime=regime.regime_type,
+                                  regime_confidence=regime.confidence / 100.0)
+
+        # ── Regime-based adjustments (SECONDARY knobs only) ──
         if regime.regime_type == "TRENDING_UP":
-            strategy = self._generate_trend_following_strategy(regime, recent_performance)
+            # Strong trend: loosen bear veto (let good trends run), boost trend-following models
+            overlay.bear_veto_threshold = 9
+            overlay.bear_reduce_threshold = 7
+            overlay.min_confidence = 0.55  # Allow slightly lower confidence in strong trends
+            overlay.ml_weights = {'lgbm': 1.0, 'lstm': 1.2, 'patchtst': 1.2, 'rl': 1.0, 'hmm': 0.8}
+            overlay.risk_multiplier = 1.1
+            overlay.reasoning = f"TRENDING_UP: loosened bear, boosted trend models"
+
         elif regime.regime_type == "TRENDING_DOWN":
-            strategy = self._generate_short_strategy(regime, recent_performance)
+            # Downtrend: tighten everything for SHORTs
+            overlay.bear_veto_threshold = 8
+            overlay.bear_reduce_threshold = 6
+            overlay.min_confidence = 0.65
+            overlay.ml_weights = {'lgbm': 1.2, 'lstm': 1.0, 'patchtst': 1.0, 'rl': 0.8, 'hmm': 1.2}
+            overlay.risk_multiplier = 0.8
+            overlay.reasoning = f"TRENDING_DOWN: tightened bear, boosted regime models"
+
+        elif regime.regime_type in ("VOLATILE", "ANOMALY"):
+            # High vol: defensive — tighten everything, reduce risk
+            overlay.bear_veto_threshold = 7
+            overlay.bear_reduce_threshold = 5
+            overlay.min_confidence = 0.70
+            overlay.ml_weights = {'lgbm': 1.3, 'lstm': 0.8, 'patchtst': 0.8, 'rl': 0.5, 'hmm': 1.5}
+            overlay.risk_multiplier = 0.5
+            overlay.reasoning = f"VOLATILE: defensive mode, tightened all gates"
+
         elif regime.regime_type == "MEAN_REVERTING":
-            strategy = self._generate_mean_reversion_strategy(regime, recent_performance)
-        elif regime.regime_type == "VOLATILE":
-            strategy = self._generate_range_bound_strategy(regime, recent_performance)
+            # Mean reverting: EMA signals chop, be cautious
+            overlay.bear_veto_threshold = 8
+            overlay.bear_reduce_threshold = 6
+            overlay.min_confidence = 0.65
+            overlay.ml_weights = {'lgbm': 1.0, 'lstm': 0.8, 'patchtst': 1.0, 'rl': 1.2, 'hmm': 1.0}
+            overlay.risk_multiplier = 0.7
+            overlay.reasoning = f"MEAN_REVERTING: EMA chops, reduced trend-follower weights"
+
+        elif regime.regime_type == "RANGING":
+            # Ranging: similar to mean reverting but even more cautious
+            overlay.bear_veto_threshold = 8
+            overlay.bear_reduce_threshold = 6
+            overlay.min_confidence = 0.70
+            overlay.hold_strategy = True
+            overlay.risk_multiplier = 0.5
+            overlay.reasoning = f"RANGING: hold strategy, minimal entries"
+
         else:
-            strategy = self._generate_hold_strategy(regime)
-        
-        strategy.strategy_id = strategy_id
-        self.generated_strategies[strategy_id] = strategy
-        return strategy
-    
-    def _generate_trend_following_strategy(self, regime: MarketRegime, 
-                                          perf: Dict[str, float]) -> GeneratedStrategy:
-        """Generate trend-following strategy."""
-        # Adapt parameters based on recent performance
-        ma_fast = int(10 + (perf.get("sharpe", 0.5) * 5))
-        ma_slow = int(50 + (perf.get("sharpe", 0.5) * 20))
-        atr_mult = 2.0 + (perf.get("volatility", 0.03) * 100)
-        
-        return GeneratedStrategy(
-            strategy_id="",
-            name=f"Trend Following ({regime.regime_type})",
-            entry_signals={
-                "type": "ma_crossover",
-                "fast_period": ma_fast,
-                "slow_period": ma_slow,
-                "confirmation": "volume_surge"
-            },
-            exit_signals={
-                "type": "atr_trailing_stop",
-                "atr_period": 14,
-                "atr_multiplier": atr_mult,
-                "take_profit_multiplier": 2.5
-            },
-            position_sizing={
-                "method": "volatility_adjusted",
-                "base_percent": 1.5,
-                "max_percent": 2.5
-            },
-            risk_params={
-                "max_position_size": 2.5,
-                "stop_loss_atr": atr_mult,
-                "daily_loss_limit": 3.0
-            },
-            performance_score=0.0,
-            applicable_regimes=["TRENDING_UP", "TRENDING_DOWN"],
-            creation_timestamp=datetime.now().isoformat(),
-            last_updated=datetime.now().isoformat()
-        )
-    
-    def _generate_short_strategy(self, regime: MarketRegime, 
-                                perf: Dict[str, float]) -> GeneratedStrategy:
-        """Generate short-selling strategy."""
-        return GeneratedStrategy(
-            strategy_id="",
-            name=f"Short Strategy ({regime.regime_type})",
-            entry_signals={
-                "type": "high_rsi_short",
-                "rsi_period": 14,
-                "rsi_overbought": 65
-            },
-            exit_signals={
-                "type": "rsi_recovery",
-                "rsi_recovery_level": 50
-            },
-            position_sizing={
-                "method": "fixed",
-                "percent": 1.0
-            },
-            risk_params={
-                "max_position_size": 1.5,
-                "stop_loss_pct": 2.0
-            },
-            performance_score=0.0,
-            applicable_regimes=["TRENDING_DOWN"],
-            creation_timestamp=datetime.now().isoformat(),
-            last_updated=datetime.now().isoformat()
-        )
-    
-    def _generate_mean_reversion_strategy(self, regime: MarketRegime, 
-                                         perf: Dict[str, float]) -> GeneratedStrategy:
-        """Generate mean reversion strategy."""
-        return GeneratedStrategy(
-            strategy_id="",
-            name=f"Mean Reversion ({regime.regime_type})",
-            entry_signals={
-                "type": "zscore_extreme",
-                "zscore_threshold": 2.0,
-                "window": 20
-            },
-            exit_signals={
-                "type": "revert_to_mean",
-                "exit_zscore": 0.5
-            },
-            position_sizing={
-                "method": "volatility_adjusted",
-                "base_percent": 2.0
-            },
-            risk_params={
-                "max_position_size": 2.5,
-                "stop_loss_zscore": 3.0
-            },
-            performance_score=0.0,
-            applicable_regimes=["MEAN_REVERTING", "RANGING"],
-            creation_timestamp=datetime.now().isoformat(),
-            last_updated=datetime.now().isoformat()
-        )
-    
-    def _generate_range_bound_strategy(self, regime: MarketRegime, 
-                                       perf: Dict[str, float]) -> GeneratedStrategy:
-        """Generate range-bound / scalping strategy."""
-        return GeneratedStrategy(
-            strategy_id="",
-            name=f"Range Bound ({regime.regime_type})",
-            entry_signals={
-                "type": "support_resistance",
-                "lookback": 50,
-                "entry_distance_pct": 0.5
-            },
-            exit_signals={
-                "type": "midpoint_exit",
-                "exit_at_midpoint": True
-            },
-            position_sizing={
-                "method": "micro_position",
-                "percent": 0.5
-            },
-            risk_params={
-                "max_position_size": 1.0,
-                "tight_stops": True
-            },
-            performance_score=0.0,
-            applicable_regimes=["RANGING", "VOLATILE"],
-            creation_timestamp=datetime.now().isoformat(),
-            last_updated=datetime.now().isoformat()
-        )
-    
-    def _generate_hold_strategy(self, regime: MarketRegime) -> GeneratedStrategy:
-        """Generate hold/wait strategy for uncertain conditions."""
-        return GeneratedStrategy(
-            strategy_id="",
-            name="Hold/Wait",
-            entry_signals={"type": "none"},
-            exit_signals={"type": "none"},
-            position_sizing={"method": "zero"},
-            risk_params={"max_position_size": 0},
-            performance_score=0.0,
-            applicable_regimes=["NEUTRAL", "UNKNOWN"],
-            creation_timestamp=datetime.now().isoformat(),
-            last_updated=datetime.now().isoformat()
-        )
-    
-    def optimize_strategy_hyperparameters(self, strategy: GeneratedStrategy, 
-                                         backtest_results: Dict[str, float]) -> GeneratedStrategy:
-        """
-        Optimize strategy hyperparameters based on backtest results.
-        Self-modifying algorithm.
-        """
-        sharpe = backtest_results.get("sharpe_ratio", 0)
-        win_rate = backtest_results.get("win_rate", 0.5)
-        max_dd = backtest_results.get("max_drawdown", 0)
-        
-        # Adjust parameters based on performance
-        if sharpe < 0.5:
-            # Reduce position size if returns per unit of risk are low
-            strategy.position_sizing["base_percent"] *= 0.9
-        elif sharpe > 2.0:
-            # Increase position size if risk-adjusted returns are high
-            strategy.position_sizing["base_percent"] *= 1.1
-        
-        # Adjust stops based on drawdown
-        if max_dd > 0.15:
-            # Tighten stops if drawdown is excessive
-            strategy.risk_params["stop_loss_atr_mult"] *= 0.8
-        
-        # Update strategy
-        strategy.last_updated = datetime.now().isoformat()
-        return strategy
+            overlay.reasoning = f"NEUTRAL: using defaults"
+
+        # ── Performance-based adjustments (online learning) ──
+        if loss_streak >= 4:
+            # Consecutive losses: tighten everything regardless of regime
+            overlay.bear_veto_threshold = min(overlay.bear_veto_threshold, 7)
+            overlay.min_confidence = max(overlay.min_confidence, 0.70)
+            overlay.risk_multiplier *= 0.6
+            overlay.reasoning += f" | LOSS_STREAK={loss_streak}: defensive override"
+        elif win_rate > 0.6 and stats['total_trades'] >= 10:
+            # Proven edge: slightly loosen to capture more
+            overlay.risk_multiplier = min(overlay.risk_multiplier * 1.1, 1.2)
+            overlay.reasoning += f" | HIGH_WR={win_rate:.0%}: slight boost"
+        elif win_rate < 0.35 and stats['total_trades'] >= 10:
+            # Poor performance: tighten hard
+            overlay.bear_veto_threshold = min(overlay.bear_veto_threshold, 7)
+            overlay.min_confidence = max(overlay.min_confidence, 0.70)
+            overlay.risk_multiplier *= 0.5
+            overlay.reasoning += f" | LOW_WR={win_rate:.0%}: hard tighten"
+
+        self.overlay_history[asset].append(overlay)
+        # Keep last 100 overlays per asset
+        if len(self.overlay_history[asset]) > 100:
+            self.overlay_history[asset] = self.overlay_history[asset][-50:]
+
+        return overlay
+
+    def update_from_trade(self, asset: str, pnl_usd: float, pnl_pct: float):
+        """Online learning: update running stats from each completed trade."""
+        stats = self._running_stats[asset]
+        stats['total_trades'] += 1
+
+        if pnl_usd > 0:
+            stats['win_streak'] += 1
+            stats['loss_streak'] = 0
+        else:
+            stats['loss_streak'] += 1
+            stats['win_streak'] = 0
+
+        # EWMA update of win rate (online, no batch needed)
+        win = 1.0 if pnl_usd > 0 else 0.0
+        stats['win_rate'] = stats['win_rate'] * (1 - self._ewma_alpha) + win * self._ewma_alpha
+
+        # EWMA update of avg PnL
+        stats['avg_pnl'] = stats['avg_pnl'] * (1 - self._ewma_alpha) + pnl_pct * self._ewma_alpha
+
+        self.performance_history[asset].append({
+            'pnl_usd': pnl_usd, 'pnl_pct': pnl_pct,
+            'timestamp': datetime.now().isoformat(),
+        })
+        # Keep last 200 trades per asset
+        if len(self.performance_history[asset]) > 200:
+            self.performance_history[asset] = self.performance_history[asset][-100:]
 
 
 class MetaLearningEngine:
@@ -694,10 +636,16 @@ class AlphaDecayTracker:
 
 class AdvancedLearningEngine:
     """
-    Main orchestrator for Phase 6 Advanced Learning.
-    Combines pattern recognition, regime classification, strategy generation, and meta-learning.
+    Runtime meta-optimizer orchestrator.
+    Observes pipeline decisions + trade outcomes and dynamically adjusts
+    SECONDARY pipeline parameters via PipelineOverlay.
+
+    SAFE: v13/v14 core (min/max_entry_score, short_score_penalty, sr_assets)
+    is NEVER touched. Only adjusts: bear thresholds, ML weights, confidence, risk_mult.
+
+    Online training: learns from EVERY bar and EVERY trade — no batch needed.
     """
-    
+
     def __init__(self, meta_model_path: str = "models/meta_learning_model.json"):
         self.pattern_recognizer = CrossMarketPatternRecognizer()
         self.regime_classifier = MarketRegimeClassifier()
@@ -705,152 +653,169 @@ class AdvancedLearningEngine:
         self.meta_learner = MetaLearningEngine()
         self.anomaly_detector = MarketAnomalyDetector()
         self.alpha_tracker = AlphaDecayTracker()
-        
-        self.active_strategies: Dict[str, GeneratedStrategy] = {}
+
+        self.active_overlays: Dict[str, PipelineOverlay] = {}
         self.performance_tracker: Dict[str, List[Dict]] = defaultdict(list)
         self.edge_retention: Dict[str, float] = {}
         self.meta_model_path = meta_model_path
-        
+
+        # Auto-save interval (save learned meta-model every N bars)
+        self._bars_since_save: int = 0
+        self._save_interval: int = 360  # ~30 min at 5s poll, ~3h at 30s poll
+
         # Try loading existing meta-model
         self.meta_learner.load_meta_model(self.meta_model_path)
-        
-    def process_market_data(self, multi_asset_data: Dict[str, pd.DataFrame], 
-                           onchain_data: Optional[Dict[str, Dict]] = None) -> Dict[str, Any]:
+
+    # ------------------------------------------------------------------
+    # ONLINE: called every bar from main loop
+    # ------------------------------------------------------------------
+    def process_bar(self, asset: str, close: np.ndarray, high: np.ndarray,
+                    low: np.ndarray, volume: np.ndarray,
+                    onchain_signals: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Main entry point: process market data and generate adaptive strategies.
+        Per-bar online processing. Called from executor main loop.
+        Returns: {overlay, anomaly, regime, edge_ratio, patterns}
+        """
+        result = {'asset': asset, 'anomaly': None, 'overlay': None,
+                  'regime': None, 'edge_ratio': 1.0}
+
+        if len(close) < 50:
+            return result
+
+        # 1. Anomaly detection (flash crash / liquidity sweep)
+        anomaly = self.anomaly_detector.detect_anomalies(close, volume)
+        result['anomaly'] = anomaly
+
+        # 2. Regime classification
+        regime = self.regime_classifier.classify_regime(
+            close, high, low, volume, onchain_signals)
+        result['regime'] = regime
+
+        # 3. Generate pipeline overlay (SECONDARY knobs only)
+        recent_perf = {
+            'win_rate': self.strategy_generator._running_stats[asset]['win_rate'],
+            'avg_pnl': self.strategy_generator._running_stats[asset]['avg_pnl'],
+        }
+
+        # If anomaly, force ANOMALY regime
+        if anomaly and anomaly.get('is_anomaly'):
+            regime = MarketRegime("ANOMALY", 100.0, 1.0, 0.0, 1, "HOLD")
+            result['regime'] = regime
+            logger.warning(f"[ANOMALY] {asset}: {anomaly['type']} severity={anomaly['severity']}")
+
+        overlay = self.strategy_generator.generate_overlay(regime, asset, recent_perf)
+        self.active_overlays[asset] = overlay
+        result['overlay'] = overlay
+
+        # 4. Alpha decay check
+        edge_ratio = self.edge_retention.get(asset, 1.0)
+        result['edge_ratio'] = edge_ratio
+        if edge_ratio < self.alpha_tracker.decay_threshold:
+            logger.warning(f"[ALPHA DECAY] {asset} edge degraded ({edge_ratio:.2f}) — tightening overlay")
+            overlay.risk_multiplier *= 0.5
+            overlay.min_confidence = max(overlay.min_confidence, 0.70)
+            overlay.reasoning += f" | ALPHA_DECAY={edge_ratio:.2f}"
+
+        # 5. Auto-save meta-model periodically
+        self._bars_since_save += 1
+        if self._bars_since_save >= self._save_interval:
+            self._bars_since_save = 0
+            try:
+                self.save_learned_models()
+            except Exception:
+                pass
+
+        return result
+
+    # ------------------------------------------------------------------
+    # ONLINE: called after every trade close
+    # ------------------------------------------------------------------
+    def on_trade_close(self, asset: str, pnl_usd: float, pnl_pct: float,
+                       predicted_l_level: int = 0, actual_l_level: int = 0):
+        """
+        Online learning from each completed trade.
+        Updates strategy generator, alpha tracker, and meta-learner.
+        """
+        # 1. Update strategy generator (online EWMA stats)
+        self.strategy_generator.update_from_trade(asset, pnl_usd, pnl_pct)
+
+        # 2. Track alpha decay (how well our predicted L-level matches actual)
+        predicted_perf = max(0.1, predicted_l_level)  # predicted L-level as proxy for expected perf
+        actual_perf = max(0.0, actual_l_level)
+        edge = self.alpha_tracker.update_edge_retention(
+            f"ema8_{asset}", predicted_perf, actual_perf)
+        self.edge_retention[asset] = edge
+
+        # 3. Store performance for meta-learner
+        self.performance_tracker[asset].append({
+            'pnl_usd': pnl_usd, 'pnl_pct': pnl_pct,
+            'predicted_l': predicted_l_level, 'actual_l': actual_l_level,
+            'edge_remaining': edge,
+            'timestamp': datetime.now().isoformat(),
+        })
+        if len(self.performance_tracker[asset]) > 500:
+            self.performance_tracker[asset] = self.performance_tracker[asset][-250:]
+
+        logger.info(f"[META-LEARN] {asset}: pnl=${pnl_usd:+.2f} edge={edge:.2f} "
+                     f"WR={self.strategy_generator._running_stats[asset]['win_rate']:.0%}")
+
+    # ------------------------------------------------------------------
+    # Full multi-asset analysis (periodic, not every bar)
+    # ------------------------------------------------------------------
+    def process_market_data(self, multi_asset_data: Dict[str, pd.DataFrame],
+                            onchain_data: Optional[Dict[str, Dict]] = None) -> Dict[str, Any]:
+        """
+        Full cross-asset analysis. Called periodically (every 30-60 min).
+        Computes correlations, patterns, and updates meta-learner across assets.
         """
         result = {
             "timestamp": datetime.now().isoformat(),
-            "regimes": {},
-            "strategies": {},
-            "patterns": {},
-            "correlations": {}
+            "regimes": {}, "overlays": {}, "patterns": {}, "correlations": {}
         }
-        
-        # Step 1: Recognize cross-market patterns
-        patterns = self.pattern_recognizer.recognize_patterns(multi_asset_data)
-        result["patterns"] = patterns
-        
-        # Step 2: Compute cross-market correlations
-        correlations = self.pattern_recognizer.compute_cross_market_correlation(multi_asset_data)
-        result["correlations"] = correlations
-        
-        # Step 3: Classify regime for each asset
-        for asset, data in multi_asset_data.items():
-            close = data['close'].values
-            high = data['high'].values
-            low = data['low'].values
-            volume = data['volume'].values
-            
-            # Incorporate onchain data if available
-            onchain_signals = {}
-            if onchain_data and asset in onchain_data:
-                onchain = onchain_data[asset]
-                onchain_signals = {
-                    'whale_score': onchain.get('whale_score', 0.0),
-                    'on_chain_momentum': onchain.get('on_chain_momentum', 0.0),
-                    'liquidation_risk': onchain.get('liquidation_risk', 50.0),
-                    'network_health': onchain.get('network_health', 50.0),
-                    'exchange_flow': onchain.get('exchange_flow', 0.0)
-                }
-            
-            regime = self.regime_classifier.classify_regime(close, high, low, volume, onchain_signals)
-            result["regimes"][asset] = regime
-            
-            # Step 4: Generate adaptive strategy for this regime
-            recent_perf = self.performance_tracker[asset][-20:] if asset in self.performance_tracker else []
-            perf_dict = {
-                "sharpe": np.mean([p.get("sharpe_ratio", 0) for p in recent_perf]) if recent_perf else 0,
-                "volatility": np.mean([p.get("volatility", 0.03) for p in recent_perf]) if recent_perf else 0.03
-            }
-            
-            strategy = self.strategy_generator.generate_strategy_for_regime(regime, perf_dict)
-            
-            # Step 5: Meta-learning optimization
-            predicted_perf = self.meta_learner.predict_strategy_performance(asset, strategy)
-            strategy.performance_score = predicted_perf
-            
-            # Step 6: Anomaly Detection (Flash Crashes / Liquidity Sweeps)
-            anomaly_data = self.anomaly_detector.detect_anomalies(close, volume)
-            if anomaly_data["is_anomaly"]:
-                logger.warning(f"[ANOMALY DETECTED] {asset}: {anomaly_data['type']} (Severity: {anomaly_data['severity']})")
-                
-                # Override regime and strategy dynamically due to Black Swan
-                regime = MarketRegime("ANOMALY", 1.0, 1.0, 0.0, 5, "LIQUIDITY_SHOCK_DEFENSE")
-                strategy = self.strategy_generator._generate_hold_strategy(regime)
-                result["regimes"][asset] = regime
 
-            # Calculate remaining Edge (Alpha Decay)
-            edge_ratio = self.edge_retention.get(asset, 1.0)
-            if edge_ratio < self.alpha_tracker.decay_threshold:
-                logger.warning(f"[ALPHA DECAY] {asset} strategy completely degraded (Edge: {edge_ratio:.2f}). Forcing mutation.")
-                strategy = self.strategy_generator.generate_strategy_for_regime(regime, perf_dict)
-                self.edge_retention[asset] = 1.0  # Reset for the new strategy
-            
-            self.active_strategies[asset] = strategy
-            result["strategies"][asset] = {
-                "strategy_name": strategy.name,
-                "strategy_id": strategy.strategy_id,
-                "predicted_performance": predicted_perf,
-                "anomaly_flags": anomaly_data,
-                "alpha_edge_remaining": edge_ratio,
-                "entry_signals": strategy.entry_signals,
-                "position_size": strategy.position_sizing
-            }
-        
+        # Cross-market patterns + correlations
+        if len(multi_asset_data) >= 2:
+            try:
+                patterns = self.pattern_recognizer.recognize_patterns(multi_asset_data)
+                result["patterns"] = patterns
+                correlations = self.pattern_recognizer.compute_cross_market_correlation(multi_asset_data)
+                result["correlations"] = correlations
+            except Exception as e:
+                logger.debug(f"Pattern/correlation error: {e}")
+
+        # Per-asset regime + overlay
+        for asset, data in multi_asset_data.items():
+            try:
+                close = data['close'].values
+                high = data['high'].values
+                low = data['low'].values
+                volume = data['volume'].values
+
+                onchain_signals = {}
+                if onchain_data and asset in onchain_data:
+                    onchain_signals = onchain_data[asset]
+
+                bar_result = self.process_bar(asset, close, high, low, volume, onchain_signals)
+                result["regimes"][asset] = bar_result.get('regime')
+                result["overlays"][asset] = bar_result.get('overlay')
+            except Exception as e:
+                logger.debug(f"Asset {asset} processing error: {e}")
+
         return result
-    
-    def update_with_backtest_results(self, asset: str, backtest_results: Dict[str, float]):
-        """
-        Update meta-learning with actual backtest results and track Alpha Decay.
-        Self-optimization loop.
-        """
-        self.performance_tracker[asset].append(backtest_results)
-        
-        if asset in self.active_strategies:
-            strat = self.active_strategies[asset]
-            perf = backtest_results.get("total_return_pct", 0)
-            
-            # 1. Update Alpha Decay Tracker
-            edge = self.alpha_tracker.update_edge_retention(strat.strategy_id, strat.performance_score, perf)
-            self.edge_retention[asset] = edge
-            
-            # 2. Meta-Learning Update
-            self.meta_learner.learn_optimal_hyperparameters(
-                asset=asset,
-                tested_strategies=[strat],
-                results=[backtest_results]
-            )
-            
-            # 3. Strategy self-modification if performance is poor but not fully decayed
-            if perf < -0.01 and edge > self.alpha_tracker.decay_threshold:
-                self.strategy_generator.optimize_strategy_hyperparameters(strat, backtest_results)
-    
-    def discover_new_trading_patterns(self, asset: str, lookback_days: int = 365) -> Dict[str, Any]:
-        """
-        Discover new profitable patterns in an asset's history.
-        """
-        # This would load historical data and run meta-learning
-        return {
-            "high_probability_patterns": [],
-            "new_entry_signals": [],
-            "optimal_timeframes": [],
-            "confidence_score": 0.0
-        }
-    
+
     def save_learned_models(self):
-        """Persist all learned models."""
+        """Persist all learned meta-models."""
         self.meta_learner.save_meta_model(self.meta_model_path)
-        logger.info("[ADVANCED-LEARNING] All models saved successfully")
-    
+        logger.info("[META-LEARN] Models saved to %s", self.meta_model_path)
+
     def get_system_status(self) -> Dict[str, Any]:
-        """Get comprehensive status of the advanced learning system."""
+        """Get comprehensive status of the meta-learning system."""
         return {
-            "active_strategies": len(self.active_strategies),
+            "active_overlays": {k: v.to_dict() for k, v in self.active_overlays.items()},
+            "edge_retention": dict(self.edge_retention),
+            "running_stats": dict(self.strategy_generator._running_stats),
             "patterns_discovered": len(self.pattern_recognizer.pattern_memory),
             "meta_model_assets": len(self.meta_learner.market_to_strategy_map),
-            "performance_history_events": len(self.performance_tracker),
-            "active_regimes": {k: v.regime_type for k, v in self.regime_classifier.regime_history[-5:]},
-            "timestamp": datetime.now().isoformat()
+            "bars_since_save": self._bars_since_save,
+            "timestamp": datetime.now().isoformat(),
         }
-

@@ -228,6 +228,38 @@ class MonteCarloRisk:
             'mc_n_sims': self.n_simulations,
         }
 
+    def simulate_from_prices(self, prices: np.ndarray, current_price: float,
+                             regime: str = 'normal', window: int = 100) -> Dict:
+        """
+        Auto-estimate vol and drift from recent prices, then simulate.
+        Fully autonomous — no manual parameter input needed.
+
+        Args:
+            prices: Recent price history (at least 50 bars)
+            current_price: Current price for simulation start
+            regime: Market regime string (auto-classified externally)
+            window: Lookback window for vol/drift estimation
+        """
+        prices = np.asarray(prices, dtype=float)
+        if len(prices) < 30:
+            return self._default_result()
+
+        recent = prices[-min(len(prices), window):]
+        returns = np.diff(recent) / (recent[:-1] + 1e-12)
+
+        # EWMA volatility (λ=0.94, standard RiskMetrics)
+        lam = 0.94
+        ewma_var = np.var(returns[:10]) if len(returns) >= 10 else np.var(returns)
+        for r in returns[10:]:
+            ewma_var = lam * ewma_var + (1 - lam) * r ** 2
+        vol = float(np.sqrt(ewma_var))
+
+        # Simple drift estimation (mean return)
+        drift = float(np.mean(returns))
+
+        return self.simulate(current_price=current_price, volatility=vol,
+                             drift=drift, regime=regime)
+
     @staticmethod
     def _regime_vol_factor(regime: str) -> float:
         """Volatility multiplier by regime."""
