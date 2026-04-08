@@ -5,59 +5,59 @@
     "total_calls": 0
   },
   "market_structure": {
-    "weight": 0.825585559161152,
+    "weight": 0.8660188025365592,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "regime_intelligence": {
-    "weight": 0.825585559161152,
+    "weight": 0.8660188025365592,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "mean_reversion": {
-    "weight": 0.825585559161152,
+    "weight": 0.8660188025365592,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "trend_momentum": {
-    "weight": 0.825585559161152,
+    "weight": 0.8660188025365592,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "risk_guardian": {
-    "weight": 0.2024182020474098,
+    "weight": 0.471987641270568,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "sentiment_decoder": {
-    "weight": 0.825585559161152,
+    "weight": 0.8660188025365592,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "trade_timing": {
-    "weight": 0.2024182020474098,
+    "weight": 0.471987641270568,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "portfolio_optimizer": {
-    "weight": 0.21355586498281937,
+    "weight": 0.47235457827440885,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "pattern_matcher": {
-    "weight": 0.2024182020474098,
+    "weight": 0.471987641270568,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "loss_prevention": {
-    "weight": 0.8094099240592554,
+    "weight": 0.5014523621054231,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "polymarket_arb": {
-    "weight": 0.7960543985100436,
+    "weight": 0.7660918932245018,
     "accuracy": 0.5,
-    "total_calls": 0
+    "total_calls": 21
   },
   "decision_auditor": {
     "weight": 1.0,

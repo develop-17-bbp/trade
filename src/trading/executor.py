@@ -569,19 +569,29 @@ class TradingExecutor:
             self.bear_veto_stats[a] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
 
         # ── Per-timeframe performance tracking (LLM learns which TFs profit) ──
-        self.SIGNAL_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h']
-        self.TF_FETCH_LIMITS = {'1m': 100, '5m': 100, '15m': 60, '1h': 50, '4h': 30}
+        self.SIGNAL_TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
+        self.TF_FETCH_LIMITS = {
+            '1m': 100, '5m': 100, '15m': 60, '30m': 50, '1h': 50, '4h': 30, '1d': 20,
+        }
         # Scale ratchet thresholds by timeframe (higher TF = bigger moves = wider %)
-        self.TF_RATCHET_SCALE = {'1m': 0.5, '5m': 1.0, '15m': 1.5, '1h': 2.5, '4h': 5.0}
+        self.TF_RATCHET_SCALE = {
+            '1m': 0.5, '5m': 1.0, '15m': 1.5, '30m': 2.0, '1h': 2.5, '4h': 5.0, '1d': 8.0,
+        }
         # Min/Max SL distance as % of price, per timeframe
-        self.TF_SL_MIN_PCT = {'1m': 0.003, '5m': 0.005, '15m': 0.008, '1h': 0.012, '4h': 0.02}
-        self.TF_SL_MAX_PCT = {'1m': 0.01, '5m': 0.02, '15m': 0.03, '1h': 0.05, '4h': 0.08}
+        self.TF_SL_MIN_PCT = {
+            '1m': 0.003, '5m': 0.005, '15m': 0.008, '30m': 0.01, '1h': 0.012, '4h': 0.02, '1d': 0.03,
+        }
+        self.TF_SL_MAX_PCT = {
+            '1m': 0.01, '5m': 0.02, '15m': 0.03, '30m': 0.04, '1h': 0.05, '4h': 0.08, '1d': 0.15,
+        }
         self.tf_performance: Dict[str, Dict[str, Any]] = {}
         for tf in self.SIGNAL_TIMEFRAMES:
             self.tf_performance[tf] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
         # Cache HTF candles (1h/4h only refresh every few minutes, not every 10s poll)
         self._tf_cache: Dict[str, Dict] = {}   # key = f"{asset}_{tf}" -> {'ohlcv': ..., 'ts': time.time()}
-        self._tf_cache_ttl = {'1m': 30, '5m': 60, '15m': 120, '1h': 300, '4h': 600}
+        self._tf_cache_ttl = {
+            '1m': 30, '5m': 60, '15m': 120, '30m': 180, '1h': 300, '4h': 600, '1d': 3600,
+        }
 
         # ── Portfolio-level drawdown limit (Freqtrade pattern) ──
         # Halt ALL trading if cumulative realized losses exceed threshold
@@ -1702,7 +1712,7 @@ class TradingExecutor:
         mtf_candle_summary = ""
         try:
             mtf_parts = []
-            for tf in ['1m', '15m', '1h', '4h']:
+            for tf in ['1m', '15m', '30m', '1h', '4h', '1d']:
                 tf_ohlcv = tf_data.get(tf)
                 if not tf_ohlcv or len(tf_ohlcv.get('closes', [])) < 5:
                     continue
@@ -1711,7 +1721,7 @@ class TradingExecutor:
                 l_tf = tf_ohlcv['lows']
                 o_tf = tf_ohlcv['opens']
                 v_tf = tf_ohlcv['volumes']
-                n_show = {'1m': 10, '15m': 8, '1h': 6, '4h': 4}.get(tf, 6)
+                n_show = {'1m': 10, '15m': 8, '30m': 7, '1h': 6, '4h': 4, '1d': 3}.get(tf, 6)
                 ema_tf = ema(c_tf, self.ema_period) if len(c_tf) >= self.ema_period else []
                 tf_dir = tf_signals.get(tf, {}).get('ema_direction', 'FLAT')
                 lines_tf = []
@@ -1719,7 +1729,10 @@ class TradingExecutor:
                     idx = len(c_tf) + i
                     e_val = ema_tf[idx] if idx < len(ema_tf) else 0
                     lines_tf.append(f"  O={o_tf[idx]:.2f} H={h_tf[idx]:.2f} L={l_tf[idx]:.2f} C={c_tf[idx]:.2f} V={v_tf[idx]:.0f} EMA={e_val:.2f}")
-                label = {'1m': '1-MINUTE', '15m': '15-MINUTE', '1h': '1-HOUR', '4h': '4-HOUR'}.get(tf, tf)
+                label = {
+                    '1m': '1-MINUTE', '15m': '15-MINUTE', '30m': '30-MINUTE',
+                    '1h': '1-HOUR', '4h': '4-HOUR', '1d': '1-DAY',
+                }.get(tf, tf)
                 mtf_parts.append(f"{label} CANDLES (EMA direction: {tf_dir}):" + chr(10) + chr(10).join(lines_tf))
             if mtf_parts:
                 mtf_candle_summary = chr(10) + chr(10).join(mtf_parts)
@@ -1856,8 +1869,14 @@ class TradingExecutor:
                             f"(forming 5m vs prior bar EMA touch) | size x{entry_size_mult:.2f}"
                         )
 
-        # Print status with active signals across all timeframes
-        active_tfs_str = ", ".join(f"{tf}={s['signal']}" for tf, s in active_tf_signals.items()) or "none"
+        # Print status: full TF board (BUY/SELL/NEUTRAL/N/A per timeframe), not only non-NEUTRAL
+        tf_board_parts = []
+        for tf in self.SIGNAL_TIMEFRAMES:
+            if tf in tf_signals:
+                tf_board_parts.append(f"{tf}={tf_signals[tf].get('signal', 'NEUTRAL')}")
+            else:
+                tf_board_parts.append(f"{tf}=N/A")
+        all_tf_signals_str = " ".join(tf_board_parts)
         ob_imb = ob_levels.get('imbalance', 0)
         ob_bid = ob_levels.get('bid_wall', 0)
         ob_ask = ob_levels.get('ask_wall', 0)
@@ -1867,7 +1886,10 @@ class TradingExecutor:
         if ob_ask > 0:
             ob_info += f" res=${ob_ask:,.2f}"
         ob_info += "]"
-        print(f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} | EMA(5m): ${current_ema:.2f} {ema_direction} | Signals: [{active_tfs_str}] | ATR: ${current_atr:.2f} | {ob_info}")
+        print(
+            f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} | EMA(5m): ${current_ema:.2f} {ema_direction} "
+            f"| Signals: {all_tf_signals_str} | ATR: ${current_atr:.2f} | {ob_info}"
+        )
 
         # ── Stale position check ──
         if asset in self.positions and asset not in self.failed_close_assets:
@@ -3977,7 +3999,7 @@ class TradingExecutor:
 
         # Define ratchet levels: (min_pnl_pct, protect_pct, atr_mult, label)
         # Scaled by timeframe: higher TF = wider thresholds (bigger moves expected)
-        # ratchet_scale: 1m=0.5x, 5m=1.0x, 15m=1.5x, 1h=2.5x, 4h=5.0x
+        # ratchet_scale: 1m=0.5x, 5m=1.0x, 15m=1.5x, 30m=2.0x, 1h=2.5x, 4h=5.0x, 1d=8.0x
         rs = ratchet_scale
         if is_reversal:
             ratchet_levels = [
@@ -5065,7 +5087,7 @@ POSITION SIZING (investment protection):
 - trade_quality <= 5: REJECT
 
 RESPOND WITH ONLY JSON:
-{{"proceed": <true/false>, "chosen_timeframe": "<1m/5m/15m/1h/4h>", "chosen_direction": "<CALL/PUT>", "confidence": <0.0-1.0 probability of L3+>, "position_size_pct": <1-{max_position_pct}>, "risk_score": <0-10>, "trade_quality": <0-10>, "predicted_l_level": "<L1/L2/L3/L4/L6+/L10+>", "bull_case": "<specific reason for L4+ on chosen TF>", "bear_case": "<specific risk that kills this trade>", "facilitator_verdict": "<honest final decision — which TF and why>"}}
+{{"proceed": <true/false>, "chosen_timeframe": "<1m/5m/15m/30m/1h/4h/1d>", "chosen_direction": "<CALL/PUT>", "confidence": <0.0-1.0 probability of L3+>, "position_size_pct": <1-{max_position_pct}>, "risk_score": <0-10>, "trade_quality": <0-10>, "predicted_l_level": "<L1/L2/L3/L4/L6+/L10+>", "bull_case": "<specific reason for L4+ on chosen TF>", "bear_case": "<specific risk that kills this trade>", "facilitator_verdict": "<honest final decision — which TF and why>"}}
 
 CRITICAL: If no timeframe has a clean setup, set proceed=false. Capital preservation > missed trades."""
 

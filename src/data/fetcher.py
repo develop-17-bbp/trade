@@ -4,7 +4,7 @@ Enhanced Price Data Fetcher
 Multi-timeframe OHLCV data from CCXT (Binance and other exchanges).
 Supports:
   - Historical OHLCV candle fetching
-  - Multi-timeframe data (1m, 5m, 15m, 1h, 4h, 1d)
+  - Multi-timeframe data (1m, 5m, 15m, 30m, 1h, 4h, 1d)
   - Ticker (current price) snapshot
   - Data normalization and validation
   - Binance Testnet for paper trading with fake money
@@ -789,7 +789,7 @@ class PriceFetcher:
     Data: LiveCoinWatch for fast prices, CCXT as fallback for OHLCV.
     """
 
-    VALID_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1M']
+    VALID_TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M']
 
     def __init__(self, exchange_name: str = "alpaca",
                  testnet: bool = True,
