@@ -36,11 +36,89 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
+def load_local_data(asset='BTC', timeframe='5m', bars=0):
+    """
+    Load OHLCV from local data files (backtest_cache JSON or data/ parquet).
+    Returns data dict or None if not found.
+    bars=0 means load ALL available data (for max training).
+    """
+    symbol = f"{asset}USDT"
+    base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
+
+    # 1. Check backtest_cache JSON files (largest datasets: 906K+ bars)
+    cache_dir = os.path.join(base_dir, 'backtest_cache')
+    if os.path.isdir(cache_dir):
+        import glob as _glob
+        pattern = os.path.join(cache_dir, f"{asset}_{timeframe}_*.json")
+        candidates = sorted(_glob.glob(pattern), key=os.path.getsize, reverse=True)
+        for fpath in candidates:
+            fsize = os.path.getsize(fpath)
+            if fsize < 500:  # Skip Git LFS pointer files (~130 bytes)
+                continue
+            try:
+                import json
+                with open(fpath, 'r') as f:
+                    d = json.load(f)
+                if isinstance(d, dict) and 'closes' in d and len(d['closes']) >= 100:
+                    n = len(d['closes'])
+                    if bars > 0 and n > bars:
+                        # Take most recent bars
+                        start = n - bars
+                        d = {k: v[start:] for k, v in d.items()}
+                        n = bars
+                    print(f"  LOCAL: Loaded {n:,} bars from {os.path.basename(fpath)} ({fsize/1e6:.1f} MB)")
+                    return d
+            except Exception as e:
+                print(f"  LOCAL: Failed to load {os.path.basename(fpath)}: {e}")
+
+    # 2. Check parquet files in data/ directory
+    for pattern_name in [f"{symbol}-{timeframe}.parquet", f"{symbol}_{timeframe}.parquet"]:
+        fpath = os.path.join(base_dir, pattern_name)
+        if os.path.isfile(fpath):
+            try:
+                import pandas as pd
+                df = pd.read_parquet(fpath)
+                if len(df) >= 100:
+                    if bars > 0 and len(df) > bars:
+                        df = df.tail(bars).reset_index(drop=True)
+                    # Normalize column names
+                    col_map = {}
+                    for col in df.columns:
+                        cl = col.lower()
+                        if cl in ('open',): col_map[col] = 'opens'
+                        elif cl in ('high',): col_map[col] = 'highs'
+                        elif cl in ('low',): col_map[col] = 'lows'
+                        elif cl in ('close',): col_map[col] = 'closes'
+                        elif cl in ('volume',): col_map[col] = 'volumes'
+                        elif cl in ('timestamp',): col_map[col] = 'timestamps'
+                    df = df.rename(columns=col_map)
+                    data = {}
+                    for key in ['timestamps', 'opens', 'highs', 'lows', 'closes', 'volumes']:
+                        if key in df.columns:
+                            data[key] = df[key].astype(float).tolist()
+                    if 'closes' in data and len(data['closes']) >= 100:
+                        print(f"  LOCAL: Loaded {len(data['closes']):,} bars from {pattern_name}")
+                        return data
+            except Exception as e:
+                print(f"  LOCAL: Failed to load {pattern_name}: {e}")
+
+    return None
+
+
 def fetch_training_data(asset='BTC', timeframe='5m', bars=5000):
-    """Fetch real OHLCV from Binance with pagination."""
+    """
+    Load OHLCV data: local files first (backtest_cache JSON, data/ parquet),
+    then Binance API as fallback.
+    Set bars=0 to load ALL available local data (for maximum training).
+    """
     print(f"\n{'='*60}")
-    print(f"FETCHING {bars} {timeframe} BARS FOR {asset}")
+    print(f"FETCHING {bars if bars > 0 else 'ALL'} {timeframe} BARS FOR {asset}")
     print(f"{'='*60}")
+
+    # Try local data first (backtest_cache JSON > parquet > API)
+    local = load_local_data(asset, timeframe, bars)
+    if local:
+        return local
 
     try:
         import ccxt
@@ -153,13 +231,18 @@ def fetch_training_data(asset='BTC', timeframe='5m', bars=5000):
     return None
 
 
-def fetch_multi_timeframe_data(asset='BTC', base_bars=20000):
+def fetch_multi_timeframe_data(asset='BTC', base_bars=20000, use_all_local=False):
     """
     Fetch data across ALL timeframes for multi-timeframe feature engineering.
     Returns dict of {timeframe: data_dict}.
+
+    use_all_local=True: load ALL available local data (bars=0), ignoring base_bars limit.
+                        This uses the full 906K+ bar backtest_cache datasets (8.6 years).
     """
     print(f"\n{'#'*60}")
     print(f"# MULTI-TIMEFRAME DATA: {asset}")
+    if use_all_local:
+        print(f"# MODE: ALL LOCAL DATA (ignoring bars limit)")
     print(f"{'#'*60}")
 
     timeframes = {
@@ -173,11 +256,13 @@ def fetch_multi_timeframe_data(asset='BTC', base_bars=20000):
 
     all_data = {}
     for tf, n_bars in timeframes.items():
-        n_bars = max(200, n_bars)  # Minimum 200 bars per timeframe
-        data = fetch_training_data(asset, tf, n_bars)
+        n_bars = max(200, n_bars)
+        # use_all_local: pass bars=0 to load EVERYTHING from local files
+        actual_bars = 0 if use_all_local else n_bars
+        data = fetch_training_data(asset, tf, actual_bars)
         if data and len(data['closes']) >= 100:
             all_data[tf] = data
-            print(f"  {tf}: {len(data['closes'])} bars | "
+            print(f"  {tf}: {len(data['closes']):,} bars | "
                   f"${data['closes'][-1]:,.2f} | "
                   f"Range: ${min(data['closes']):,.2f}-${max(data['closes']):,.2f}")
         else:
@@ -1974,8 +2059,12 @@ from src.ai.reinforcement_learning import EMAStrategyRL as _RL_CHECK
 HARD_STOP_PCT = 2.0
 
 
-def train_one_cycle(assets, bars=20000, skip_lstm=False, skip_patchtst=False, use_mtf=True):
-    """Run a single training cycle for all models on all assets."""
+def train_one_cycle(assets, bars=20000, skip_lstm=False, skip_patchtst=False,
+                    use_mtf=True, use_all_local=False):
+    """
+    Run a single training cycle for all models on all assets.
+    use_all_local=True: load ALL available local data (906K+ bars, 8.6 years).
+    """
     results = {}
 
     for asset in assets:
@@ -1986,13 +2075,14 @@ def train_one_cycle(assets, bars=20000, skip_lstm=False, skip_patchtst=False, us
         # Fetch multi-timeframe data
         all_data = None
         if use_mtf:
-            all_data = fetch_multi_timeframe_data(asset, bars)
+            all_data = fetch_multi_timeframe_data(asset, bars, use_all_local=use_all_local)
             if '5m' in all_data:
                 data = all_data['5m']
             else:
-                data = fetch_training_data(asset, '5m', bars)
+                # Fallback: bars=0 loads all local, else use bars
+                data = fetch_training_data(asset, '5m', 0 if use_all_local else bars)
         else:
-            data = fetch_training_data(asset, '5m', bars)
+            data = fetch_training_data(asset, '5m', 0 if use_all_local else bars)
 
         if not data or len(data['closes']) < 100:
             print(f"  SKIP: not enough data")
@@ -2071,6 +2161,8 @@ def main():
     parser.add_argument('--skip-lstm', action='store_true')
     parser.add_argument('--skip-patchtst', action='store_true')
     parser.add_argument('--no-mtf', action='store_true', help='Skip multi-timeframe (use 5m only)')
+    parser.add_argument('--use-local', action='store_true',
+                        help='Load ALL local data (backtest_cache 906K+ bars, 8.6 years) instead of API fetch')
     parser.add_argument('--loop', action='store_true',
                         help='Autonomous continuous training loop')
     parser.add_argument('--loop-hours', type=float, default=4.0)
@@ -2079,6 +2171,7 @@ def main():
 
     assets = ['BTC', 'ETH'] if args.asset == 'ALL' else [args.asset]
     use_mtf = not args.no_mtf
+    use_all_local = args.use_local
 
     if args.loop:
         cycle = 0
@@ -2088,9 +2181,10 @@ def main():
         print("AUTONOMOUS ML TRAINING LOOP — MULTI-TIMEFRAME")
         print(f"  Assets: {assets}")
         print(f"  Multi-timeframe: {use_mtf}")
+        print(f"  Use local data: {use_all_local}")
         print(f"  Retrain every: {args.loop_hours}h ({loop_seconds:.0f}s)")
         print(f"  Max cycles: {'infinite' if args.max_cycles == 0 else args.max_cycles}")
-        print(f"  Bars per cycle: {args.bars}")
+        print(f"  Bars per cycle: {'ALL LOCAL' if use_all_local else args.bars}")
         print("  Press Ctrl+C to stop")
         print("=" * 60)
 
@@ -2111,7 +2205,8 @@ def main():
 
             try:
                 results = train_one_cycle(assets, args.bars,
-                                          args.skip_lstm, args.skip_patchtst, use_mtf)
+                                          args.skip_lstm, args.skip_patchtst, use_mtf,
+                                          use_all_local=use_all_local)
                 elapsed = time.time() - start_time
                 ok, total = print_summary(results, cycle, elapsed)
                 log_training_history(results, cycle)
@@ -2160,7 +2255,8 @@ def main():
 
         start = time.time()
         results = train_one_cycle(assets, args.bars,
-                                  args.skip_lstm, args.skip_patchtst, use_mtf)
+                                  args.skip_lstm, args.skip_patchtst, use_mtf,
+                                  use_all_local=use_all_local)
         elapsed = time.time() - start
         print_summary(results, elapsed=elapsed)
         log_training_history(results, cycle=1)
