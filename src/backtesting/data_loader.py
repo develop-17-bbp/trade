@@ -78,10 +78,8 @@ def fetch_backtest_data(
 
     symbol = f"{asset}/USDT"
 
-    # Initialize exchange (spot for OHLCV data — most reliable)
-    exchange = ccxt.binance({
-        'enableRateLimit': True,
-    })
+    # Exchange initialized lazily — only if cache miss requires API fetch
+    exchange = None
 
     # Timeframes to fetch — primary + context
     tf_list = [primary_tf]
@@ -102,7 +100,7 @@ def fetch_backtest_data(
         cache_key = f"{asset}_{tf}_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}"
         cache_path = os.path.join(cache_dir, f"{cache_key}.json")
 
-        # Check cache
+        # Check exact cache match
         if os.path.exists(cache_path):
             try:
                 with open(cache_path, 'r') as f:
@@ -114,8 +112,50 @@ def fetch_backtest_data(
             except Exception:
                 pass
 
+        # Check ANY cached file that COVERS the requested date range
+        # e.g., BTC_5m_20160409_20260407.json covers a request for 20170101-20260401
+        import glob as _glob
+        _found_superset = False
+        _pattern = os.path.join(cache_dir, f"{asset}_{tf}_*.json")
+        _candidates = sorted(_glob.glob(_pattern), key=os.path.getsize, reverse=True)
+        for _cpath in _candidates:
+            _csize = os.path.getsize(_cpath)
+            if _csize < 500:  # Skip LFS pointers
+                continue
+            try:
+                with open(_cpath, 'r') as f:
+                    _cdata = json.load(f)
+                if not isinstance(_cdata, dict) or 'closes' not in _cdata or len(_cdata['closes']) < 100:
+                    continue
+                _cts = _cdata.get('timestamps', [])
+                if not _cts:
+                    continue
+                # Check if cached data covers our requested range
+                _c_start = _cts[0]
+                _c_end = _cts[-1]
+                if _c_start <= since_ms and _c_end >= until_ms - 86400000:  # 1 day tolerance
+                    # Trim to requested range
+                    _trimmed = {}
+                    _indices = [i for i, t in enumerate(_cts) if since_ms <= t <= until_ms]
+                    if len(_indices) >= 100:
+                        _s, _e = _indices[0], _indices[-1] + 1
+                        for _k, _v in _cdata.items():
+                            _trimmed[_k] = _v[_s:_e]
+                        data.timeframes[tf] = _trimmed
+                        print(f"  [CACHE] {asset} {tf}: {len(_trimmed['closes']):,} bars from {os.path.basename(_cpath)} (superset)")
+                        _found_superset = True
+                        break
+            except Exception:
+                continue
+        if _found_superset:
+            continue
+
         # Fetch from exchange
         print(f"  [FETCH] {asset} {tf}: fetching from {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}...")
+
+        # Lazy init exchange only when actually needed
+        if exchange is None:
+            exchange = ccxt.binance({'enableRateLimit': True})
 
         all_candles = []
         fetch_since = since_ms
