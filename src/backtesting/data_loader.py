@@ -168,6 +168,8 @@ def fetch_backtest_data(
                 if os.path.exists(_pq_path):
                     try:
                         import pandas as pd
+                        _fsize_mb = os.path.getsize(_pq_path) / (1024 * 1024)
+                        print(f"  [PARQUET] Found {_pq_name} ({_fsize_mb:.1f} MB), loading...", flush=True)
                         df = pd.read_parquet(_pq_path)
                         if len(df) < 100:
                             continue
@@ -179,13 +181,15 @@ def fetch_backtest_data(
                                 break
                         if ts_col is None:
                             ts_col = df.columns[0]
-                        # Convert to milliseconds
+                        # Convert to milliseconds as numpy array (vectorized, handles 900K+ rows)
                         if pd.api.types.is_datetime64_any_dtype(df[ts_col]):
-                            timestamps = (df[ts_col].astype('int64') // 10**6).tolist()
+                            ts_arr = df[ts_col].values.astype('int64') // 10**6
                         else:
-                            timestamps = df[ts_col].astype(float).tolist()
-                            if timestamps[0] < 1e12:  # seconds
-                                timestamps = [int(t * 1000) for t in timestamps]
+                            ts_arr = df[ts_col].values.astype(np.float64)
+                            if ts_arr[0] < 1e12:  # seconds
+                                ts_arr = (ts_arr * 1000).astype(np.int64)
+                            else:
+                                ts_arr = ts_arr.astype(np.int64)
                         # Map OHLCV columns
                         _col_map = {}
                         for target, candidates in [
@@ -204,24 +208,36 @@ def fetch_backtest_data(
                                 _col_map = {'opens': cols[1], 'highs': cols[2], 'lows': cols[3],
                                             'closes': cols[4], 'volumes': cols[5]}
                         if len(_col_map) >= 5:
-                            # Trim to requested date range
-                            _indices = [i for i, t in enumerate(timestamps) if since_ms <= t <= until_ms]
-                            if len(_indices) >= 100:
-                                _s, _e = _indices[0], _indices[-1] + 1
+                            # Vectorized date range filter (fast for 900K+ rows)
+                            _mask = (ts_arr >= since_ms) & (ts_arr <= until_ms)
+                            _count = int(_mask.sum())
+                            print(f"  [PARQUET] {_pq_name}: {len(df):,} total rows, {_count:,} in date range", flush=True)
+                            if _count >= 100:
+                                _df_slice = df.loc[_mask].reset_index(drop=True)
+                                _ts_slice = ts_arr[_mask]
                                 ohlcv = {
-                                    'timestamps': timestamps[_s:_e],
-                                    'opens': df[_col_map['opens']].iloc[_s:_e].tolist(),
-                                    'highs': df[_col_map['highs']].iloc[_s:_e].tolist(),
-                                    'lows': df[_col_map['lows']].iloc[_s:_e].tolist(),
-                                    'closes': df[_col_map['closes']].iloc[_s:_e].tolist(),
-                                    'volumes': df[_col_map['volumes']].iloc[_s:_e].tolist(),
+                                    'timestamps': _ts_slice.tolist(),
+                                    'opens': _df_slice[_col_map['opens']].tolist(),
+                                    'highs': _df_slice[_col_map['highs']].tolist(),
+                                    'lows': _df_slice[_col_map['lows']].tolist(),
+                                    'closes': _df_slice[_col_map['closes']].tolist(),
+                                    'volumes': _df_slice[_col_map['volumes']].tolist(),
                                 }
                                 data.timeframes[tf] = ohlcv
-                                print(f"  [PARQUET] {asset} {tf}: {len(_indices):,} bars from {_pq_name}")
+                                print(f"  [PARQUET] {asset} {tf}: {_count:,} bars loaded", flush=True)
+                                # Cache as JSON for faster subsequent loads
+                                try:
+                                    with open(cache_path, 'w') as f:
+                                        json.dump(ohlcv, f)
+                                    print(f"  [PARQUET] Cached to {os.path.basename(cache_path)}", flush=True)
+                                except Exception:
+                                    pass
                                 _found_parquet = True
                                 break
                     except Exception as e:
-                        print(f"  [PARQUET] Error loading {_pq_path}: {e}")
+                        import traceback
+                        print(f"  [PARQUET] Error loading {_pq_path}: {e}", flush=True)
+                        traceback.print_exc()
                         continue
             if _found_parquet:
                 break
