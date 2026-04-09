@@ -185,7 +185,8 @@ def fetch_backtest_data(
                         _raw_first = df[ts_col].iloc[0]
                         _raw_last = df[ts_col].iloc[-1]
                         if pd.api.types.is_datetime64_any_dtype(df[ts_col]):
-                            ts_arr = df[ts_col].values.astype('int64') // 10**6
+                            # Normalize to ns via pd.to_datetime (parquet may store as ms/us/ns)
+                            ts_arr = (pd.to_datetime(df[ts_col]).astype('int64') // 10**6).values
                         else:
                             ts_arr = df[ts_col].values.astype(np.float64)
                             if ts_arr[0] < 1e12:  # seconds
