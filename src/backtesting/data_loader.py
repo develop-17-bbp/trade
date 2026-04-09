@@ -41,6 +41,7 @@ def fetch_backtest_data(
     end_date: str = None,
     exchange_id: str = 'binance',
     cache_dir: str = None,
+    local_only: bool = False,
 ) -> BacktestData:
     """Fetch multi-timeframe OHLCV data for backtesting.
 
@@ -182,20 +183,23 @@ def fetch_backtest_data(
                         if ts_col is None:
                             ts_col = df.columns[0]
                         # Convert to milliseconds as numpy array (vectorized, handles 900K+ rows)
-                        _raw_first = df[ts_col].iloc[0]
-                        _raw_last = df[ts_col].iloc[-1]
                         if pd.api.types.is_datetime64_any_dtype(df[ts_col]):
-                            # Normalize to ns via pd.to_datetime (parquet may store as ms/us/ns)
-                            ts_arr = (pd.to_datetime(df[ts_col]).astype('int64') // 10**6).values
+                            ts_arr = df[ts_col].astype('int64').values
                         else:
-                            ts_arr = df[ts_col].values.astype(np.float64)
-                            if ts_arr[0] < 1e12:  # seconds
-                                ts_arr = (ts_arr * 1000).astype(np.int64)
-                            else:
-                                ts_arr = ts_arr.astype(np.int64)
-                        print(f"  [PARQUET] ts_col='{ts_col}' raw=[{_raw_first} .. {_raw_last}] "
-                              f"converted=[{ts_arr[0]} .. {ts_arr[-1]}] "
-                              f"query=[{since_ms} .. {until_ms}]", flush=True)
+                            ts_arr = df[ts_col].values.astype(np.float64).astype(np.int64)
+                        # Auto-detect resolution by magnitude of first value
+                        _first = int(ts_arr[0])
+                        if _first > 1e18:       # nanoseconds
+                            ts_arr = ts_arr // 10**6
+                        elif _first > 1e15:     # microseconds
+                            ts_arr = ts_arr // 10**3
+                        elif _first > 1e12:     # milliseconds — already correct
+                            pass
+                        elif _first > 1e9:      # seconds
+                            ts_arr = ts_arr * 1000
+                        else:                   # unknown, try as-is
+                            pass
+                        print(f"  [PARQUET] ts=[{ts_arr[0]} .. {ts_arr[-1]}] query=[{since_ms} .. {until_ms}]", flush=True)
                         # Map OHLCV columns
                         _col_map = {}
                         for target, candidates in [
@@ -251,6 +255,9 @@ def fetch_backtest_data(
             continue
 
         # Fetch from exchange
+        if local_only:
+            print(f"  [SKIP] {asset} {tf}: no local data found (--local mode, skipping API fetch)")
+            continue
         print(f"  [FETCH] {asset} {tf}: fetching from {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}...")
 
         # Lazy init exchange only when actually needed

@@ -39,6 +39,7 @@ def main():
     parser.add_argument('--csv', type=str, default=None, help='Export trades to CSV')
     parser.add_argument('--verbose', '-v', action='store_true', help='Print bar-by-bar output')
     parser.add_argument('--ml', action='store_true', help='Enable ML inference (LightGBM, LSTM, Category B risk models)')
+    parser.add_argument('--local', action='store_true', help='Local data only — no API fetch (use cached JSON/parquet)')
     parser.add_argument('--exchange', type=str, default='binance', help='Data source exchange')
 
     args = parser.parse_args()
@@ -91,6 +92,7 @@ def main():
         start_date=args.start,
         end_date=args.end,
         exchange_id=args.exchange,
+        local_only=args.local,
     )
 
     if data.bar_count < 100:
