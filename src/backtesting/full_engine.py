@@ -495,8 +495,15 @@ class FullBacktestEngine:
                     seq_len=1, n_features=50
                 )
                 if X_seq is not None and len(X_seq) > 0:
-                    feat = X_seq[-1].reshape(1, -1)[:, :40]
-                    trade_prob = _lgbm.predict(feat)[0]
+                    feat = X_seq[-1].reshape(1, -1)  # All 50 features
+                    # Align feature count with trained model
+                    expected = _lgbm.num_feature()
+                    if feat.shape[1] > expected:
+                        feat = feat[:, :expected]
+                    elif feat.shape[1] < expected:
+                        pad = np.zeros((feat.shape[0], expected - feat.shape[1]))
+                        feat = np.hstack([feat, pad])
+                    trade_prob = _lgbm.predict(feat, predict_disable_shape_check=True)[0]
                     trade_conf = float(trade_prob)
                     is_trade = trade_conf > 0.5
 
