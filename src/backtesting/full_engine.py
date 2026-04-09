@@ -19,6 +19,7 @@ import logging
 import numpy as np
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.backtesting.data_loader import BacktestData, get_context_at_bar
 from src.backtesting.signal_generator import compute_tf_signal, compute_indicator_context, compute_entry_score
@@ -100,6 +101,8 @@ class FullBacktestEngine:
             'lgbm_blocks': 0, 'lstm_blocks': 0, 'catb_penalized': 0,
             'ensemble_blocks': 0, 'ml_boosted': 0,
         }
+        self._bar_counter = 0      # For EVT cache expiry
+        self._evt_cache = None     # Cached EVT results (refit every 50 bars)
 
         if self.use_ml:
             self._load_ml_models(config)
@@ -227,6 +230,7 @@ class FullBacktestEngine:
 
         for i in range(lookback, n_bars):
             bar_ts = timestamps[i]
+            self._bar_counter = i
 
             # Build OHLCV slice up to this bar (no lookahead)
             ohlcv = {
@@ -439,7 +443,11 @@ class FullBacktestEngine:
                           closes: list, highs: list, lows: list,
                           opens: list, volumes: list, price: float,
                           ema_vals: list, atr_vals: list) -> dict:
-        """Run full ML inference pipeline matching executor.py.
+        """Run full ML inference pipeline matching executor.py — PARALLELIZED.
+
+        All 6 ML models run concurrently via ThreadPoolExecutor.
+        Features are computed once and shared across LSTM + LightGBM.
+        EVT is cached every 50 bars to avoid expensive refit on every bar.
 
         Returns dict with:
             hard_block: bool — if True, skip entry entirely
@@ -450,53 +458,44 @@ class FullBacktestEngine:
         reasons = []
         ml_context = {}
 
-        # ── LSTM ENSEMBLE PREDICTION (binary SKIP/TRADE) ──
-        _lstm = self._lstm_per_asset.get(asset)
-        if _lstm and len(closes) >= 80:
+        # ── PRE-COMPUTE FEATURES ONCE (shared by LSTM + LightGBM) ──
+        X_seq_30 = None
+        X_seq_1 = None
+        if len(closes) >= 80:
             try:
                 from src.scripts.train_all_models import compute_strategy_features
-                X_seq, _ = compute_strategy_features(
+                X_seq_30, _ = compute_strategy_features(
                     closes, highs, lows, opens, volumes,
                     seq_len=30, n_features=50
                 )
-                if X_seq is not None and len(X_seq) > 0:
-                    lstm_pred = _lstm.predict(X_seq[-1])
-                    if lstm_pred and lstm_pred.get('confidence', 0) > 0.1:
-                        trade_quality = lstm_pred.get('trade_quality', 'UNKNOWN')
-                        trade_conf = lstm_pred.get('confidence', 0)
-                        ml_context['lstm_signal'] = trade_quality
-                        ml_context['lstm_confidence'] = trade_conf
-
-                        if trade_quality == 'TRADE' and trade_conf > 0.55:
-                            score_adj += 2
-                            reasons.append(f"lstm_TRADE({trade_conf:.0%})")
-                        elif trade_quality == 'TRADE' and trade_conf > 0.40:
-                            score_adj += 1
-                            reasons.append(f"lstm_trade_weak({trade_conf:.0%})")
-                        elif trade_quality == 'SKIP' and trade_conf > 0.75:
-                            self.ml_stats['lstm_blocks'] += 1
-                            return {'hard_block': True, 'score_adj': 0, 'reasons': [f"lstm_HARD_SKIP({trade_conf:.0%})"]}
-                        elif trade_quality == 'SKIP' and trade_conf > 0.60:
-                            score_adj -= 3
-                            reasons.append(f"lstm_SKIP({trade_conf:.0%})")
-                        elif trade_quality == 'SKIP' and trade_conf > 0.40:
-                            score_adj -= 1
-                            reasons.append(f"lstm_skip_weak({trade_conf:.0%})")
+                # LightGBM just needs last row of features (seq_len=1)
+                if X_seq_30 is not None and len(X_seq_30) > 0:
+                    X_seq_1 = X_seq_30[-1:, -1:, :]  # Last sequence, last timestep
             except Exception as e:
-                logger.debug(f"LSTM prediction error: {e}")
+                logger.debug(f"Feature computation error: {e}")
 
-        # ── LIGHTGBM BINARY GATE ──
-        _lgbm = self._lgbm_raw.get(asset)
-        if _lgbm and len(closes) >= 55:
-            try:
-                from src.scripts.train_all_models import compute_strategy_features
-                X_seq, _ = compute_strategy_features(
-                    closes, highs, lows, opens, volumes,
-                    seq_len=1, n_features=50
-                )
-                if X_seq is not None and len(X_seq) > 0:
-                    feat = X_seq[-1].reshape(1, -1)  # All 50 features
-                    # Align feature count with trained model
+        # ── PARALLEL ML MODEL INFERENCE ──
+        def _run_lstm():
+            """LSTM ensemble prediction."""
+            result = {}
+            _lstm = self._lstm_per_asset.get(asset)
+            if _lstm and X_seq_30 is not None and len(X_seq_30) > 0:
+                try:
+                    lstm_pred = _lstm.predict(X_seq_30[-1])
+                    if lstm_pred and lstm_pred.get('confidence', 0) > 0.1:
+                        result['signal'] = lstm_pred.get('trade_quality', 'UNKNOWN')
+                        result['confidence'] = lstm_pred.get('confidence', 0)
+                except Exception as e:
+                    logger.debug(f"LSTM error: {e}")
+            return result
+
+        def _run_lgbm():
+            """LightGBM binary gate."""
+            result = {}
+            _lgbm = self._lgbm_raw.get(asset)
+            if _lgbm and X_seq_30 is not None and len(X_seq_30) > 0:
+                try:
+                    feat = X_seq_30[-1, -1, :].reshape(1, -1)  # Last timestep features
                     expected = _lgbm.num_feature()
                     if feat.shape[1] > expected:
                         feat = feat[:, :expected]
@@ -505,152 +504,198 @@ class FullBacktestEngine:
                         feat = np.hstack([feat, pad])
                     trade_prob = _lgbm.predict(feat, predict_disable_shape_check=True)[0]
                     trade_conf = float(trade_prob)
-                    is_trade = trade_conf > 0.5
+                    result['trade_conf'] = trade_conf
+                    result['is_trade'] = trade_conf > 0.5
+                except Exception as e:
+                    logger.debug(f"LightGBM error: {e}")
+            return result
 
-                    ml_context['lgbm_direction'] = 'TRADE' if is_trade else 'SKIP'
-                    ml_context['lgbm_confidence'] = trade_conf if is_trade else (1 - trade_conf)
+        def _run_tft():
+            """Temporal Transformer forecast."""
+            result = {'bps': 0.0, 'conf': 0.0}
+            if self._temporal_transformer and len(closes) >= 120:
+                try:
+                    _c = np.array(closes[-120:], dtype=float)
+                    _h = np.array(highs[-120:], dtype=float)
+                    _l = np.array(lows[-120:], dtype=float)
+                    _v = np.array(volumes[-120:], dtype=float)
+                    _pct = np.diff(_c) / _c[:-1]
+                    _hpct = (_h[1:] - _c[:-1]) / _c[:-1]
+                    _lpct = (_l[1:] - _c[:-1]) / _c[:-1]
+                    _vpct = np.diff(_v) / (_v[:-1] + 1e-12)
+                    _history = np.column_stack([_pct, _hpct, _lpct, _vpct])[-self._temporal_transformer.context_len:]
+                    if _history.shape[1] < self._temporal_transformer.d_model:
+                        _pad = np.zeros((_history.shape[0], self._temporal_transformer.d_model - _history.shape[1]))
+                        _history = np.hstack([_history, _pad])
+                    forecast = self._temporal_transformer.forecast_return(_history)
+                    result['bps'] = forecast.get('forecast_return_bps', 0)
+                    result['conf'] = forecast.get('confidence', 0)
+                except Exception as e:
+                    logger.debug(f"TFT error: {e}")
+            return result
 
-                    if is_trade and trade_conf > 0.60:
-                        score_adj += 2
-                        reasons.append(f"lgbm_TRADE({trade_conf:.0%})")
-                    elif is_trade and trade_conf > 0.45:
-                        score_adj += 1
-                        reasons.append(f"lgbm_trade_weak({trade_conf:.0%})")
-                    elif not is_trade and (1 - trade_conf) > 0.75:
-                        self.ml_stats['lgbm_blocks'] += 1
-                        return {'hard_block': True, 'score_adj': 0, 'reasons': [f"lgbm_HARD_SKIP({1-trade_conf:.0%})"]}
-                    elif not is_trade and (1 - trade_conf) > 0.60:
-                        score_adj -= 3
-                        reasons.append(f"lgbm_SKIP({1-trade_conf:.0%})")
-                    elif not is_trade and (1 - trade_conf) > 0.45:
-                        score_adj -= 1
-                        reasons.append(f"lgbm_skip_weak({1-trade_conf:.0%})")
-            except Exception as e:
-                logger.debug(f"LightGBM prediction error: {e}")
+        def _run_hawkes():
+            """Hawkes process event clustering."""
+            result = {'intensity': 0.0}
+            if self._hawkes and len(closes) >= 50:
+                try:
+                    _c = np.array(closes[-100:], dtype=float)
+                    _rets = np.abs(np.diff(_c) / _c[:-1])
+                    _threshold = np.mean(_rets) + 2.0 * np.std(_rets)
+                    _event_indices = np.where(_rets > _threshold)[0]
+                    if len(_event_indices) >= 3:
+                        intensity = self._hawkes.current_intensity(_event_indices.astype(float))
+                        result['intensity'] = float(intensity)
+                except Exception as e:
+                    logger.debug(f"Hawkes error: {e}")
+            return result
 
-        # ── TEMPORAL TRANSFORMER FORECAST ──
-        _tft_bps = 0.0
-        _tft_conf = 0.0
-        if self._temporal_transformer and len(closes) >= 120:
-            try:
-                _c = np.array(closes[-120:], dtype=float)
-                _h = np.array(highs[-120:], dtype=float)
-                _l = np.array(lows[-120:], dtype=float)
-                _v = np.array(volumes[-120:], dtype=float)
-                _pct = np.diff(_c) / _c[:-1]
-                _hpct = (_h[1:] - _c[:-1]) / _c[:-1]
-                _lpct = (_l[1:] - _c[:-1]) / _c[:-1]
-                _vpct = np.diff(_v) / (_v[:-1] + 1e-12)
-                _history = np.column_stack([_pct, _hpct, _lpct, _vpct])[-self._temporal_transformer.context_len:]
-                if _history.shape[1] < self._temporal_transformer.d_model:
-                    _pad = np.zeros((_history.shape[0], self._temporal_transformer.d_model - _history.shape[1]))
-                    _history = np.hstack([_history, _pad])
-                forecast = self._temporal_transformer.forecast_return(_history)
-                _tft_bps = forecast.get('forecast_return_bps', 0)
-                _tft_conf = forecast.get('confidence', 0)
-                ml_context['tft_forecast_bps'] = _tft_bps
-                ml_context['tft_confidence'] = _tft_conf
-            except Exception as e:
-                logger.debug(f"TFT error: {e}")
+        def _run_evt():
+            """EVT tail risk — cached every 50 bars."""
+            # Use cached result if available and fresh
+            if hasattr(self, '_evt_cache') and self._evt_cache is not None:
+                cache_age = self._evt_cache.get('_bar_count', 0)
+                if (self._bar_counter - cache_age) < 50:
+                    return self._evt_cache
+            result = {'var': 0.0, 'tail_ratio': 1.0}
+            if self._evt_risk and len(closes) >= 100:
+                try:
+                    _rets = np.diff(np.log(np.array(closes[-500:], dtype=float) + 1e-12))
+                    if len(_rets) >= 50:
+                        evt_result = self._evt_risk.fit_and_assess(_rets)
+                        result['var'] = evt_result.get('evt_var_99', 0)
+                        result['tail_ratio'] = evt_result.get('tail_ratio', 1.0)
+                except Exception as e:
+                    logger.debug(f"EVT error: {e}")
+            result['_bar_count'] = self._bar_counter
+            self._evt_cache = result
+            return result
 
-        # ── HAWKES PROCESS: event clustering ──
-        _hawkes_intensity = 0.0
-        if self._hawkes and len(closes) >= 50:
-            try:
-                _rets = np.abs(np.diff(np.array(closes[-100:], dtype=float)) / np.array(closes[-100:-1], dtype=float))
-                _mean_r = np.mean(_rets)
-                _std_r = np.std(_rets)
-                _threshold = _mean_r + 2.0 * _std_r
-                _event_indices = np.where(_rets > _threshold)[0]
-                if len(_event_indices) >= 3:
-                    _event_times = _event_indices.astype(float)
-                    intensity = self._hawkes.current_intensity(_event_times)
-                    _hawkes_intensity = float(intensity)
-                    ml_context['hawkes_intensity'] = _hawkes_intensity
-            except Exception as e:
-                logger.debug(f"Hawkes error: {e}")
+        def _run_mc():
+            """Monte Carlo forward risk."""
+            result = {'risk_score': 0.5}
+            if self._mc_risk and len(closes) >= 50 and price > 0:
+                try:
+                    _c = np.array(closes[-100:], dtype=float)
+                    _rets = np.diff(_c) / _c[:-1]
+                    mc_result = self._mc_risk.simulate(
+                        current_price=price,
+                        volatility=float(np.std(_rets)),
+                        drift=float(np.mean(_rets)),
+                        regime='normal'
+                    )
+                    result['risk_score'] = mc_result.get('mc_risk_score', 0.5)
+                except Exception as e:
+                    logger.debug(f"MC error: {e}")
+            return result
 
-        # ── EVT TAIL RISK ──
-        _evt_var = 0.0
-        _evt_tail_ratio = 1.0
-        if self._evt_risk and len(closes) >= 100:
-            try:
-                _rets = np.diff(np.log(np.array(closes[-500:], dtype=float) + 1e-12))
-                if len(_rets) >= 50:
-                    evt_result = self._evt_risk.fit_and_assess(_rets)
-                    _evt_var = evt_result.get('evt_var_99', 0)
-                    _evt_tail_ratio = evt_result.get('tail_ratio', 1.0)
-                    ml_context['evt_var_99'] = _evt_var
-                    ml_context['evt_tail_ratio'] = _evt_tail_ratio
-            except Exception as e:
-                logger.debug(f"EVT error: {e}")
+        # ── EXECUTE ALL 6 MODELS IN PARALLEL ──
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            f_lstm = pool.submit(_run_lstm)
+            f_lgbm = pool.submit(_run_lgbm)
+            f_tft = pool.submit(_run_tft)
+            f_hawkes = pool.submit(_run_hawkes)
+            f_evt = pool.submit(_run_evt)
+            f_mc = pool.submit(_run_mc)
 
-        # ── MONTE CARLO RISK ──
-        _mc_risk_score = 0.5
-        if self._mc_risk and len(closes) >= 50 and price > 0:
-            try:
-                _rets = np.diff(np.array(closes[-100:], dtype=float)) / np.array(closes[-100:-1], dtype=float)
-                _vol = float(np.std(_rets))
-                _drift = float(np.mean(_rets))
-                mc_result = self._mc_risk.simulate(current_price=price, volatility=_vol, drift=_drift, regime='normal')
-                _mc_risk_score = mc_result.get('mc_risk_score', 0.5)
-                ml_context['mc_risk_score'] = _mc_risk_score
-            except Exception as e:
-                logger.debug(f"MC error: {e}")
+        lstm_r = f_lstm.result()
+        lgbm_r = f_lgbm.result()
+        tft_r = f_tft.result()
+        hawkes_r = f_hawkes.result()
+        evt_r = f_evt.result()
+        mc_r = f_mc.result()
+
+        # ── APPLY LSTM RESULTS ──
+        if lstm_r.get('signal'):
+            trade_quality = lstm_r['signal']
+            trade_conf = lstm_r['confidence']
+            ml_context['lstm_signal'] = trade_quality
+            ml_context['lstm_confidence'] = trade_conf
+
+            if trade_quality == 'TRADE' and trade_conf > 0.55:
+                score_adj += 2; reasons.append(f"lstm_TRADE({trade_conf:.0%})")
+            elif trade_quality == 'TRADE' and trade_conf > 0.40:
+                score_adj += 1; reasons.append(f"lstm_trade_weak({trade_conf:.0%})")
+            elif trade_quality == 'SKIP' and trade_conf > 0.75:
+                self.ml_stats['lstm_blocks'] += 1
+                return {'hard_block': True, 'score_adj': 0, 'reasons': [f"lstm_HARD_SKIP({trade_conf:.0%})"]}
+            elif trade_quality == 'SKIP' and trade_conf > 0.60:
+                score_adj -= 3; reasons.append(f"lstm_SKIP({trade_conf:.0%})")
+            elif trade_quality == 'SKIP' and trade_conf > 0.40:
+                score_adj -= 1; reasons.append(f"lstm_skip_weak({trade_conf:.0%})")
+
+        # ── APPLY LIGHTGBM RESULTS ──
+        if 'trade_conf' in lgbm_r:
+            trade_conf = lgbm_r['trade_conf']
+            is_trade = lgbm_r['is_trade']
+            ml_context['lgbm_direction'] = 'TRADE' if is_trade else 'SKIP'
+            ml_context['lgbm_confidence'] = trade_conf if is_trade else (1 - trade_conf)
+
+            if is_trade and trade_conf > 0.60:
+                score_adj += 2; reasons.append(f"lgbm_TRADE({trade_conf:.0%})")
+            elif is_trade and trade_conf > 0.45:
+                score_adj += 1; reasons.append(f"lgbm_trade_weak({trade_conf:.0%})")
+            elif not is_trade and (1 - trade_conf) > 0.75:
+                self.ml_stats['lgbm_blocks'] += 1
+                return {'hard_block': True, 'score_adj': 0, 'reasons': [f"lgbm_HARD_SKIP({1-trade_conf:.0%})"]}
+            elif not is_trade and (1 - trade_conf) > 0.60:
+                score_adj -= 3; reasons.append(f"lgbm_SKIP({1-trade_conf:.0%})")
+            elif not is_trade and (1 - trade_conf) > 0.45:
+                score_adj -= 1; reasons.append(f"lgbm_skip_weak({1-trade_conf:.0%})")
+
+        # ── UNPACK RESULTS ──
+        _tft_bps = tft_r['bps']
+        _tft_conf = tft_r['conf']
+        _hawkes_intensity = hawkes_r['intensity']
+        _evt_var = evt_r['var']
+        _evt_tail_ratio = evt_r['tail_ratio']
+        _mc_risk_score = mc_r['risk_score']
+
+        ml_context.update({
+            'tft_forecast_bps': _tft_bps, 'tft_confidence': _tft_conf,
+            'hawkes_intensity': _hawkes_intensity,
+            'evt_var_99': _evt_var, 'evt_tail_ratio': _evt_tail_ratio,
+            'mc_risk_score': _mc_risk_score,
+        })
 
         # ── CATEGORY B DIRECT SCORE MODIFIERS ──
-        # EVT: extreme tail risk
         if _evt_var < -0.08:
-            score_adj -= 2
-            reasons.append(f"evt_extreme_tail({_evt_var:.3f})")
+            score_adj -= 2; reasons.append(f"evt_extreme_tail({_evt_var:.3f})")
             self.ml_stats['catb_penalized'] += 1
         elif _evt_tail_ratio > 2.0:
-            score_adj -= 1
-            reasons.append(f"evt_fat_tail({_evt_tail_ratio:.1f}x)")
+            score_adj -= 1; reasons.append(f"evt_fat_tail({_evt_tail_ratio:.1f}x)")
             self.ml_stats['catb_penalized'] += 1
 
-        # Monte Carlo: high forward risk
         if _mc_risk_score > 0.8:
-            score_adj -= 2
-            reasons.append(f"mc_high_risk({_mc_risk_score:.2f})")
+            score_adj -= 2; reasons.append(f"mc_high_risk({_mc_risk_score:.2f})")
             self.ml_stats['catb_penalized'] += 1
         elif _mc_risk_score > 0.6:
-            score_adj -= 1
-            reasons.append(f"mc_elevated_risk({_mc_risk_score:.2f})")
+            score_adj -= 1; reasons.append(f"mc_elevated_risk({_mc_risk_score:.2f})")
 
-        # Hawkes: event clustering
         if _hawkes_intensity > 0.8:
-            score_adj -= 2
-            reasons.append(f"hawkes_clustering({_hawkes_intensity:.2f})")
+            score_adj -= 2; reasons.append(f"hawkes_clustering({_hawkes_intensity:.2f})")
             self.ml_stats['catb_penalized'] += 1
         elif _hawkes_intensity > 0.5:
-            score_adj -= 1
-            reasons.append(f"hawkes_elevated({_hawkes_intensity:.2f})")
+            score_adj -= 1; reasons.append(f"hawkes_elevated({_hawkes_intensity:.2f})")
 
-        # TFT: direction conflict
         if _tft_conf > 0.3:
             _tft_bullish = _tft_bps > 0
             _signal_bullish = signal == 'BUY'
             if _tft_bullish != _signal_bullish and abs(_tft_bps) > 5:
-                score_adj -= 1
-                reasons.append(f"tft_disagree({_tft_bps:+.0f}bps)")
+                score_adj -= 1; reasons.append(f"tft_disagree({_tft_bps:+.0f}bps)")
             elif _tft_bullish == _signal_bullish and abs(_tft_bps) > 10:
-                score_adj += 1
-                reasons.append(f"tft_confirm({_tft_bps:+.0f}bps)")
+                score_adj += 1; reasons.append(f"tft_confirm({_tft_bps:+.0f}bps)")
                 self.ml_stats['ml_boosted'] += 1
 
-        # ── ML ENSEMBLE VOTE: 3+ SKIP = hard block, 2+ = score -3 ──
+        # ── ML ENSEMBLE VOTE ──
         ml_skip_votes = []
         if ml_context.get('lgbm_direction') == 'SKIP' and ml_context.get('lgbm_confidence', 0) > 0.55:
             ml_skip_votes.append("LGBM")
         if ml_context.get('lstm_signal') == 'SKIP' and ml_context.get('lstm_confidence', 0) > 0.55:
             ml_skip_votes.append("LSTM")
-        if _hawkes_intensity > 0.8:
-            ml_skip_votes.append("Hawkes")
-        if _mc_risk_score > 0.8:
-            ml_skip_votes.append("MC")
-        if _evt_var < -0.08:
-            ml_skip_votes.append("EVT")
+        if _hawkes_intensity > 0.8: ml_skip_votes.append("Hawkes")
+        if _mc_risk_score > 0.8: ml_skip_votes.append("MC")
+        if _evt_var < -0.08: ml_skip_votes.append("EVT")
         if _tft_conf > 0.4 and ((_tft_bps > 0) != (signal == 'BUY')) and abs(_tft_bps) > 15:
             ml_skip_votes.append("TFT")
 
@@ -658,8 +703,7 @@ class FullBacktestEngine:
             self.ml_stats['ensemble_blocks'] += 1
             return {'hard_block': True, 'score_adj': 0, 'reasons': [f"ml_consensus_block({','.join(ml_skip_votes)})"]}
         elif len(ml_skip_votes) >= 2:
-            score_adj -= 3
-            reasons.append(f"ml_consensus_skip({len(ml_skip_votes)})")
+            score_adj -= 3; reasons.append(f"ml_consensus_skip({len(ml_skip_votes)})")
 
         if score_adj > 0:
             self.ml_stats['ml_boosted'] += 1

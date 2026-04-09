@@ -7,12 +7,14 @@ Usage:
     python -m src.scripts.backtest --asset BTC --days 30 --csv results/btc_30d.csv
     python -m src.scripts.backtest --asset BTC --start 2025-01-01 --end 2025-03-01
     python -m src.scripts.backtest --asset BTC --days 7 --verbose
+    python -m src.scripts.backtest --parallel --ml --local --start 2017-08-17 --end 2026-04-01
 """
 
 import os
 import sys
 import argparse
 import yaml
+import multiprocessing
 
 # Ensure project root on path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -40,6 +42,7 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='Print bar-by-bar output')
     parser.add_argument('--ml', action='store_true', help='Enable ML inference (LightGBM, LSTM, Category B risk models)')
     parser.add_argument('--local', action='store_true', help='Local data only — no API fetch (use cached JSON/parquet)')
+    parser.add_argument('--parallel', action='store_true', help='Run BTC + ETH backtests in parallel')
     parser.add_argument('--exchange', type=str, default='binance', help='Data source exchange')
 
     args = parser.parse_args()
@@ -131,5 +134,59 @@ def main():
         print(f"  VERDICT: UNPROFITABLE | WR={metrics.win_rate:.1%} PF={metrics.profit_factor:.2f} | Strategy needs work")
 
 
-if __name__ == '__main__':
+def _run_single_asset(asset, args_dict):
+    """Worker function for parallel backtest."""
+    sys.argv = ['backtest', '--asset', asset]
+    for k, v in args_dict.items():
+        if v is True:
+            sys.argv.append(f'--{k}')
+        elif v is not None and v is not False:
+            sys.argv.extend([f'--{k}', str(v)])
     main()
+
+
+if __name__ == '__main__':
+    # Quick check for --parallel flag before argparse
+    if '--parallel' in sys.argv:
+        # Build args dict for forwarding (strip --parallel and --asset)
+        _raw = sys.argv[1:]
+        _fwd = {}
+        _skip_next = False
+        for idx, arg in enumerate(_raw):
+            if _skip_next:
+                _skip_next = False
+                continue
+            if arg == '--parallel':
+                continue
+            if arg == '--asset':
+                _skip_next = True
+                continue
+            if arg.startswith('--'):
+                key = arg.lstrip('-').replace('-', '_')
+                if idx + 1 < len(_raw) and not _raw[idx + 1].startswith('--'):
+                    _fwd[arg.lstrip('-')] = _raw[idx + 1]
+                    _skip_next = True
+                else:
+                    _fwd[arg.lstrip('-')] = True
+        # Auto-set CSV outputs
+        if 'csv' not in _fwd:
+            _fwd_btc = {**_fwd, 'csv': 'results/btc_ml.csv'}
+            _fwd_eth = {**_fwd, 'csv': 'results/eth_ml.csv'}
+        else:
+            _fwd_btc = {**_fwd}
+            _fwd_eth = {**_fwd, 'csv': _fwd['csv'].replace('btc', 'eth').replace('BTC', 'ETH')}
+
+        print("=" * 65)
+        print("  PARALLEL BACKTEST: BTC + ETH")
+        print("=" * 65)
+        p_btc = multiprocessing.Process(target=_run_single_asset, args=('BTC', _fwd_btc))
+        p_eth = multiprocessing.Process(target=_run_single_asset, args=('ETH', _fwd_eth))
+        p_btc.start()
+        p_eth.start()
+        p_btc.join()
+        p_eth.join()
+        print("\n" + "=" * 65)
+        print("  BOTH BACKTESTS COMPLETE")
+        print("=" * 65)
+    else:
+        main()
