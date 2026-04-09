@@ -38,6 +38,7 @@ def main():
     parser.add_argument('--short-penalty', type=int, default=None, help='Extra score needed for SHORT entries')
     parser.add_argument('--csv', type=str, default=None, help='Export trades to CSV')
     parser.add_argument('--verbose', '-v', action='store_true', help='Print bar-by-bar output')
+    parser.add_argument('--ml', action='store_true', help='Enable ML inference (LightGBM, LSTM, Category B risk models)')
     parser.add_argument('--exchange', type=str, default='binance', help='Data source exchange')
 
     args = parser.parse_args()
@@ -67,6 +68,8 @@ def main():
 
     config['initial_capital'] = args.capital
     config['risk_per_trade_pct'] = config.get('risk_per_trade_pct', 2.0)
+    config['use_ml'] = args.ml
+    config['asset'] = args.asset  # for per-asset ML model loading
 
     print("=" * 65)
     print("  EMA(8) CROSSOVER STRATEGY BACKTESTER")
@@ -76,6 +79,7 @@ def main():
     print(f"  Period: {args.days} days" + (f" ({args.start} to {args.end})" if args.start else ""))
     print(f"  Capital: ${args.capital:,.0f}")
     print(f"  Min Score: {config['min_entry_score']}")
+    print(f"  ML Inference: {'ON' if args.ml else 'OFF'}")
     print("=" * 65)
 
     # 1. Fetch data
