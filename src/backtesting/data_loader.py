@@ -150,6 +150,84 @@ def fetch_backtest_data(
         if _found_superset:
             continue
 
+        # ── PARQUET FALLBACK: search training_cache for parquet files ──
+        # Useful when Binance API is blocked (e.g. India server HTTP 451)
+        _found_parquet = False
+        _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        _parquet_dirs = [
+            os.path.join(_project_root, 'data', 'training_cache'),
+            os.path.join(_project_root, 'data', 'backtest_cache'),
+            os.path.join(_project_root, 'data'),
+        ]
+        _tf_map = {'5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d', '1m': '1m'}
+        _pq_tf = _tf_map.get(tf, tf)
+        for _pq_dir in _parquet_dirs:
+            for _pq_name in [f"{asset}USDT-{_pq_tf}.parquet", f"{asset}-{_pq_tf}.parquet",
+                             f"{asset}USDT_{_pq_tf}.parquet"]:
+                _pq_path = os.path.join(_pq_dir, _pq_name)
+                if os.path.exists(_pq_path):
+                    try:
+                        import pandas as pd
+                        df = pd.read_parquet(_pq_path)
+                        if len(df) < 100:
+                            continue
+                        # Detect timestamp column
+                        ts_col = None
+                        for col in ['timestamp', 'open_time', 'time', 'date']:
+                            if col in df.columns:
+                                ts_col = col
+                                break
+                        if ts_col is None:
+                            ts_col = df.columns[0]
+                        # Convert to milliseconds
+                        if pd.api.types.is_datetime64_any_dtype(df[ts_col]):
+                            timestamps = (df[ts_col].astype('int64') // 10**6).tolist()
+                        else:
+                            timestamps = df[ts_col].astype(float).tolist()
+                            if timestamps[0] < 1e12:  # seconds
+                                timestamps = [int(t * 1000) for t in timestamps]
+                        # Map OHLCV columns
+                        _col_map = {}
+                        for target, candidates in [
+                            ('opens', ['open', 'Open']), ('highs', ['high', 'High']),
+                            ('lows', ['low', 'Low']), ('closes', ['close', 'Close']),
+                            ('volumes', ['volume', 'Volume']),
+                        ]:
+                            for c in candidates:
+                                if c in df.columns:
+                                    _col_map[target] = c
+                                    break
+                        if len(_col_map) < 5:
+                            # Fallback: assume columns by position (ts, o, h, l, c, v)
+                            cols = df.columns.tolist()
+                            if len(cols) >= 6:
+                                _col_map = {'opens': cols[1], 'highs': cols[2], 'lows': cols[3],
+                                            'closes': cols[4], 'volumes': cols[5]}
+                        if len(_col_map) >= 5:
+                            # Trim to requested date range
+                            _indices = [i for i, t in enumerate(timestamps) if since_ms <= t <= until_ms]
+                            if len(_indices) >= 100:
+                                _s, _e = _indices[0], _indices[-1] + 1
+                                ohlcv = {
+                                    'timestamps': timestamps[_s:_e],
+                                    'opens': df[_col_map['opens']].iloc[_s:_e].tolist(),
+                                    'highs': df[_col_map['highs']].iloc[_s:_e].tolist(),
+                                    'lows': df[_col_map['lows']].iloc[_s:_e].tolist(),
+                                    'closes': df[_col_map['closes']].iloc[_s:_e].tolist(),
+                                    'volumes': df[_col_map['volumes']].iloc[_s:_e].tolist(),
+                                }
+                                data.timeframes[tf] = ohlcv
+                                print(f"  [PARQUET] {asset} {tf}: {len(_indices):,} bars from {_pq_name}")
+                                _found_parquet = True
+                                break
+                    except Exception as e:
+                        print(f"  [PARQUET] Error loading {_pq_path}: {e}")
+                        continue
+            if _found_parquet:
+                break
+        if _found_parquet:
+            continue
+
         # Fetch from exchange
         print(f"  [FETCH] {asset} {tf}: fetching from {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}...")
 
