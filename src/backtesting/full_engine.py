@@ -88,6 +88,11 @@ class FullBacktestEngine:
         self.use_ml = config.get('use_ml', False)
         self._ml_loaded = False
 
+        # LLM gate (optional — 2-pass Mistral scanner + Llama analyst)
+        self.use_llm = config.get('use_llm', False)
+        self._llm_brain = None
+        self.llm_stats = {'calls': 0, 'proceed': 0, 'reject': 0, 'errors': 0}
+
         # ML model instances
         self._lgbm_raw: Dict[str, Any] = {}   # per-asset LightGBM binary
         self._lstm_per_asset: Dict[str, Any] = {}
@@ -107,6 +112,9 @@ class FullBacktestEngine:
         if self.use_ml:
             self._load_ml_models(config)
 
+        if self.use_llm:
+            self._load_llm(config)
+
         # State
         self.positions: Dict[str, Position] = {}  # asset -> Position
         self.equity = self.initial_capital
@@ -117,6 +125,78 @@ class FullBacktestEngine:
         self.equity_curve: List[float] = []
         self.signals_generated = 0
         self.entries_attempted = 0
+
+    def _load_llm(self, config: dict):
+        """Load LLM trading brain for 2-pass evaluation (Mistral scanner + Llama analyst)."""
+        try:
+            from src.ai.trading_brain import TradingBrainV2
+            ollama_url = config.get('ollama_url', 'http://localhost:11434')
+            self._llm_brain = TradingBrainV2(
+                ollama_base_url=ollama_url,
+                journal_path='logs/trading_journal.jsonl',
+            )
+            print(f"  [LLM] TradingBrain loaded (Mistral=scanner, Llama=analyst)")
+        except Exception as e:
+            print(f"  [LLM] Failed to load: {e}")
+            self._llm_brain = None
+
+    def _run_llm_gate(self, asset: str, signal: str, price: float, entry_score: int,
+                      score_reasons: list, ohlcv: dict, closes: list, volumes: list,
+                      sig: dict, direction: str, htf_alignment: float,
+                      indicator_ctx: dict) -> dict:
+        """Run LLM 2-pass evaluation. Returns dict with proceed, confidence, reasoning."""
+        if not self._llm_brain:
+            return {'proceed': True, 'confidence': 0.5, 'reasoning': 'LLM unavailable'}
+
+        self.llm_stats['calls'] += 1
+        try:
+            ema_vals = sig.get('ema_vals', [])
+            atr_vals = sig.get('atr_vals', [])
+            current_atr = atr_vals[-1] if atr_vals else 0
+            current_ema = ema_vals[-1] if ema_vals else 0
+
+            result = self._llm_brain.evaluate_trade(
+                asset=asset,
+                signal=signal,
+                price=price,
+                entry_score=entry_score,
+                slope_pct=sig.get('slope_pct', 0),
+                min_trend_bars=sig.get('min_trend_bars', 0),
+                ema_separation=abs(price - current_ema) / price * 100 if price > 0 else 0,
+                ema_direction=sig.get('ema_direction', 'FLAT'),
+                htf_alignment=htf_alignment,
+                closes=closes[-200:],
+                volumes=volumes[-200:],
+                current_atr=current_atr,
+                current_ema=current_ema,
+                support=indicator_ctx.get('support', 0),
+                resistance=indicator_ctx.get('resistance', 0),
+                candle_lines=indicator_ctx.get('candle_lines', []),
+                orch_result={},
+                pnl_history=[],
+                math_filter_warnings=[],
+                score_reasons=score_reasons,
+                htf_1h_direction=sig.get('ema_direction', 'FLAT'),
+                htf_4h_direction=sig.get('ema_direction', 'FLAT'),
+                is_reversal_signal=False,
+                equity=self.equity,
+            )
+
+            proceed = result.get('proceed', True)
+            confidence = result.get('confidence', 0.5)
+            reasoning = result.get('reasoning', '')[:150]
+
+            if proceed:
+                self.llm_stats['proceed'] += 1
+            else:
+                self.llm_stats['reject'] += 1
+
+            return {'proceed': proceed, 'confidence': confidence, 'reasoning': reasoning}
+
+        except Exception as e:
+            self.llm_stats['errors'] += 1
+            logger.debug(f"LLM gate error: {e}")
+            return {'proceed': True, 'confidence': 0.5, 'reasoning': f'LLM error: {str(e)[:80]}'}
 
     def _load_ml_models(self, config: dict):
         """Load trained ML models for inference during backtest."""
@@ -348,7 +428,7 @@ class FullBacktestEngine:
                 self.equity_curve.append(self.equity)
                 continue
 
-            # === ENTRY GATE (replaces LLM) ===
+            # === ENTRY GATE (score threshold) ===
             effective_min = self.min_entry_score
             if direction == 'SHORT':
                 effective_min += self.short_score_penalty
@@ -356,10 +436,29 @@ class FullBacktestEngine:
                 self.equity_curve.append(self.equity)
                 continue
 
+            # === LLM GATE (2-pass: Mistral scanner + Llama analyst) ===
+            llm_confidence = 0.5
+            if self.use_llm and self._llm_brain:
+                llm_result = self._run_llm_gate(
+                    asset, primary_signal, price, entry_score, score_reasons,
+                    ohlcv, closes[:i+1], volumes[:i+1], sig, direction,
+                    htf_alignment, indicator_ctx,
+                )
+                if not llm_result.get('proceed', True):
+                    if verbose:
+                        print(f"  [{i}] LLM REJECT {direction}: {llm_result.get('reasoning', '')[:80]}")
+                    self.equity_curve.append(self.equity)
+                    continue
+                llm_confidence = llm_result.get('confidence', 0.5)
+
             self.entries_attempted += 1
 
-            # === POSITION SIZING ===
+            # === POSITION SIZING (LLM confidence scales size when available) ===
             size_pct = min(self.risk_per_trade_pct, self.max_trade_pct)
+            if self.use_llm and llm_confidence > 0.7:
+                size_pct = min(size_pct * 1.5, self.max_trade_pct)  # 50% boost on high confidence
+            elif self.use_llm and llm_confidence < 0.4:
+                size_pct = size_pct * 0.5  # Half size on low confidence
             notional = self.equity * (size_pct / 100.0)
             max_trade = min(2000.0, self.equity * 0.05)
             notional = min(notional, max_trade)
@@ -433,6 +532,10 @@ class FullBacktestEngine:
         # ML stats
         if self.use_ml and any(v > 0 for v in self.ml_stats.values()):
             print(f"  [ML STATS] {self.ml_stats}")
+
+        # LLM stats
+        if self.use_llm and any(v > 0 for v in self.llm_stats.values()):
+            print(f"  [LLM STATS] {self.llm_stats}")
 
         return BacktestMetrics(self.trades, self.equity_curve, self.initial_capital)
 

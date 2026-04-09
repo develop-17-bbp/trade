@@ -41,6 +41,7 @@ def main():
     parser.add_argument('--csv', type=str, default=None, help='Export trades to CSV')
     parser.add_argument('--verbose', '-v', action='store_true', help='Print bar-by-bar output')
     parser.add_argument('--ml', action='store_true', help='Enable ML inference (LightGBM, LSTM, Category B risk models)')
+    parser.add_argument('--llm', action='store_true', help='Enable LLM gate (2-pass: Mistral scanner + Llama analyst via Ollama)')
     parser.add_argument('--local', action='store_true', help='Local data only — no API fetch (use cached JSON/parquet)')
     parser.add_argument('--parallel', action='store_true', help='Run BTC + ETH backtests in parallel')
     parser.add_argument('--exchange', type=str, default='binance', help='Data source exchange')
@@ -73,6 +74,7 @@ def main():
     config['initial_capital'] = args.capital
     config['risk_per_trade_pct'] = config.get('risk_per_trade_pct', 2.0)
     config['use_ml'] = args.ml
+    config['use_llm'] = args.llm
     config['asset'] = args.asset  # for per-asset ML model loading
 
     print("=" * 65)
@@ -84,6 +86,7 @@ def main():
     print(f"  Capital: ${args.capital:,.0f}")
     print(f"  Min Score: {config['min_entry_score']}")
     print(f"  ML Inference: {'ON' if args.ml else 'OFF'}")
+    print(f"  LLM Gate: {'ON' if args.llm else 'OFF'}")
     print("=" * 65)
 
     # 1. Fetch data
