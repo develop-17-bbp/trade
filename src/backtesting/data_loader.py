@@ -182,6 +182,8 @@ def fetch_backtest_data(
                         if ts_col is None:
                             ts_col = df.columns[0]
                         # Convert to milliseconds as numpy array (vectorized, handles 900K+ rows)
+                        _raw_first = df[ts_col].iloc[0]
+                        _raw_last = df[ts_col].iloc[-1]
                         if pd.api.types.is_datetime64_any_dtype(df[ts_col]):
                             ts_arr = df[ts_col].values.astype('int64') // 10**6
                         else:
@@ -190,6 +192,9 @@ def fetch_backtest_data(
                                 ts_arr = (ts_arr * 1000).astype(np.int64)
                             else:
                                 ts_arr = ts_arr.astype(np.int64)
+                        print(f"  [PARQUET] ts_col='{ts_col}' raw=[{_raw_first} .. {_raw_last}] "
+                              f"converted=[{ts_arr[0]} .. {ts_arr[-1]}] "
+                              f"query=[{since_ms} .. {until_ms}]", flush=True)
                         # Map OHLCV columns
                         _col_map = {}
                         for target, candidates in [
