@@ -28,6 +28,35 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
+
+def _load_robinhood_paper_state() -> dict:
+    """Load Robinhood paper trading state (separate from dashboard_state)."""
+    path = os.path.join(PROJECT_ROOT, 'logs', 'robinhood_paper_state.json')
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _load_robinhood_paper_trades() -> list:
+    """Load Robinhood paper trade log (JSONL)."""
+    path = os.path.join(PROJECT_ROOT, 'logs', 'robinhood_paper.jsonl')
+    if not os.path.exists(path):
+        return []
+    try:
+        trades = []
+        with open(path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    trades.append(json.loads(line))
+        return trades
+    except Exception:
+        return []
+
 # -- Auth --
 API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 _DEV_MODE = os.environ.get("TRADE_API_DEV_MODE", "").lower() in ("1", "true", "yes")
@@ -162,18 +191,40 @@ async def trade_stats(_=Depends(_require_api_key)):
 
 @app.get("/api/v1/prices", tags=["Market Data"])
 async def live_prices():
-    """Live BTC/ETH prices from dashboard state (no auth required for ticker)."""
-    state = DashboardState().get_full_state()
-    assets = state.get("active_assets", {})
+    """Live BTC/ETH prices — tries Robinhood paper positions first, then dashboard state."""
     prices = {}
-    for asset_name, asset_data in assets.items():
-        prices[asset_name] = {
-            "price": asset_data.get("price", asset_data.get("last_price", 0)),
-            "change_pct": asset_data.get("change_pct", 0),
-            "bid": asset_data.get("bid", 0),
-            "ask": asset_data.get("ask", 0),
-            "spread_pct": asset_data.get("spread_pct", 0),
-        }
+
+    # Try Robinhood paper state (has real bid/ask from Robinhood API)
+    rh = _load_robinhood_paper_state()
+    for tid, pos_data in rh.get("positions", {}).items():
+        if isinstance(pos_data, dict):
+            asset = pos_data.get("asset", tid.split("_")[0] if "_" in tid else tid)
+            if asset not in prices:
+                prices[asset] = {
+                    "price": pos_data.get("current_price", pos_data.get("entry_price", 0)),
+                    "change_pct": pos_data.get("current_pnl_pct", 0),
+                    "bid": pos_data.get("entry_bid", 0),
+                    "ask": pos_data.get("entry_ask", 0),
+                    "spread_pct": pos_data.get("entry_spread_pct", 0),
+                }
+
+    # Fall back to dashboard state active_assets
+    state = DashboardState().get_full_state()
+    for asset_name, asset_data in state.get("active_assets", {}).items():
+        if asset_name not in prices:
+            prices[asset_name] = {
+                "price": asset_data.get("price", asset_data.get("last_price", 0)),
+                "change_pct": asset_data.get("change_pct", 0),
+                "bid": asset_data.get("bid", 0),
+                "ask": asset_data.get("ask", 0),
+                "spread_pct": asset_data.get("spread_pct", 0),
+            }
+
+    # Ensure BTC and ETH always appear
+    for asset in ["BTC", "ETH"]:
+        if asset not in prices:
+            prices[asset] = {"price": 0, "change_pct": 0, "bid": 0, "ask": 0, "spread_pct": 0}
+
     return prices
 
 # ─────────────────────────────────────────
@@ -182,28 +233,68 @@ async def live_prices():
 
 @app.get("/api/v1/dashboard", tags=["Dashboard"])
 async def dashboard_aggregate(_=Depends(_require_api_key)):
-    """Single aggregated endpoint for the React dashboard — reduces API calls."""
+    """Single aggregated endpoint for the React dashboard.
+    Merges Robinhood paper state as PRIMARY source, falls back to dashboard_state."""
     state = DashboardState().get_full_state()
-    portfolio = state.get("portfolio", {})
-    trades = state.get("trade_history", [])
-    closed = [t for t in trades if t.get("status") == "CLOSED"]
-    wins = [t for t in closed if t.get("pnl", 0) > 0]
-    losses = [t for t in closed if t.get("pnl", 0) < 0]
-    win_pnl = sum(t.get("pnl", 0) for t in wins)
-    loss_pnl = abs(sum(t.get("pnl", 0) for t in losses))
+    rh = _load_robinhood_paper_state()
+    rh_trades = _load_robinhood_paper_trades()
     overlay = state.get("agent_overlay", {})
     risk = state.get("risk_metrics", {})
 
-    # Transform positions from dict to array
-    pos_dict = state.get("open_positions", {})
-    positions_list = []
-    if isinstance(pos_dict, dict):
-        for asset_name, pos_data in pos_dict.items():
-            if isinstance(pos_data, dict):
-                pos_data["asset"] = asset_name
-                positions_list.append(pos_data)
+    # ── ROBINHOOD PAPER as PRIMARY data source ──
+    rh_equity = rh.get("equity", 0)
+    rh_initial = rh.get("initial_capital", 0)
+    rh_peak = rh.get("peak_equity", rh_equity)
+    rh_stats = rh.get("stats", {})
+    rh_pnl = rh_stats.get("total_pnl_usd", 0)
+    rh_wins = rh_stats.get("wins", 0)
+    rh_losses = rh_stats.get("losses", 0)
+    rh_total = rh_wins + rh_losses
 
-    # Transform agent votes to array
+    # Robinhood positions (from paper state)
+    positions_list = []
+    for tid, pos_data in rh.get("positions", {}).items():
+        if isinstance(pos_data, dict):
+            positions_list.append({
+                "asset": pos_data.get("asset", tid.split("_")[0] if "_" in tid else tid),
+                "direction": pos_data.get("direction", "LONG"),
+                "entry_price": pos_data.get("entry_price", 0),
+                "current_price": pos_data.get("current_price", 0),
+                "quantity": pos_data.get("quantity", 0),
+                "unrealized_pnl": pos_data.get("current_pnl_usd", 0),
+                "unrealized_pnl_pct": pos_data.get("current_pnl_pct", 0),
+                "stop_loss": pos_data.get("sl_price", 0),
+                "entry_time": pos_data.get("entry_time", ""),
+                "confidence": pos_data.get("llm_confidence", 0),
+                "score": pos_data.get("score", 0),
+                "trade_timeframe": "4h",
+            })
+
+    # Robinhood trades (from JSONL log)
+    trade_list = []
+    for t in rh_trades:
+        trade_list.append({
+            "asset": t.get("asset", ""),
+            "direction": t.get("direction", ""),
+            "status": "CLOSED" if t.get("event") == "EXIT" else "OPEN",
+            "event": t.get("event", ""),
+            "entry_price": t.get("fill_price", t.get("entry_price", 0)),
+            "exit_price": t.get("exit_price", 0),
+            "pnl": t.get("pnl_usd", 0),
+            "pnl_pct": t.get("pnl_pct", 0),
+            "timestamp": t.get("timestamp", ""),
+            "reason": t.get("reason", t.get("reasoning", "")[:100] if t.get("reasoning") else ""),
+            "score": t.get("score", 0),
+            "spread_pct": t.get("spread_pct", 0),
+            "llm_confidence": t.get("llm_confidence", 0),
+            "trade_timeframe": "4h",
+        })
+
+    # Use Robinhood equity curve if available, else fall back to dashboard state
+    portfolio_data = state.get("portfolio", {})
+    equity_curve = portfolio_data.get("equity_curve", [])[-500:]
+
+    # Agent votes to array
     agent_votes = overlay.get("agent_votes", {})
     agent_weights = overlay.get("agent_weights", {})
     agents_list = []
@@ -220,23 +311,30 @@ async def dashboard_aggregate(_=Depends(_require_api_key)):
 
     return {
         "portfolio": {
-            "equity": portfolio.get("current_total_value", portfolio.get("pnl", 0) + 100000),
-            "today_pnl": portfolio.get("today_pnl", 0),
-            "total_pnl": portfolio.get("pnl", 0),
-            "total_return_pct": portfolio.get("return", 0),
-            "equity_curve": portfolio.get("equity_curve", [])[-500:],
-            "sod_balance": portfolio.get("sod_balance", 0),
+            "equity": rh_equity if rh_equity > 0 else portfolio_data.get("current_total_value", 0),
+            "initial_capital": rh_initial,
+            "today_pnl": rh_pnl,
+            "total_pnl": rh_pnl,
+            "total_return_pct": round((rh_pnl / rh_initial * 100), 2) if rh_initial > 0 else 0,
+            "equity_curve": equity_curve,
+            "peak_equity": rh_peak,
+            "sod_balance": rh_initial,
         },
+        "exchange": "robinhood",
+        "exchange_status": "PAPER TRADING",
         "positions": positions_list,
-        "trades": trades[-50:],
+        "trades": trade_list[-50:],
         "trade_stats": {
-            "total": len(trades),
-            "wins": len(wins),
-            "losses": len(losses),
-            "win_rate": round(len(wins) / len(closed), 4) if closed else 0,
-            "profit_factor": round(win_pnl / loss_pnl, 4) if loss_pnl > 0 else 0,
-            "avg_win": round(win_pnl / len(wins), 2) if wins else 0,
-            "avg_loss": round(loss_pnl / len(losses), 2) if losses else 0,
+            "total": rh_total,
+            "wins": rh_wins,
+            "losses": rh_losses,
+            "win_rate": round(rh_wins / rh_total, 4) if rh_total > 0 else 0,
+            "profit_factor": round(rh_stats.get("largest_win", 0) / abs(rh_stats.get("largest_loss", -1)), 2) if rh_stats.get("largest_loss", 0) != 0 else 0,
+            "avg_win": round(rh_stats.get("largest_win", 0), 2),
+            "avg_loss": round(abs(rh_stats.get("largest_loss", 0)), 2),
+            "largest_win": rh_stats.get("largest_win", 0),
+            "largest_loss": rh_stats.get("largest_loss", 0),
+            "signals_seen": rh_stats.get("total_signals", 0),
         },
         "agents": {
             "list": agents_list,
