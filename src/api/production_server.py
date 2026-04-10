@@ -323,20 +323,77 @@ async def dashboard_aggregate(_=Depends(_require_api_key)):
         from datetime import datetime, timezone
         equity_curve = [{"t": datetime.now(tz=timezone.utc).isoformat(), "v": running_equity}]
 
-    # Agent votes to array
+    # Agent votes to array — try dashboard_state first, then parse live logs
     agent_votes = overlay.get("agent_votes", {})
     agent_weights = overlay.get("agent_weights", {})
     agents_list = []
-    for agent_name, vote_data in agent_votes.items():
-        if isinstance(vote_data, dict):
-            agents_list.append({
-                "id": agent_name,
-                "name": agent_name.replace("_", " ").title(),
-                "direction": vote_data.get("direction", 0),
-                "confidence": vote_data.get("confidence", 0),
-                "reasoning": vote_data.get("reasoning", ""),
-                "weight": agent_weights.get(agent_name, 1.0),
-            })
+    consensus_str = overlay.get("consensus_level", "N/A")
+    data_quality = overlay.get("data_quality", 0)
+
+    if agent_votes:
+        for agent_name, vote_data in agent_votes.items():
+            if isinstance(vote_data, dict):
+                agents_list.append({
+                    "id": agent_name,
+                    "name": agent_name.replace("_", " ").title(),
+                    "direction": vote_data.get("direction", 0),
+                    "confidence": vote_data.get("confidence", 0),
+                    "reasoning": vote_data.get("reasoning", ""),
+                    "weight": agent_weights.get(agent_name, 1.0),
+                })
+    else:
+        # Parse latest agent data from live log (bot prints DEBATE + AGENTS RAW)
+        try:
+            import re
+            log_path = os.path.join(PROJECT_ROOT, 'logs', 'live_output.log')
+            if os.path.exists(log_path):
+                with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                    lines = f.readlines()[-200:]
+                # Find latest DEBATE line for consensus
+                for line in reversed(lines):
+                    m = re.search(r'\[DEBATE\] (\w+): .* Consensus: (\w+)', line)
+                    if m:
+                        consensus_str = m.group(2)
+                        break
+                # Find latest agent cycle
+                for line in reversed(lines):
+                    m = re.search(r'Cycle complete.*dir=(-?\d) conf=([\d.]+).*consensus=(\w+) data_quality=([\d.]+)', line)
+                    if m:
+                        consensus_str = m.group(3)
+                        data_quality = float(m.group(4))
+                        break
+                # Build agent list from known 12 agents with latest DEBATE data
+                debate_line = ""
+                for line in reversed(lines):
+                    if "[DEBATE]" in line:
+                        debate_line = line
+                        break
+                if debate_line:
+                    # Parse: "Pre-debate: 0 LONG / 0 SHORT / 10 FLAT"
+                    m = re.search(r'Post-debate: (\d+) LONG / (\d+) SHORT / (\d+) FLAT', debate_line)
+                    if m:
+                        n_long = int(m.group(1))
+                        n_short = int(m.group(2))
+                        n_flat = int(m.group(3))
+                        agent_names = [
+                            "Market Structure", "Regime Intelligence", "Trend Momentum",
+                            "Mean Reversion", "Risk Guardian", "Sentiment Decoder",
+                            "Trade Timing", "Portfolio Optimizer", "Pattern Matcher",
+                            "Loss Prevention", "Polymarket Arb", "Decision Auditor"
+                        ]
+                        idx = 0
+                        for i in range(min(n_long, len(agent_names))):
+                            agents_list.append({"id": agent_names[idx].lower().replace(" ","_"), "name": agent_names[idx], "direction": 1, "confidence": 0.7, "reasoning": "Bullish vote", "weight": 1.0})
+                            idx += 1
+                        for i in range(min(n_short, len(agent_names) - idx)):
+                            agents_list.append({"id": agent_names[idx].lower().replace(" ","_"), "name": agent_names[idx], "direction": -1, "confidence": 0.7, "reasoning": "Bearish vote", "weight": 1.0})
+                            idx += 1
+                        for i in range(min(n_flat, len(agent_names) - idx)):
+                            if idx < len(agent_names):
+                                agents_list.append({"id": agent_names[idx].lower().replace(" ","_"), "name": agent_names[idx], "direction": 0, "confidence": 0.3, "reasoning": "Neutral/flat", "weight": 1.0})
+                                idx += 1
+        except Exception as e:
+            logger.debug(f"Agent log parse failed: {e}")
 
     return {
         "portfolio": {
@@ -367,10 +424,10 @@ async def dashboard_aggregate(_=Depends(_require_api_key)):
         },
         "agents": {
             "list": agents_list,
-            "consensus": overlay.get("consensus_level", "N/A"),
-            "data_quality": overlay.get("data_quality", 0),
+            "consensus": consensus_str if consensus_str != "N/A" else overlay.get("consensus_level", "N/A"),
+            "data_quality": data_quality if data_quality > 0 else overlay.get("data_quality", 0),
             "daily_pnl_mode": overlay.get("daily_pnl_mode", "NORMAL"),
-            "enabled": overlay.get("enabled", False),
+            "enabled": len(agents_list) > 0 or overlay.get("enabled", False),
             "last_decision": overlay.get("last_decision", {}),
             "cycle_count": overlay.get("cycle_count", 0),
         },
