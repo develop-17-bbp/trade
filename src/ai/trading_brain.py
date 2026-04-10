@@ -794,8 +794,10 @@ class MultiModelConsensus:
     Pass 2: Llama decides using patterns + risk analysis (should we TRADE?)
     """
 
-    MODEL_SCANNER = "mistral:latest"    # Fast, good at structured extraction
-    MODEL_ANALYST = "llama3.2:latest"   # Good at reasoning and risk assessment
+    # Fine-tuned models with trading-specific system prompts, temperature, and output format
+    # Deployed via Ollama custom Modelfiles on GPU server
+    MODEL_SCANNER = "nexus-scanner"     # Fine-tuned Mistral: pattern recognition + multi-strategy awareness
+    MODEL_ANALYST = "nexus-analyst"     # Fine-tuned Llama3.2: strategy allocator + risk analyst + spread-aware
 
     def __init__(self, ollama_base_url: str = "http://localhost:11434"):
         self.ollama_base_url = ollama_base_url.rstrip("/")

@@ -51,7 +51,7 @@ risk:
 # llm_provider: 'auto' = Delta→Claude, Bybit→Ollama | 'claude' | 'ollama'
 ai:
   reasoning_provider: "auto"
-  reasoning_model: "mistral:latest"
+  reasoning_model: "nexus-scanner"         # Fine-tuned Mistral for pattern scanning (was mistral:latest)
   ollama_base_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
   llm_provider: "auto"            # auto: Delta=Claude, Bybit=Ollama
   claude_model: "claude-haiku-4-5" # Cost-effective for trade decisions (~$0.001/call)
