@@ -80,6 +80,18 @@ monitor:
   auto_fix: true                  # Apply safe fixes (null guards, type casts, defaults)
   max_fixes_per_hour: 5           # Rate limit auto-fixes
 
+# ── Multi-Strategy Engine ──
+# Replaces EMA-only gatekeeper with 4 parallel strategies
+# Weights shift dynamically based on HMM regime + Hurst exponent
+multi_strategy:
+  enabled: true
+  # Custom weight overrides (optional — regime auto-adjusts if not set)
+  # weights:
+  #   ema_trend: 0.30
+  #   mean_reversion: 0.30
+  #   volatility_breakout: 0.20
+  #   trend_following: 0.20
+
 # ── Sniper Mode (Patient, High-Conviction Trading) ──
 # Waits for multi-confluence perfect setups, compounds profits into bigger positions
 # Designed for Robinhood's 1.67% spread: only trades when expected move >> spread cost

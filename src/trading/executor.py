@@ -169,6 +169,13 @@ try:
 except Exception:
     MT5_AVAILABLE = False
 
+# Multi-Strategy Engine — regime-aware 4-strategy consensus (replaces EMA-only gatekeeper)
+try:
+    from src.trading.multi_strategy_engine import MultiStrategyEngine
+    MULTI_STRATEGY_AVAILABLE = True
+except Exception:
+    MULTI_STRATEGY_AVAILABLE = False
+
 # LLM Router — universal multi-provider LLM abstraction (Ollama, Claude, Gemini, etc.)
 try:
     from src.ai.llm_provider import LLMRouter, LLMConfig
@@ -699,6 +706,16 @@ class TradingExecutor:
         self.sniper_principal: float = self.initial_capital  # Protected base capital
         if self.sniper_enabled:
             print(f"  [SNIPER] MODE ACTIVE — min confluence: {self.sniper_min_confluence} | min score: {self.sniper_min_score} | min move: {self.sniper_min_expected_move_pct}%")
+
+        # ── MULTI-STRATEGY ENGINE (replaces EMA-only gatekeeper) ──
+        self._multi_engine = None
+        if MULTI_STRATEGY_AVAILABLE:
+            try:
+                self._multi_engine = MultiStrategyEngine(config)
+            except Exception as e:
+                logger.warning(f"[MULTI-STRATEGY] Init failed: {e}")
+        if not self._multi_engine:
+            print(f"  [MULTI-STRATEGY] Unavailable — EMA-only mode")
             print(f"  [SNIPER] Compound {self.sniper_compound_pct}% of profits | Protect principal: {self.sniper_protect_principal}")
 
         # ── Per-timeframe performance tracking (LLM learns which TFs profit) ──
@@ -2484,8 +2501,37 @@ class TradingExecutor:
                 pass
 
         # ── Determine primary signal (5m for backward compat + position mgmt) ──
-        signal = tf_signals.get('5m', {}).get('signal', 'NEUTRAL')
+        ema_signal_raw = tf_signals.get('5m', {}).get('signal', 'NEUTRAL')
         is_reversal_signal = False
+
+        # ── MULTI-STRATEGY CONSENSUS (replaces EMA-only gatekeeper) ──
+        _ema_int = 1 if ema_signal_raw == 'BUY' else (-1 if ema_signal_raw == 'SELL' else 0)
+        _multi_details = {}
+        if self._multi_engine:
+            try:
+                _hurst_val = getattr(self, '_last_hurst', {}).get(asset, 0.5)
+                _hmm_reg = getattr(self, '_last_hmm_regime', {}).get(asset, 'SIDEWAYS')
+                _vol_reg = getattr(self, '_last_vol_regime', {}).get(asset, 'NORMAL')
+                _multi_signals = self._multi_engine.generate_all_signals(
+                    closes, highs, lows, volumes, ema_signal=_ema_int,
+                )
+                _multi_weights = self._multi_engine.compute_regime_weights(
+                    hurst=_hurst_val, hmm_regime=_hmm_reg, volatility_regime=_vol_reg,
+                )
+                signal, _meta_conf, _multi_details = self._multi_engine.combine(
+                    _multi_signals, _multi_weights,
+                )
+                # Format for log
+                _strat_summary = " | ".join(
+                    f"{n}={d['signal_word']}" for n, d in _multi_details.items() if not n.startswith('_')
+                )
+                _consensus = _multi_details.get('_agreement', '?')
+                print(f"  [{self._ex_tag}:{asset}] MULTI-STRATEGY: {_strat_summary} | consensus={_consensus} score={_multi_details.get('_consensus_score', 0):.3f}")
+            except Exception as e:
+                signal = ema_signal_raw
+                logger.debug(f"[MULTI-STRATEGY] {asset} failed, EMA fallback: {e}")
+        else:
+            signal = ema_signal_raw
 
         # Print status with active signals across all timeframes
         active_tfs_str = ", ".join(f"{tf}={s['signal']}" for tf, s in active_tf_signals.items()) or "none"
