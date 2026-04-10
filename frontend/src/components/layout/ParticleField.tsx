@@ -2,7 +2,7 @@ import { useRef, useMemo } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
-const PARTICLE_COUNT = 800
+const PARTICLE_COUNT = 1200
 
 function Particles() {
   const meshRef = useRef<THREE.Points>(null)
@@ -12,23 +12,27 @@ function Particles() {
     const vel = new Float32Array(PARTICLE_COUNT * 3)
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3
-      pos[i3] = (Math.random() - 0.5) * 40
-      pos[i3 + 1] = (Math.random() - 0.5) * 40
-      pos[i3 + 2] = (Math.random() - 0.5) * 20
-      vel[i3] = (Math.random() - 0.5) * 0.005
-      vel[i3 + 1] = (Math.random() - 0.5) * 0.005
-      vel[i3 + 2] = (Math.random() - 0.5) * 0.002
+      pos[i3] = (Math.random() - 0.5) * 50
+      pos[i3 + 1] = (Math.random() - 0.5) * 50
+      pos[i3 + 2] = (Math.random() - 0.5) * 25
+      // Slow upward drift with subtle horizontal sway
+      vel[i3] = (Math.random() - 0.5) * 0.003
+      vel[i3 + 1] = Math.random() * 0.008 + 0.002  // upward
+      vel[i3 + 2] = (Math.random() - 0.5) * 0.001
     }
     return [pos, vel]
   }, [])
 
   const colors = useMemo(() => {
     const col = new Float32Array(PARTICLE_COUNT * 3)
+    // Cyberpunk neon palette: cyan, magenta, violet, hot pink
     const palette = [
-      [0, 1, 0.53],    // green  #00ff88
-      [0, 0.67, 1],    // blue   #00aaff
-      [0.67, 0.33, 1], // purple #aa55ff
-      [0, 1, 0.8],     // cyan   #00ffcc
+      [0, 1, 0.94],     // cyan    #00fff0
+      [1, 0, 0.67],     // magenta #ff00aa
+      [0.75, 0.27, 1],  // violet  #bf45ff
+      [0, 0.8, 1],      // blue    #00ccff
+      [0.53, 0.27, 1],  // purple  #8844ff
+      [1, 0.13, 0.4],   // hot pink #ff2266
     ]
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3
@@ -40,24 +44,25 @@ function Particles() {
     return col
   }, [])
 
-  useFrame(() => {
+  useFrame((state) => {
     if (!meshRef.current) return
     const posAttr = meshRef.current.geometry.attributes.position as THREE.BufferAttribute
     const posArray = posAttr.array as Float32Array
+    const t = state.clock.getElapsedTime()
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3
-      posArray[i3] += velocities[i3]
+      // Add gentle sine wave sway
+      posArray[i3] += velocities[i3] + Math.sin(t * 0.3 + i * 0.01) * 0.002
       posArray[i3 + 1] += velocities[i3 + 1]
       posArray[i3 + 2] += velocities[i3 + 2]
 
-      // Wrap around bounds
-      if (posArray[i3] > 20) posArray[i3] = -20
-      if (posArray[i3] < -20) posArray[i3] = 20
-      if (posArray[i3 + 1] > 20) posArray[i3 + 1] = -20
-      if (posArray[i3 + 1] < -20) posArray[i3 + 1] = 20
-      if (posArray[i3 + 2] > 10) posArray[i3 + 2] = -10
-      if (posArray[i3 + 2] < -10) posArray[i3 + 2] = 10
+      // Wrap
+      if (posArray[i3] > 25) posArray[i3] = -25
+      if (posArray[i3] < -25) posArray[i3] = 25
+      if (posArray[i3 + 1] > 25) posArray[i3 + 1] = -25
+      if (posArray[i3 + 2] > 12) posArray[i3 + 2] = -12
+      if (posArray[i3 + 2] < -12) posArray[i3 + 2] = 12
     }
     posAttr.needsUpdate = true
   })
@@ -65,24 +70,14 @@ function Particles() {
   return (
     <points ref={meshRef}>
       <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          count={PARTICLE_COUNT}
-          array={positions}
-          itemSize={3}
-        />
-        <bufferAttribute
-          attach="attributes-color"
-          count={PARTICLE_COUNT}
-          array={colors}
-          itemSize={3}
-        />
+        <bufferAttribute attach="attributes-position" count={PARTICLE_COUNT} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-color" count={PARTICLE_COUNT} array={colors} itemSize={3} />
       </bufferGeometry>
       <pointsMaterial
-        size={0.06}
+        size={0.07}
         vertexColors
         transparent
-        opacity={0.4}
+        opacity={0.5}
         sizeAttenuation
         depthWrite={false}
         blending={THREE.AdditiveBlending}

@@ -28,18 +28,28 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="fixed top-0 left-0 h-screen z-30 flex flex-col transition-all duration-300 ease-in-out bg-bg-secondary/80 backdrop-blur-xl border-r border-border-glass"
-      style={{ width: expanded ? 240 : 70 }}
+      className="fixed top-0 left-0 h-screen z-30 flex flex-col transition-all duration-300 ease-in-out border-r"
+      style={{
+        width: expanded ? 240 : 70,
+        background: 'linear-gradient(180deg, rgba(10,8,25,0.95), rgba(5,5,15,0.98))',
+        borderColor: 'rgba(100, 80, 255, 0.12)',
+        backdropFilter: 'blur(24px)',
+      }}
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
     >
       {/* Brand */}
-      <div className="flex items-center h-16 px-4 border-b border-border-glass">
-        <div className="w-[38px] h-[38px] rounded-lg bg-gradient-to-br from-accent-green to-accent-blue flex items-center justify-center flex-shrink-0">
-          <span className="text-bg-primary font-bold text-sm">N</span>
+      <div className="flex items-center h-16 px-4 border-b border-[rgba(100,80,255,0.12)]">
+        <div className="w-[38px] h-[38px] rounded-lg flex items-center justify-center flex-shrink-0 relative"
+          style={{
+            background: 'linear-gradient(135deg, #00fff0, #bf5fff)',
+            boxShadow: '0 0 15px rgba(0,255,240,0.3), 0 0 30px rgba(191,95,255,0.15)',
+          }}
+        >
+          <span className="text-[#05050f] font-black text-sm">N</span>
         </div>
         <span
-          className="ml-3 font-semibold text-text-primary text-sm tracking-wider whitespace-nowrap overflow-hidden transition-opacity duration-200"
+          className="ml-3 font-bold text-sm tracking-[0.2em] whitespace-nowrap overflow-hidden transition-opacity duration-200 gradient-text"
           style={{ opacity: expanded ? 1 : 0 }}
         >
           NEXUS
@@ -56,16 +66,25 @@ export default function Sidebar() {
             className={({ isActive }) =>
               `relative flex items-center h-12 px-4 mx-2 rounded-lg transition-all duration-200 group ${
                 isActive
-                  ? 'bg-accent-blue/10 text-accent-blue'
-                  : 'text-text-muted hover:text-text-primary hover:bg-white/[0.03]'
+                  ? 'text-[#00fff0]'
+                  : 'text-[#5a6080] hover:text-[#e0e6ff] hover:bg-[rgba(0,255,240,0.03)]'
               }`
             }
+            style={({ isActive }) => isActive ? {
+              background: 'linear-gradient(90deg, rgba(0,255,240,0.08), rgba(191,95,255,0.04))',
+              boxShadow: 'inset 0 0 20px rgba(0,255,240,0.03)',
+            } : {}}
           >
             {({ isActive }) => (
               <>
-                {/* Active indicator bar */}
                 {isActive && (
-                  <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-accent-blue" />
+                  <div
+                    className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full"
+                    style={{
+                      background: 'linear-gradient(180deg, #00fff0, #bf5fff)',
+                      boxShadow: '0 0 8px rgba(0,255,240,0.5)',
+                    }}
+                  />
                 )}
                 <Icon size={20} className="flex-shrink-0" />
                 <span
@@ -80,11 +99,11 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Bottom: system status + brand */}
-      <div className="p-4 border-t border-border-glass flex items-center gap-3">
+      {/* Bottom */}
+      <div className="p-4 border-t border-[rgba(100,80,255,0.12)] flex items-center gap-3">
         <StatusDot status="online" size={8} />
         <span
-          className="text-xs text-text-muted tracking-widest uppercase whitespace-nowrap overflow-hidden transition-opacity duration-200"
+          className="text-[10px] text-[#5a6080] tracking-[0.3em] uppercase whitespace-nowrap overflow-hidden transition-opacity duration-200 font-mono"
           style={{ opacity: expanded ? 1 : 0 }}
         >
           NEXUS v1.0
