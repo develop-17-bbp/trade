@@ -12850,5 +12850,86 @@
       "flat_acc": 0.0,
       "long_acc": 0.4576112412177986
     }
+  },
+  {
+    "timestamp": "2026-04-10T16:31:41.715191",
+    "asset": "BTC",
+    "bars_used": 1000,
+    "new_accuracy": 0.4,
+    "new_high_conf_accuracy": 0.43548387096774194,
+    "old_accuracy": 0.4105263157894737,
+    "improvement": -0.010526315789473661,
+    "best_params": {
+      "num_leaves": 94,
+      "learning_rate": 0.03824395758276405,
+      "max_depth": 12,
+      "min_child_samples": 82,
+      "subsample": 0.9227832884992411,
+      "colsample_bytree": 0.7711982732214627,
+      "reg_alpha": 0.09111462852037142,
+      "reg_lambda": 0.0032643350442251268,
+      "feature_fraction": 0.7538711325080436,
+      "bagging_fraction": 0.6712747779698606,
+      "bagging_freq": 2
+    },
+    "per_class": {
+      "short_acc": 0.5,
+      "flat_acc": 0.03571428571428571,
+      "long_acc": 0.5897435897435898
+    }
+  },
+  {
+    "timestamp": "2026-04-10T16:31:51.821697",
+    "asset": "ETH",
+    "bars_used": 1000,
+    "new_accuracy": 0.45263157894736844,
+    "new_high_conf_accuracy": 0.4807692307692308,
+    "old_accuracy": 0.5052631578947369,
+    "improvement": -0.05263157894736842,
+    "best_params": {
+      "num_leaves": 99,
+      "learning_rate": 0.029067548473112784,
+      "max_depth": 14,
+      "min_child_samples": 57,
+      "subsample": 0.68080048820956,
+      "colsample_bytree": 0.5654571369383135,
+      "reg_alpha": 0.0017198138958840693,
+      "reg_lambda": 0.04247315981258269,
+      "feature_fraction": 0.7437132468109419,
+      "bagging_fraction": 0.5556948319701063,
+      "bagging_freq": 4
+    },
+    "per_class": {
+      "short_acc": 0.4375,
+      "flat_acc": 0.0,
+      "long_acc": 0.8285714285714286
+    }
+  },
+  {
+    "timestamp": "2026-04-10T16:32:00.328851",
+    "asset": "AAVE",
+    "bars_used": 1000,
+    "new_accuracy": 0.30526315789473685,
+    "new_high_conf_accuracy": 0.3076923076923077,
+    "old_accuracy": 0.29473684210526313,
+    "improvement": 0.010526315789473717,
+    "best_params": {
+      "num_leaves": 67,
+      "learning_rate": 0.19625739301338163,
+      "max_depth": 7,
+      "min_child_samples": 7,
+      "subsample": 0.7287231849835805,
+      "colsample_bytree": 0.8890853904190137,
+      "reg_alpha": 0.03577726073331829,
+      "reg_lambda": 0.0019559601351172677,
+      "feature_fraction": 0.6483174499123588,
+      "bagging_fraction": 0.7234477078178783,
+      "bagging_freq": 5
+    },
+    "per_class": {
+      "short_acc": 0.043478260869565216,
+      "flat_acc": 0.0,
+      "long_acc": 1.0
+    }
   }
 ]
