@@ -162,7 +162,7 @@ export default function TopBar() {
         </div>
 
         {/* Exchange */}
-        <span className="text-xs text-text-muted font-medium">Binance</span>
+        <span className="text-xs text-text-muted font-medium">Robinhood</span>
 
         {/* Time */}
         <span className="text-xs text-text-muted tabular-nums font-mono">{time}</span>

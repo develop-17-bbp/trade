@@ -220,6 +220,25 @@ async def live_prices():
                 "spread_pct": asset_data.get("spread_pct", 0),
             }
 
+    # If prices still zero, try parsing latest live_output.log for price data
+    if all(v.get("price", 0) == 0 for v in prices.values()):
+        try:
+            import re
+            log_path = os.path.join(PROJECT_ROOT, 'logs', 'live_output.log')
+            if os.path.exists(log_path):
+                with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                    lines = f.readlines()[-50:]  # Last 50 lines
+                for line in reversed(lines):
+                    # Parse: [ROBINHOOD:BTC] $73,064.80
+                    m = re.search(r'\[ROBINHOOD:(\w+)\]\s*\$([\d,]+\.?\d*)', line)
+                    if m:
+                        asset = m.group(1)
+                        price = float(m.group(2).replace(',', ''))
+                        if asset not in prices or prices[asset].get("price", 0) == 0:
+                            prices[asset] = {"price": price, "change_pct": 0, "bid": 0, "ask": 0, "spread_pct": 1.67}
+        except Exception:
+            pass
+
     # Ensure BTC and ETH always appear
     for asset in ["BTC", "ETH"]:
         if asset not in prices:
@@ -290,9 +309,19 @@ async def dashboard_aggregate(_=Depends(_require_api_key)):
             "trade_timeframe": "4h",
         })
 
-    # Use Robinhood equity curve if available, else fall back to dashboard state
-    portfolio_data = state.get("portfolio", {})
-    equity_curve = portfolio_data.get("equity_curve", [])[-500:]
+    # Build equity curve from Robinhood trade log (shows actual paper P&L over time)
+    equity_curve = []
+    running_equity = rh_initial if rh_initial > 0 else 16445.79
+    for t in rh_trades:
+        if t.get("event") == "EXIT":
+            running_equity += t.get("pnl_usd", 0)
+            equity_curve.append({"t": t.get("timestamp", ""), "v": round(running_equity, 2)})
+        elif t.get("event") == "ENTRY":
+            equity_curve.append({"t": t.get("timestamp", ""), "v": round(running_equity, 2)})
+    # If no trades yet, show flat line at initial capital
+    if not equity_curve:
+        from datetime import datetime, timezone
+        equity_curve = [{"t": datetime.now(tz=timezone.utc).isoformat(), "v": running_equity}]
 
     # Agent votes to array
     agent_votes = overlay.get("agent_votes", {})
