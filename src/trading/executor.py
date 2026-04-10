@@ -127,6 +127,13 @@ try:
 except Exception:
     CYCLE_AVAILABLE = False
 
+# Cointegration Engine — BTC-ETH pairs trading spread signal
+try:
+    from src.models.cointegration import CointegrationEngine
+    COINTEGRATION_AVAILABLE = True
+except Exception:
+    COINTEGRATION_AVAILABLE = False
+
 # LightGBM 3-Class Classifier (pre-filter gate: blocks L1-death trades before LLM call)
 try:
     from src.models.lightgbm_classifier import LightGBMClassifier
@@ -717,6 +724,16 @@ class TradingExecutor:
         if not self._multi_engine:
             print(f"  [MULTI-STRATEGY] Unavailable — EMA-only mode")
             print(f"  [SNIPER] Compound {self.sniper_compound_pct}% of profits | Protect principal: {self.sniper_protect_principal}")
+
+        # ── Cointegration Engine — BTC-ETH pairs spread trading signal ──
+        self._coint_engine = None
+        if COINTEGRATION_AVAILABLE:
+            try:
+                self._coint_engine = CointegrationEngine(entry_z=2.0, exit_z=0.5, lookback=200)
+                print(f"  [PAIRS] Cointegration engine ACTIVE — BTC-ETH spread signal enabled")
+            except Exception as e:
+                logger.warning(f"[PAIRS] CointegrationEngine init failed: {e}")
+        self._last_pairs_signal: Dict[str, Any] = {}
 
         # ── Per-timeframe performance tracking (LLM learns which TFs profit) ──
         # Configurable via adaptive.signal_timeframes (default: all TFs)
@@ -2225,6 +2242,104 @@ class TradingExecutor:
         print("  " + "=" * 96)
 
     # ------------------------------------------------------------------
+    # BTC-ETH Pairs Trading Signal (cointegration spread z-score)
+    # ------------------------------------------------------------------
+    def _check_pairs_signal(self) -> Dict[str, Any]:
+        """
+        Check BTC-ETH cointegration and return spread z-score signal.
+
+        Uses cached OHLCV data from the timeframe cache to avoid extra API calls.
+        Returns informational signal for LLM context (not a direct trade trigger).
+
+        Returns:
+            {signal: str, z_score: float, cointegrated: bool, hedge_ratio: float, ...}
+        """
+        result = {
+            'signal': 'NONE',
+            'z_score': 0.0,
+            'cointegrated': False,
+            'context_line': '',
+        }
+
+        if not self._coint_engine:
+            return result
+
+        try:
+            # Get BTC and ETH close prices from cached 4h data (preferred) or 1h
+            btc_closes = None
+            eth_closes = None
+
+            for tf in ['4h', '1h', '5m']:
+                btc_cache = self._tf_cache.get(f"BTC_{tf}")
+                eth_cache = self._tf_cache.get(f"ETH_{tf}")
+
+                if btc_cache and eth_cache:
+                    btc_ohlcv = btc_cache.get('ohlcv', {})
+                    eth_ohlcv = eth_cache.get('ohlcv', {})
+                    btc_c = btc_ohlcv.get('closes', [])
+                    eth_c = eth_ohlcv.get('closes', [])
+
+                    if len(btc_c) >= 50 and len(eth_c) >= 50:
+                        # Align lengths (take last min(len_a, len_b, 100) bars)
+                        n = min(len(btc_c), len(eth_c), 100)
+                        btc_closes = btc_c[-n:]
+                        eth_closes = eth_c[-n:]
+                        break
+
+            if btc_closes is None or eth_closes is None:
+                logger.debug("[PAIRS] Not enough cached BTC/ETH data for cointegration check")
+                return result
+
+            import numpy as np
+            btc_arr = np.array(btc_closes, dtype=float)
+            eth_arr = np.array(eth_closes, dtype=float)
+
+            # Run cointegration test: BTC = A, ETH = B
+            spread_result = self._coint_engine.spread_signal(btc_arr, eth_arr)
+
+            z_score = spread_result.get('spread_z_score', 0.0)
+            cointegrated = spread_result.get('cointegrated', False)
+            hedge_ratio = spread_result.get('hedge_ratio', 0.0)
+            signal_int = spread_result.get('signal', 0)
+            half_life = spread_result.get('spread_half_life', 999.0)
+
+            # Determine human-readable signal
+            if not cointegrated:
+                signal_str = 'NOT_COINTEGRATED'
+                context = f"BTC-ETH NOT cointegrated (p={spread_result.get('adf_pvalue', 1.0):.3f}) -> pairs signal inactive"
+            elif z_score < -2.0:
+                signal_str = 'BUY_BTC_REL_ETH'
+                context = (f"BTC-ETH spread OVERSOLD z={z_score:.2f} (half-life={half_life:.0f} bars, "
+                           f"hedge={hedge_ratio:.3f}) -> BTC undervalued vs ETH, expect BTC outperformance")
+            elif z_score > 2.0:
+                signal_str = 'SELL_BTC_REL_ETH'
+                context = (f"BTC-ETH spread OVERBOUGHT z={z_score:.2f} (half-life={half_life:.0f} bars, "
+                           f"hedge={hedge_ratio:.3f}) -> BTC overvalued vs ETH, expect ETH outperformance")
+            else:
+                signal_str = 'NEUTRAL'
+                context = (f"BTC-ETH spread NEUTRAL z={z_score:.2f} (cointegrated, "
+                           f"half-life={half_life:.0f} bars) -> no pairs signal")
+
+            result = {
+                'signal': signal_str,
+                'z_score': z_score,
+                'cointegrated': cointegrated,
+                'hedge_ratio': hedge_ratio,
+                'half_life': half_life,
+                'adf_pvalue': spread_result.get('adf_pvalue', 1.0),
+                'context_line': context,
+            }
+
+            print(f"  [PAIRS] BTC-ETH: z={z_score:.2f} signal={signal_str}")
+            self._last_pairs_signal = result
+
+        except Exception as e:
+            logger.warning(f"[PAIRS] Cointegration check failed: {e}")
+            # Don't crash — pairs signal is informational only
+
+        return result
+
+    # ------------------------------------------------------------------
     # Per-asset processing
     # ------------------------------------------------------------------
     def _process_asset(self, asset: str):
@@ -2546,6 +2661,14 @@ class TradingExecutor:
         ob_info += "]"
         print(f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} | EMA(5m): ${current_ema:.2f} {ema_direction} | Signals: [{active_tfs_str}] | ATR: ${current_atr:.2f} | {ob_info}")
 
+        # ── BTC-ETH Pairs Trading Signal (informational — feeds LLM context) ──
+        pairs_signal = {}
+        if self._coint_engine and asset in ('BTC', 'ETH'):
+            try:
+                pairs_signal = self._check_pairs_signal()
+            except Exception as e:
+                logger.debug(f"[PAIRS] {asset} pairs check failed: {e}")
+
         # ── Stale position check ──
         if asset in self.positions and asset not in self.failed_close_assets:
             try:
@@ -2581,7 +2704,8 @@ class TradingExecutor:
                                  indicator_context=indicator_context,
                                  tf_signals=tf_signals,
                                  active_tf_signals=active_tf_signals,
-                                 mtf_signal_block=mtf_signal_block)
+                                 mtf_signal_block=mtf_signal_block,
+                                 pairs_signal=pairs_signal)
 
     # ------------------------------------------------------------------
     # Multi-timeframe signal computation
@@ -2792,9 +2916,11 @@ class TradingExecutor:
                         indicator_context: dict = None,
                         tf_signals: dict = None,
                         active_tf_signals: dict = None,
-                        mtf_signal_block: str = ""):
+                        mtf_signal_block: str = "",
+                        pairs_signal: dict = None):
 
         ob_levels = ob_levels or {}
+        pairs_signal = pairs_signal or {}
         indicator_context = indicator_context or {}
         tf_signals = tf_signals or {}
         active_tf_signals = active_tf_signals or {}
@@ -4393,6 +4519,13 @@ class TradingExecutor:
             candle_text = candle_text + chr(10) + regime_context
         if math_agent_context:
             candle_text = candle_text + chr(10) + math_agent_context
+
+        # ── BTC-ETH Pairs Trading Context for LLM (informational) ──
+        if pairs_signal and pairs_signal.get('context_line'):
+            pairs_context = chr(10) + "PAIRS TRADING (BTC-ETH Cointegration):" + chr(10) + "  " + pairs_signal['context_line']
+            if pairs_signal.get('signal') in ('BUY_BTC_REL_ETH', 'SELL_BTC_REL_ETH'):
+                pairs_context += chr(10) + "  -> Use this as ADDITIONAL context for trade direction, not a direct trade signal"
+            candle_text = candle_text + pairs_context
 
         # ── Indicator Suite Context for LLM ──
         if indicator_context:

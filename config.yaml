@@ -136,3 +136,32 @@ robinhood:
 execution:
   entry_type: "limit"
   exit_type: "limit"
+
+# ── Auto Hyperopt (Continuous Parameter Optimization) ──
+# Background Optuna optimizer: periodically backtests param combinations
+# and updates config.yaml when improvement exceeds threshold
+hyperopt:
+  enabled: true
+  interval_hours: 4                  # Run optimization every 4 hours
+  n_trials: 30                       # Optuna trials per cycle
+  metric: "profit_factor"            # Metric to maximize (profit_factor, sharpe, sortino, total_pnl, calmar)
+  min_improvement_pct: 5.0           # Only update config if improvement > 5%
+
+# ── FreqAI Auto-Retrain ──
+# Continuous ML model retraining inspired by Freqtrade's FreqAI module
+freqai:
+  enabled: true
+  retrain_every_trades: 20          # Retrain after N closed trades
+  retrain_every_hours: 4            # Retrain every N hours (whichever triggers first)
+  min_improvement_pct: 1.0          # New model must beat old by 1%+ to deploy
+  assets: [BTC, ETH]
+  spread_cost_pct: 3.34             # Robinhood round-trip spread (used in label generation)
+  lookback_bars: 1500               # ~250 days of 4h data
+  label_threshold: 0.01             # 1% move threshold for directional labels
+  optuna_trials: 40                 # Bayesian hyperparameter search trials
+  boost_rounds: 400                 # Max LightGBM boosting rounds
+  early_stopping_rounds: 30         # Early stopping patience
+  validation_pct: 0.15              # Walk-forward validation split
+  test_pct: 0.15                    # Held-out test split
+  longs_only: true                  # Robinhood: no shorts on spot
+  timeframe: "4h"                   # Training timeframe

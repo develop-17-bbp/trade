@@ -37,6 +37,20 @@ except ImportError:
     STRATEGIES_AVAILABLE = False
     logger.warning("[MULTI-STRATEGY] sub_strategies import failed — single strategy mode")
 
+try:
+    from src.trading.sub_strategies import GridTradingStrategy
+    GRID_AVAILABLE = True
+except ImportError:
+    GRID_AVAILABLE = False
+    logger.debug("[MULTI-STRATEGY] GridTradingStrategy not available")
+
+try:
+    from src.trading.sub_strategies import MarketMakingStrategy
+    MARKET_MAKING_AVAILABLE = True
+except ImportError:
+    MARKET_MAKING_AVAILABLE = False
+    logger.debug("[MULTI-STRATEGY] MarketMakingStrategy not available")
+
 
 class StrategySignal:
     """Result from a single strategy."""
@@ -56,18 +70,22 @@ REGIME_WEIGHTS = {
     'CRISIS': {
         'ema_trend': 0.05, 'mean_reversion': 0.05,
         'volatility_breakout': 0.05, 'trend_following': 0.05,
+        'grid_trading': 0.02, 'market_making': 0.05,
     },  # All heavily reduced in crisis
     'BULL': {
-        'ema_trend': 0.40, 'mean_reversion': 0.05,
-        'volatility_breakout': 0.25, 'trend_following': 0.30,
+        'ema_trend': 0.35, 'mean_reversion': 0.05,
+        'volatility_breakout': 0.20, 'trend_following': 0.25,
+        'grid_trading': 0.05, 'market_making': 0.15,
     },
     'BEAR': {
-        'ema_trend': 0.30, 'mean_reversion': 0.15,
-        'volatility_breakout': 0.25, 'trend_following': 0.30,
+        'ema_trend': 0.25, 'mean_reversion': 0.10,
+        'volatility_breakout': 0.20, 'trend_following': 0.25,
+        'grid_trading': 0.05, 'market_making': 0.20,
     },
     'SIDEWAYS': {
-        'ema_trend': 0.15, 'mean_reversion': 0.40,
-        'volatility_breakout': 0.20, 'trend_following': 0.25,
+        'ema_trend': 0.10, 'mean_reversion': 0.25,
+        'volatility_breakout': 0.10, 'trend_following': 0.15,
+        'grid_trading': 0.30, 'market_making': 0.30,
     },
 }
 
@@ -78,18 +96,24 @@ HURST_OVERRIDES = {
         'mean_reversion': 0.3,  # suppress
         'volatility_breakout': 1.0,
         'trend_following': 1.3,
+        'grid_trading': 0.2,    # grid struggles in trends
+        'market_making': 0.7,   # moderate suppression
     },
     'MEAN_REVERTING': {  # H < 0.45
         'ema_trend': 0.3,
         'mean_reversion': 2.0,  # strong boost
         'volatility_breakout': 0.8,
         'trend_following': 0.5,
+        'grid_trading': 2.0,    # grid thrives in mean-reverting
+        'market_making': 1.5,   # VWAP reversion works well
     },
     'RANDOM': {  # 0.45 <= H <= 0.55
         'ema_trend': 1.0,
         'mean_reversion': 1.0,
         'volatility_breakout': 1.0,
         'trend_following': 1.0,
+        'grid_trading': 1.0,
+        'market_making': 1.0,
     },
 }
 
@@ -119,18 +143,27 @@ class MultiStrategyEngine:
                 'volatility_breakout': VolatilityBreakoutStrategy(),
                 'trend_following': TrendFollowingStrategy(),
             }
-            logger.info("[MULTI-STRATEGY] Engine initialized with 4 strategies")
+            # Add GridTradingStrategy if available
+            if GRID_AVAILABLE:
+                self._strategies['grid_trading'] = GridTradingStrategy()
+            # Add MarketMakingStrategy if available
+            if MARKET_MAKING_AVAILABLE:
+                self._strategies['market_making'] = MarketMakingStrategy()
+            strat_count = len(self._strategies)
+            logger.info(f"[MULTI-STRATEGY] Engine initialized with {strat_count} strategies")
         else:
             logger.warning("[MULTI-STRATEGY] Running in EMA-only mode (sub_strategies unavailable)")
 
         # Per-strategy performance tracking (for learning)
-        for name in ['ema_trend', 'mean_reversion', 'volatility_breakout', 'trend_following']:
+        for name in ['ema_trend', 'mean_reversion', 'volatility_breakout', 'trend_following',
+                      'grid_trading', 'market_making']:
             self._performance[name] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
 
         # Config overrides for strategy weights
         self._custom_weights = self.config.get('multi_strategy', {}).get('weights', {})
 
-        print(f"  [MULTI-STRATEGY] Engine ACTIVE — 4 strategies, regime-adaptive weighting")
+        strat_count = len(self._strategies) if STRATEGIES_AVAILABLE else 1
+        print(f"  [MULTI-STRATEGY] Engine ACTIVE — {strat_count} strategies, regime-adaptive weighting")
 
     def generate_all_signals(
         self,
@@ -199,6 +232,39 @@ class MultiStrategyEngine:
                 adx_vals = adx(highs, lows, closes, 14)
                 adx_val = adx_vals[-1] if adx_vals else 20
                 return min(1.0, max(0.3, adx_val / 50))
+
+            elif strategy_name == 'grid_trading':
+                # Confidence based on BB width (narrower = more ranging = higher confidence)
+                from src.indicators.indicators import bollinger_bands
+                upper_bb, mid_bb, lower_bb = bollinger_bands(closes, 20, 2.0)
+                if mid_bb[-1] != 0:
+                    bb_width = (upper_bb[-1] - lower_bb[-1]) / mid_bb[-1]
+                    # Narrower BB = higher confidence (ranging market favors grid)
+                    if bb_width < 0.04:
+                        return 0.85
+                    elif bb_width < 0.06:
+                        return 0.70
+                    elif bb_width < 0.10:
+                        return 0.50
+                    else:
+                        return 0.30  # Wide bands = trending, grid less reliable
+                return 0.4
+
+            elif strategy_name == 'market_making':
+                # Confidence based on price deviation from SMA(20) as VWAP proxy
+                # (actual VWAP needs volumes, which _estimate_confidence doesn't receive)
+                import numpy as _np
+                from src.indicators.indicators import sma as compute_sma
+                sma_vals = compute_sma(closes, 20)
+                if sma_vals is not None and len(sma_vals) >= 20:
+                    recent = _np.asarray(closes[-20:], dtype=float)
+                    recent_sma = _np.asarray(sma_vals[-20:], dtype=float)
+                    std_dev = _np.std(recent - recent_sma)
+                    if std_dev > 0:
+                        z = abs(closes[-1] - sma_vals[-1]) / std_dev
+                        # Larger z-score deviation = higher confidence in mean reversion
+                        return min(1.0, max(0.3, 0.3 + z * 0.2))
+                return 0.45
 
         except Exception:
             pass

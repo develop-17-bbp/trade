@@ -5,7 +5,7 @@ These are rule-based kernels that the Meta-Controller can switch between.
 """
 from typing import List, Dict, Optional
 import numpy as np
-from src.indicators.indicators import sma, rsi, macd, bollinger_bands, atr
+from src.indicators.indicators import sma, rsi, macd, bollinger_bands, atr, vwap
 
 class SubStrategy:
     def generate_signal(self, prices: List[float], highs: List[float], lows: List[float], volumes: List[float]) -> int:
@@ -383,6 +383,134 @@ class EMACrossoverStrategy(SubStrategy):
             'sl_progression': [f"{sl['label']}={sl['level']:.2f}" for sl in self._stop_levels],
             'sl_count': len(self._stop_levels),
         }
+
+
+class GridTradingStrategy(SubStrategy):
+    """
+    Grid Trading — auto buy low / sell high in a range.
+    Places virtual grid levels above and below current price.
+    Best for: SIDEWAYS markets, LOW volatility, Hurst < 0.45.
+
+    Logic:
+    - Compute ATR-based grid spacing (e.g., 1x ATR between levels)
+    - If price drops to a grid level below → BUY signal
+    - If price rises to a grid level above → SELL signal
+    - Works best when price oscillates in a range
+    """
+
+    def generate_signal(self, prices: List[float], highs: List[float], lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 30 or len(highs) < 30 or len(lows) < 30:
+            return 0
+
+        # ATR(14) for grid spacing
+        atr_vals = atr(highs, lows, prices, 14)
+        if atr_vals is None or len(atr_vals) == 0:
+            return 0
+        last_atr = atr_vals[-1]
+        if np.isnan(last_atr) or last_atr <= 0:
+            return 0
+
+        last_price = prices[-1]
+
+        # Grid levels: midpoint is the 20-bar SMA (center of the range)
+        sma_vals = sma(prices, 20)
+        grid_center = sma_vals[-1] if sma_vals is not None and len(sma_vals) > 0 else last_price
+        if np.isnan(grid_center):
+            return 0
+
+        # Grid levels: center ± (1x, 2x, 3x) ATR
+        lower_grid_1 = grid_center - last_atr
+        upper_grid_1 = grid_center + last_atr
+
+        # RSI for confirmation
+        rsi_vals = rsi(prices, 14)
+        if rsi_vals is None or len(rsi_vals) == 0:
+            return 0
+        last_rsi = rsi_vals[-1]
+        if np.isnan(last_rsi):
+            return 0
+
+        # Bollinger Band width — narrow = ranging market = higher confidence for grid
+        upper_bb, mid_bb, lower_bb = bollinger_bands(prices, 20, 2.0)
+        bb_width = (upper_bb[-1] - lower_bb[-1]) / mid_bb[-1] if mid_bb[-1] != 0 else 999
+        is_ranging = bb_width < 0.06  # narrow bands indicate ranging market
+
+        # BUY: price at or below lower grid AND RSI < 40
+        if last_price <= lower_grid_1 and last_rsi < 40:
+            return 1
+
+        # SELL: price at or above upper grid AND RSI > 60
+        if last_price >= upper_grid_1 and last_rsi > 60:
+            return -1
+
+        # If market is ranging and price is at 2x ATR grid level, signal even without strict RSI
+        lower_grid_2 = grid_center - 2 * last_atr
+        upper_grid_2 = grid_center + 2 * last_atr
+
+        if is_ranging:
+            if last_price <= lower_grid_2 and last_rsi < 45:
+                return 1
+            if last_price >= upper_grid_2 and last_rsi > 55:
+                return -1
+
+        return 0
+
+
+class MarketMakingStrategy(SubStrategy):
+    """
+    Market Making — profit from bid-ask spread and orderbook imbalance.
+    Not actual market making (we can't place limit orders on Robinhood),
+    but identifies when spread/imbalance creates favorable entry.
+    Best for: ALL regimes, especially SIDEWAYS.
+
+    Logic:
+    - If price is at VWAP support + volume rising → BUY
+    - If price deviates far above VWAP + volume declining → SELL
+    - Uses mean-reversion to VWAP as the edge
+    """
+
+    def generate_signal(self, prices: List[float], highs: List[float], lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 20 or len(volumes) < 20 or len(highs) < 20 or len(lows) < 20:
+            return 0
+
+        # Compute VWAP from last 20 bars
+        recent_prices = prices[-20:]
+        recent_volumes = volumes[-20:]
+        vwap_vals = vwap(recent_prices, recent_volumes)
+        if vwap_vals is None or len(vwap_vals) == 0:
+            return 0
+        last_vwap = vwap_vals[-1]
+        if np.isnan(last_vwap) or last_vwap <= 0:
+            return 0
+
+        last_price = prices[-1]
+
+        # Price deviation from VWAP as z-score
+        recent_prices_arr = np.asarray(recent_prices, dtype=float)
+        recent_vwap = np.asarray(vwap_vals, dtype=float)
+        deviations = recent_prices_arr - recent_vwap
+        std_dev = np.std(deviations)
+        if std_dev <= 0 or np.isnan(std_dev):
+            return 0
+
+        z_score = (last_price - last_vwap) / std_dev
+
+        # Volume analysis: is volume rising or declining?
+        arr_vols = np.asarray(volumes[-20:], dtype=float)
+        avg_vol = np.mean(arr_vols)
+        recent_avg_vol = np.mean(arr_vols[-5:])  # last 5 bars
+        volume_rising = recent_avg_vol > avg_vol
+        volume_declining = recent_avg_vol < avg_vol * 0.8
+
+        # BUY: z-score < -1.5 AND volume rising (price below VWAP with volume support)
+        if z_score < -1.5 and volume_rising:
+            return 1
+
+        # SELL: z-score > 1.5 AND volume declining (price extended above VWAP)
+        if z_score > 1.5 and volume_declining:
+            return -1
+
+        return 0
 
 
 class PairsStrategy(SubStrategy):
