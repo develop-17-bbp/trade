@@ -702,5 +702,33 @@
       "ETH_patchtst": true
     },
     "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-10T21:53:44.842887+00:00",
+    "results": {
+      "BTC_lgbm": true,
+      "BTC_hmm": true,
+      "BTC_garch": true,
+      "BTC_alpha": true,
+      "BTC_rl": true,
+      "BTC_lstm": true,
+      "BTC_patchtst": true
+    },
+    "success_rate": 1.0
+  },
+  {
+    "cycle": 1,
+    "timestamp": "2026-04-10T23:33:02.378659+00:00",
+    "results": {
+      "ETH_lgbm": true,
+      "ETH_hmm": true,
+      "ETH_garch": true,
+      "ETH_alpha": true,
+      "ETH_rl": true,
+      "ETH_lstm": true,
+      "ETH_patchtst": true
+    },
+    "success_rate": 1.0
   }
 ]

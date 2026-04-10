@@ -305,6 +305,20 @@ try:
 except Exception:
     EVENT_GUARD_AVAILABLE = False
 
+# SL Crash Persistence — survive bot crashes with open positions
+try:
+    from src.persistence.sl_persistence import SLPersistenceManager
+    SL_PERSIST_AVAILABLE = True
+except Exception:
+    SL_PERSIST_AVAILABLE = False
+
+# API Circuit Breaker — prevent cascade failures on Robinhood
+try:
+    from src.monitoring.circuit_breaker import CircuitBreaker
+    CIRCUIT_BREAKER_AVAILABLE = True
+except Exception:
+    CIRCUIT_BREAKER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -724,6 +738,30 @@ class TradingExecutor:
         if not self._multi_engine:
             print(f"  [MULTI-STRATEGY] Unavailable — EMA-only mode")
             print(f"  [SNIPER] Compound {self.sniper_compound_pct}% of profits | Protect principal: {self.sniper_protect_principal}")
+
+        # ── SL Crash Persistence — survive restarts with open positions ──
+        self._sl_persist = None
+        if SL_PERSIST_AVAILABLE:
+            self._sl_persist = SLPersistenceManager()
+            orphans = self._sl_persist.recover_all()
+            if orphans:
+                for asset, pos_data in orphans.items():
+                    self.positions[asset] = pos_data
+                print(f"  [SL-PERSIST] Recovered {len(orphans)} position(s) from crash")
+            else:
+                print(f"  [SL-PERSIST] No orphaned positions — clean start")
+
+        # ── API Circuit Breaker — prevent Robinhood cascade failures ──
+        self._circuit_breaker = None
+        if CIRCUIT_BREAKER_AVAILABLE:
+            alert_fn = self._send_alert if hasattr(self, '_send_alert') else None
+            self._circuit_breaker = CircuitBreaker(
+                failure_threshold=3,
+                window_seconds=300,
+                recovery_timeout=1800,
+                alert_fn=alert_fn,
+                name='Robinhood',
+            )
 
         # ── Cointegration Engine — BTC-ETH pairs spread trading signal ──
         self._coint_engine = None
@@ -5192,6 +5230,13 @@ class TradingExecutor:
         }
         self.last_trade_time[asset] = time.time()
 
+        # ── Persist position for crash recovery ──
+        if self._sl_persist:
+            try:
+                self._sl_persist.save_position(asset, self.positions[asset])
+            except Exception:
+                pass
+
         # ── Paper Trade: Record entry with real Robinhood price ──
         if self._paper:
             try:
@@ -5762,6 +5807,13 @@ class TradingExecutor:
             print(f"  [{self._ex_tag}:{asset}] SL {old_level}->{sl_levels[-1]}: ${sl:,.2f} -> ${new_sl:,.2f} | P&L: {pnl_pct:+.2f}%")
             sl = new_sl
             sl_moved = True
+
+        # ── Persist SL state to disk after every update (crash recovery) ──
+        if sl_moved and self._sl_persist:
+            try:
+                self._sl_persist.save_position(asset, pos)
+            except Exception:
+                pass
 
         # SL managed by polling (10s check) — no exchange stop orders
         # This avoids orphan positions from exchange SL fills
@@ -6466,6 +6518,13 @@ class TradingExecutor:
         # Remove from positions
         del self.positions[asset]
         self._closing_in_progress.discard(asset)
+
+        # Clear SL persistence (position is closed — no crash recovery needed)
+        if self._sl_persist:
+            try:
+                self._sl_persist.clear_position(asset)
+            except Exception:
+                pass
         now = time.time()
         self.last_close_time[asset] = now
         self.last_trade_time[asset] = now  # Also set trade cooldown to prevent immediate re-entry
