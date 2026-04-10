@@ -157,6 +157,112 @@ async def trade_stats(_=Depends(_require_api_key)):
     }
 
 # ─────────────────────────────────────────
+# GROUP: LIVE PRICES (for frontend TopBar)
+# ─────────────────────────────────────────
+
+@app.get("/api/v1/prices", tags=["Market Data"])
+async def live_prices():
+    """Live BTC/ETH prices from dashboard state (no auth required for ticker)."""
+    state = DashboardState().get_full_state()
+    assets = state.get("active_assets", {})
+    prices = {}
+    for asset_name, asset_data in assets.items():
+        prices[asset_name] = {
+            "price": asset_data.get("price", asset_data.get("last_price", 0)),
+            "change_pct": asset_data.get("change_pct", 0),
+            "bid": asset_data.get("bid", 0),
+            "ask": asset_data.get("ask", 0),
+            "spread_pct": asset_data.get("spread_pct", 0),
+        }
+    return prices
+
+# ─────────────────────────────────────────
+# GROUP: DASHBOARD AGGREGATE (single call for frontend)
+# ─────────────────────────────────────────
+
+@app.get("/api/v1/dashboard", tags=["Dashboard"])
+async def dashboard_aggregate(_=Depends(_require_api_key)):
+    """Single aggregated endpoint for the React dashboard — reduces API calls."""
+    state = DashboardState().get_full_state()
+    portfolio = state.get("portfolio", {})
+    trades = state.get("trade_history", [])
+    closed = [t for t in trades if t.get("status") == "CLOSED"]
+    wins = [t for t in closed if t.get("pnl", 0) > 0]
+    losses = [t for t in closed if t.get("pnl", 0) < 0]
+    win_pnl = sum(t.get("pnl", 0) for t in wins)
+    loss_pnl = abs(sum(t.get("pnl", 0) for t in losses))
+    overlay = state.get("agent_overlay", {})
+    risk = state.get("risk_metrics", {})
+
+    # Transform positions from dict to array
+    pos_dict = state.get("open_positions", {})
+    positions_list = []
+    if isinstance(pos_dict, dict):
+        for asset_name, pos_data in pos_dict.items():
+            if isinstance(pos_data, dict):
+                pos_data["asset"] = asset_name
+                positions_list.append(pos_data)
+
+    # Transform agent votes to array
+    agent_votes = overlay.get("agent_votes", {})
+    agent_weights = overlay.get("agent_weights", {})
+    agents_list = []
+    for agent_name, vote_data in agent_votes.items():
+        if isinstance(vote_data, dict):
+            agents_list.append({
+                "id": agent_name,
+                "name": agent_name.replace("_", " ").title(),
+                "direction": vote_data.get("direction", 0),
+                "confidence": vote_data.get("confidence", 0),
+                "reasoning": vote_data.get("reasoning", ""),
+                "weight": agent_weights.get(agent_name, 1.0),
+            })
+
+    return {
+        "portfolio": {
+            "equity": portfolio.get("current_total_value", portfolio.get("pnl", 0) + 100000),
+            "today_pnl": portfolio.get("today_pnl", 0),
+            "total_pnl": portfolio.get("pnl", 0),
+            "total_return_pct": portfolio.get("return", 0),
+            "equity_curve": portfolio.get("equity_curve", [])[-500:],
+            "sod_balance": portfolio.get("sod_balance", 0),
+        },
+        "positions": positions_list,
+        "trades": trades[-50:],
+        "trade_stats": {
+            "total": len(trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(len(wins) / len(closed), 4) if closed else 0,
+            "profit_factor": round(win_pnl / loss_pnl, 4) if loss_pnl > 0 else 0,
+            "avg_win": round(win_pnl / len(wins), 2) if wins else 0,
+            "avg_loss": round(loss_pnl / len(losses), 2) if losses else 0,
+        },
+        "agents": {
+            "list": agents_list,
+            "consensus": overlay.get("consensus_level", "N/A"),
+            "data_quality": overlay.get("data_quality", 0),
+            "daily_pnl_mode": overlay.get("daily_pnl_mode", "NORMAL"),
+            "enabled": overlay.get("enabled", False),
+            "last_decision": overlay.get("last_decision", {}),
+            "cycle_count": overlay.get("cycle_count", 0),
+        },
+        "risk": {
+            "current_drawdown": risk.get("current_drawdown", 0),
+            "max_drawdown": risk.get("max_drawdown", 0),
+            "risk_score": risk.get("risk_score", 0),
+            "vpin": risk.get("vpin_threshold", 0),
+        },
+        "models": state.get("benchmark", {}).get("per_model", {}),
+        "status": state.get("status", "UNKNOWN"),
+        "sources": state.get("sources", {}),
+        "layers": state.get("layers", {}),
+        "layer_logs": state.get("layer_logs", {}),
+        "sentiment": state.get("sentiment", {}),
+        "last_update": state.get("last_update", ""),
+    }
+
+# ─────────────────────────────────────────
 # GROUP: MARKET DATA & SIGNALS
 # ─────────────────────────────────────────
 

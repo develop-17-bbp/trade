@@ -7,7 +7,7 @@ import AgentVotePanel from '../components/ai/AgentVotePanel'
 import ConsensusGauge from '../components/ai/ConsensusGauge'
 import { useSystemState } from '../hooks/useSystemState'
 
-// ── Animation ───────────────────────────────────────────────────────────────
+// -- Animation --
 
 const pageVariants = {
   hidden: { opacity: 0 },
@@ -22,7 +22,7 @@ const child = {
   show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
 }
 
-// ── Skeleton ────────────────────────────────────────────────────────────────
+// -- Skeleton --
 
 function Skeleton({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse rounded-xl bg-white/[0.04] ${className}`} />
@@ -43,31 +43,30 @@ function SkeletonAI() {
   )
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// -- Helpers --
 
-function formatTime(ts: string): string {
-  const d = new Date(ts)
-  return d.toLocaleString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
+/** Map numeric direction (-1/0/1) to a signal string */
+function dirToSignal(dir: number): 'long' | 'short' | 'neutral' {
+  if (dir > 0) return 'long'
+  if (dir < 0) return 'short'
+  return 'neutral'
 }
 
-// ── Component ───────────────────────────────────────────────────────────────
+// -- Component --
 
 export default function AIAgents() {
-  const { agents, loading } = useSystemState()
+  const { agents, loading, error } = useSystemState()
+
+  const agentList = agents?.list ?? []
 
   const { sentiment, consensusPct, bullCount, bearCount, neutralCount } = useMemo(() => {
-    if (agents.length === 0) {
+    if (agentList.length === 0) {
       return { sentiment: 'neutral' as const, consensusPct: 50, bullCount: 0, bearCount: 0, neutralCount: 0 }
     }
-    const bull = agents.filter((a) => a.current_signal === 'long').length
-    const bear = agents.filter((a) => a.current_signal === 'short').length
-    const neut = agents.length - bull - bear
-    const pct = Math.round((bull / agents.length) * 100)
+    const bull = agentList.filter((a) => a.direction > 0).length
+    const bear = agentList.filter((a) => a.direction < 0).length
+    const neut = agentList.length - bull - bear
+    const pct = Math.round((bull / agentList.length) * 100)
     const s = pct >= 60 ? 'bullish' : pct <= 40 ? 'bearish' : 'neutral'
     return {
       sentiment: s as 'bullish' | 'bearish' | 'neutral',
@@ -76,30 +75,26 @@ export default function AIAgents() {
       bearCount: bear,
       neutralCount: neut,
     }
-  }, [agents])
+  }, [agentList])
 
-  const consensusLevel = useMemo(() => {
-    if (consensusPct >= 70) return 'STRONG_BULLISH'
-    if (consensusPct >= 55) return 'BULLISH'
-    if (consensusPct <= 30) return 'STRONG_BEARISH'
-    if (consensusPct <= 45) return 'BEARISH'
-    return 'NEUTRAL'
-  }, [consensusPct])
+  const consensusLabel = agents?.consensus ?? 'N/A'
 
+  // Build vote map as Record<string, {direction, confidence, reasoning}> for AgentVotePanel
   const agentVotesMap = useMemo(() => {
-    const map: Record<string, (typeof agents)[number]> = {}
-    agents.forEach((a) => { map[a.id] = a })
+    const map: Record<string, { id: string; name: string; direction: number; confidence: number; reasoning: string; weight: number }> = {}
+    agentList.forEach((a) => { map[a.id] = a })
     return map
-  }, [agents])
-
-  const recentDecisions = useMemo(() => {
-    return [...agents]
-      .filter((a) => a.last_action_time)
-      .sort((a, b) => new Date(b.last_action_time).getTime() - new Date(a.last_action_time).getTime())
-      .slice(0, 5)
-  }, [agents])
+  }, [agentList])
 
   if (loading) return <SkeletonAI />
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-accent-red text-sm">{error}</p>
+      </div>
+    )
+  }
 
   return (
     <motion.div
@@ -117,7 +112,8 @@ export default function AIAgents() {
               <Brain size={18} className="text-accent-purple" />
               <h2 className="text-sm font-semibold text-text-primary">AI Neural Core</h2>
               <span className="ml-auto text-xs text-text-muted">
-                {agents.filter((a) => a.status === 'active').length}/{agents.length} agents active
+                {agentList.length} agents
+                {agents?.enabled ? ' -- ENABLED' : ' -- DISABLED'}
               </span>
             </div>
 
@@ -145,7 +141,7 @@ export default function AIAgents() {
                     {consensusPct}%
                   </motion.div>
                   <p className="text-xs text-text-muted mt-1" style={{ textShadow: '0 0 10px rgba(0,0,0,0.8)' }}>
-                    {consensusLevel.replace('_', ' ')}
+                    {consensusLabel}
                   </p>
                 </div>
               </div>
@@ -153,10 +149,10 @@ export default function AIAgents() {
           </GlassCard>
         </motion.div>
 
-        {/* Side: Consensus gauge + Decision feed */}
+        {/* Side: Consensus gauge + Info */}
         <motion.div variants={child} className="space-y-6">
           <ConsensusGauge
-            level={consensusLevel}
+            level={consensusLabel}
             percentage={consensusPct}
             bullish={bullCount}
             bearish={bearCount}
@@ -167,16 +163,17 @@ export default function AIAgents() {
             <div className="flex items-center gap-2 mb-3">
               <Clock size={14} className="text-accent-cyan" />
               <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-                Decision Feed
+                Agent Reasoning
               </h3>
             </div>
 
             <div className="space-y-2 max-h-52 overflow-y-auto">
-              {recentDecisions.length > 0 ? (
-                recentDecisions.map((agent) => {
+              {agentList.length > 0 ? (
+                agentList.map((agent) => {
+                  const signal = dirToSignal(agent.direction)
                   const signalColor =
-                    agent.current_signal === 'long' ? 'text-accent-green' :
-                    agent.current_signal === 'short' ? 'text-accent-red' : 'text-accent-blue'
+                    signal === 'long' ? 'text-accent-green' :
+                    signal === 'short' ? 'text-accent-red' : 'text-accent-blue'
 
                   return (
                     <div
@@ -190,15 +187,14 @@ export default function AIAgents() {
                             {agent.name}
                           </span>
                           <span className="text-[10px] text-text-muted tabular-nums flex-shrink-0 ml-2">
-                            {formatTime(agent.last_action_time)}
+                            w={agent.weight.toFixed(1)}
                           </span>
                         </div>
-                        <p className="text-[10px] text-text-muted mt-0.5 truncate">
-                          {agent.last_action} --{' '}
+                        <p className="text-[10px] text-text-muted mt-0.5 line-clamp-2">
                           <span className={signalColor}>
-                            {(agent.current_signal ?? 'neutral').toUpperCase()}
+                            {signal.toUpperCase()}
                           </span>{' '}
-                          ({Math.round(agent.confidence * 100)}%)
+                          ({Math.round(agent.confidence * 100)}%) -- {agent.reasoning || 'No reasoning'}
                         </p>
                       </div>
                     </div>
@@ -206,7 +202,7 @@ export default function AIAgents() {
                 })
               ) : (
                 <p className="text-text-muted text-xs text-center py-4">
-                  No recent decisions
+                  No agent data available
                 </p>
               )}
             </div>
@@ -218,7 +214,7 @@ export default function AIAgents() {
       <motion.div variants={child}>
         <GlassCard>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-text-primary">All Agents ({agents.length})</h2>
+            <h2 className="text-sm font-semibold text-text-primary">All Agents ({agentList.length})</h2>
             <div className="flex items-center gap-3 text-xs text-text-muted">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-accent-green" /> {bullCount} bullish
@@ -229,6 +225,11 @@ export default function AIAgents() {
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-accent-red" /> {bearCount} bearish
               </span>
+              {agents?.data_quality != null && (
+                <span className="text-text-muted">
+                  Data quality: {Math.round(agents.data_quality * 100)}%
+                </span>
+              )}
             </div>
           </div>
           <AgentVotePanel agents={agentVotesMap} />

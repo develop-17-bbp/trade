@@ -1,175 +1,144 @@
-// ── Types ────────────────────────────────────────────────────────────────────
+/**
+ * REST API Client — Connects to backend production server
+ * Primary: /api/v1/dashboard (single aggregated call)
+ * Secondary: /api/v1/prices (unauthenticated ticker)
+ */
 
-export interface PortfolioData {
-  total_value: number
-  pnl_today: number
-  pnl_today_pct: number
-  total_pnl: number
-  total_pnl_pct: number
-  available_balance: number
-  margin_used: number
-  buying_power: number
+const BASE = '/api/v1'
+
+// ── Types matching ACTUAL backend response shapes ──
+
+export interface DashboardData {
+  portfolio: {
+    equity: number
+    today_pnl: number
+    total_pnl: number
+    total_return_pct: number
+    equity_curve: Array<{ t: string; v: number }>
+    sod_balance: number
+  }
+  positions: Array<{
+    asset: string
+    direction: string
+    entry_price: number
+    current_price: number
+    quantity: number
+    unrealized_pnl: number
+    stop_loss: number
+    entry_time: number
+    confidence: number
+    trade_timeframe: string
+  }>
+  trades: Array<{
+    asset: string
+    direction: string
+    status: string
+    entry_price: number
+    exit_price: number
+    pnl: number
+    pnl_pct: number
+    timestamp: string
+    reason: string
+    trade_timeframe: string
+  }>
+  trade_stats: {
+    total: number
+    wins: number
+    losses: number
+    win_rate: number
+    profit_factor: number
+    avg_win: number
+    avg_loss: number
+  }
+  agents: {
+    list: Array<{
+      id: string
+      name: string
+      direction: number
+      confidence: number
+      reasoning: string
+      weight: number
+    }>
+    consensus: string
+    data_quality: number
+    daily_pnl_mode: string
+    enabled: boolean
+    last_decision: Record<string, unknown>
+    cycle_count: number
+  }
+  risk: {
+    current_drawdown: number
+    max_drawdown: number
+    risk_score: number
+    vpin: number
+  }
+  models: Record<string, {
+    predictions: number[]
+    actuals: number[]
+    correct: number
+    total: number
+  }>
+  status: string
+  sources: Record<string, string>
+  layers: Record<string, unknown>
+  layer_logs: Record<string, Array<{ timestamp: string; message: string; level: string }>>
+  sentiment: Record<string, unknown>
+  last_update: string
 }
 
-export interface Position {
-  symbol: string
-  side: 'long' | 'short'
-  size: number
-  entry_price: number
-  current_price: number
-  unrealized_pnl: number
-  unrealized_pnl_pct: number
-  leverage: number
-  liquidation_price: number | null
-  opened_at: string
+export interface PriceData {
+  [asset: string]: {
+    price: number
+    change_pct: number
+    bid: number
+    ask: number
+    spread_pct: number
+  }
 }
 
-export interface Trade {
-  id: string
-  symbol: string
-  side: 'buy' | 'sell'
-  price: number
-  size: number
-  pnl: number | null
-  fee: number
-  timestamp: string
-  strategy: string
-}
+// ── Fetcher ──
 
-export interface AgentOverlay {
-  id: string
-  name: string
-  status: 'active' | 'idle' | 'error'
-  strategy: string
-  current_signal: string | null
-  confidence: number
-  last_action: string
-  last_action_time: string
-  pnl_contribution: number
-}
-
-export interface RiskMetrics {
-  portfolio_var: number
-  portfolio_cvar: number
-  max_drawdown: number
-  current_drawdown: number
-  sharpe_ratio: number
-  sortino_ratio: number
-  win_rate: number
-  profit_factor: number
-  correlation_btc: number
-  risk_score: number
-  risk_level: 'low' | 'medium' | 'high' | 'critical'
-}
-
-export interface SystemStatus {
-  status: 'online' | 'offline' | 'degraded'
-  exchange: string
-  exchange_connected: boolean
-  websocket_connected: boolean
-  agents_running: number
-  agents_total: number
-  uptime_seconds: number
-  last_heartbeat: string
-  cpu_usage: number
-  memory_usage: number
-}
-
-export interface Signal {
-  id: string
-  symbol: string
-  direction: 'long' | 'short' | 'neutral'
-  strength: number
-  source: string
-  timestamp: string
-  metadata: Record<string, unknown>
-}
-
-// ── Cache ────────────────────────────────────────────────────────────────────
-
-interface CacheEntry<T> {
-  data: T
-  timestamp: number
-}
-
-const CACHE_TTL_MS = 5000
-const cache = new Map<string, CacheEntry<unknown>>()
-
-function getCached<T>(key: string): T | null {
-  const entry = cache.get(key) as CacheEntry<T> | undefined
-  if (!entry) return null
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    cache.delete(key)
+async function fetchJSON<T>(path: string, auth = true): Promise<T | null> {
+  try {
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    if (auth) {
+      const key = import.meta.env.VITE_API_KEY || ''
+      if (key) headers['X-API-Key'] = key
+    }
+    const res = await fetch(`${BASE}${path}`, { headers })
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
     return null
   }
-  return entry.data
 }
 
-function setCache<T>(key: string, data: T): void {
-  cache.set(key, { data, timestamp: Date.now() })
+// ── Public API ──
+
+/** Single aggregated call for the entire dashboard */
+export async function fetchDashboard(): Promise<DashboardData | null> {
+  return fetchJSON<DashboardData>('/dashboard')
 }
 
-// ── Fetch helper ─────────────────────────────────────────────────────────────
-
-const BASE_URL = '/api/v1'
-
-class ApiError extends Error {
-  constructor(
-    public status: number,
-    public statusText: string,
-    message?: string,
-  ) {
-    super(message ?? `API error ${status}: ${statusText}`)
-    this.name = 'ApiError'
-  }
+/** Live prices (no auth, fast ticker) */
+export async function fetchPrices(): Promise<PriceData | null> {
+  return fetchJSON<PriceData>('/prices', false)
 }
 
-async function fetchJson<T>(endpoint: string): Promise<T> {
-  const cacheKey = endpoint
-  const cached = getCached<T>(cacheKey)
-  if (cached !== null) return cached
-
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
-    headers: { 'Accept': 'application/json' },
-  })
-
-  if (!response.ok) {
-    throw new ApiError(response.status, response.statusText)
-  }
-
-  const data: T = await response.json()
-  setCache(cacheKey, data)
-  return data
+/** System status */
+export async function fetchSystemStatus() {
+  return fetchJSON<{
+    trading_status: string
+    last_update: string
+    model_version: string
+    sources: Record<string, string>
+  }>('/system/status')
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
-
-export async function fetchPortfolio(): Promise<PortfolioData> {
-  return fetchJson<PortfolioData>('/portfolio')
+/** Risk layer pipeline */
+export async function fetchRiskLayers() {
+  return fetchJSON<{
+    layers: Record<string, unknown>
+    layer_logs: Array<{ timestamp: string; message: string; level: string }>
+  }>('/risk/layers')
 }
-
-export async function fetchPositions(): Promise<Position[]> {
-  return fetchJson<Position[]>('/positions')
-}
-
-export async function fetchTrades(): Promise<Trade[]> {
-  return fetchJson<Trade[]>('/trades')
-}
-
-export async function fetchAgentOverlay(): Promise<AgentOverlay[]> {
-  return fetchJson<AgentOverlay[]>('/agents')
-}
-
-export async function fetchRiskMetrics(): Promise<RiskMetrics> {
-  return fetchJson<RiskMetrics>('/risk')
-}
-
-export async function fetchSystemStatus(): Promise<SystemStatus> {
-  return fetchJson<SystemStatus>('/status')
-}
-
-export async function fetchSignals(): Promise<Signal[]> {
-  return fetchJson<Signal[]>('/signals')
-}
-
-export { ApiError }

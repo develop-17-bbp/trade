@@ -1,22 +1,30 @@
 import { motion } from 'framer-motion'
-import type { AgentOverlay } from '../../api/client'
 import GlassCard from '../cards/GlassCard'
 
+interface AgentEntry {
+  id: string
+  name: string
+  direction: number
+  confidence: number
+  reasoning: string
+  weight: number
+}
+
 interface AgentVotePanelProps {
-  agents: Record<string, AgentOverlay>
+  agents: Record<string, AgentEntry>
   compact?: boolean
+}
+
+function dirToSignal(dir: number): 'long' | 'short' | 'neutral' {
+  if (dir > 0) return 'long'
+  if (dir < 0) return 'short'
+  return 'neutral'
 }
 
 const SIGNAL_LABEL: Record<string, { text: string; color: string; bg: string }> = {
   long: { text: 'LONG', color: 'text-accent-green', bg: 'bg-accent-green/10' },
   short: { text: 'SHORT', color: 'text-accent-red', bg: 'bg-accent-red/10' },
   neutral: { text: 'NEUTRAL', color: 'text-accent-blue', bg: 'bg-accent-blue/10' },
-}
-
-const STATUS_DOT: Record<string, string> = {
-  active: 'bg-accent-green',
-  idle: 'bg-text-muted',
-  error: 'bg-accent-red',
 }
 
 const container = {
@@ -51,22 +59,25 @@ export default function AgentVotePanel({ agents, compact = false }: AgentVotePan
       animate="show"
     >
       {entries.map((agent) => {
-        const signal = SIGNAL_LABEL[agent.current_signal ?? 'neutral'] ?? SIGNAL_LABEL.neutral
+        const signal = dirToSignal(agent.direction)
+        const cfg = SIGNAL_LABEL[signal]
         const confidence = Math.round(agent.confidence * 100)
-        const statusColor = STATUS_DOT[agent.status] ?? STATUS_DOT.idle
 
         return (
           <motion.div key={agent.id} variants={item}>
             <GlassCard className="!p-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColor}`} />
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    signal === 'long' ? 'bg-accent-green' :
+                    signal === 'short' ? 'bg-accent-red' : 'bg-accent-blue'
+                  }`} />
                   <span className="text-xs font-medium text-text-primary truncate">
                     {agent.name}
                   </span>
                 </div>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${signal.color} ${signal.bg}`}>
-                  {signal.text}
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cfg.color} ${cfg.bg}`}>
+                  {cfg.text}
                 </span>
               </div>
 
@@ -75,9 +86,9 @@ export default function AgentVotePanel({ agents, compact = false }: AgentVotePan
                 <div className="flex-1 h-1 rounded-full bg-white/5 overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${
-                      agent.current_signal === 'long'
+                      signal === 'long'
                         ? 'bg-accent-green'
-                        : agent.current_signal === 'short'
+                        : signal === 'short'
                           ? 'bg-accent-red'
                           : 'bg-accent-blue'
                     }`}
@@ -89,9 +100,9 @@ export default function AgentVotePanel({ agents, compact = false }: AgentVotePan
                 </span>
               </div>
 
-              {!compact && (
+              {!compact && agent.reasoning && (
                 <div className="mt-2 text-[10px] text-text-muted truncate">
-                  {agent.last_action}
+                  {agent.reasoning}
                 </div>
               )}
             </GlassCard>

@@ -2,42 +2,56 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUpRight, ArrowDownRight, Wifi, WifiOff } from 'lucide-react'
 import StatusDot from '../shared/StatusDot'
+import { fetchPrices, type PriceData } from '../../api/client'
+import { useSystemState } from '../../hooks/useSystemState'
 
-interface PriceData {
+// -- Types --
+
+interface TickerItem {
   symbol: string
   price: number
-  change24h: number
+  changePct: number
 }
 
-function useLivePrices(): PriceData[] {
-  const [prices, setPrices] = useState<PriceData[]>([
-    { symbol: 'BTC', price: 0, change24h: 0 },
-    { symbol: 'ETH', price: 0, change24h: 0 },
+// -- Hooks --
+
+function useLivePrices(): TickerItem[] {
+  const [tickers, setTickers] = useState<TickerItem[]>([
+    { symbol: 'BTC', price: 0, changePct: 0 },
+    { symbol: 'ETH', price: 0, changePct: 0 },
   ])
 
   useEffect(() => {
     let cancelled = false
 
-    async function fetchPrices() {
+    async function poll() {
       try {
-        const res = await fetch('/api/v1/prices')
-        if (!res.ok) return
-        const data = (await res.json()) as PriceData[]
-        if (!cancelled) setPrices(data)
+        const data = await fetchPrices()
+        if (cancelled || !data) return
+
+        const items: TickerItem[] = []
+        for (const [symbol, info] of Object.entries(data)) {
+          items.push({
+            symbol,
+            price: info?.price ?? 0,
+            changePct: info?.change_pct ?? 0,
+          })
+        }
+        if (items.length > 0) setTickers(items)
       } catch {
         // Prices will show as 0 until backend is available
       }
     }
 
-    fetchPrices()
-    const interval = setInterval(fetchPrices, 5000)
+    poll()
+    const interval = setInterval(poll, 5000)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
   }, [])
 
-  return prices
+  return tickers
 }
 
 function useClock(): string {
@@ -50,6 +64,8 @@ function useClock(): string {
 
   return time
 }
+
+// -- Formatters --
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString('en-US', {
@@ -68,12 +84,10 @@ function formatPrice(price: number): string {
   })
 }
 
-interface PriceTickerProps {
-  data: PriceData
-}
+// -- Sub-components --
 
-function PriceTicker({ data }: PriceTickerProps) {
-  const isUp = data.change24h >= 0
+function PriceTicker({ data }: { data: TickerItem }) {
+  const isUp = data.changePct >= 0
   const Arrow = isUp ? ArrowUpRight : ArrowDownRight
   const color = isUp ? 'text-accent-green' : 'text-accent-red'
 
@@ -95,38 +109,25 @@ function PriceTicker({ data }: PriceTickerProps) {
       <div className={`flex items-center gap-0.5 ${color}`}>
         <Arrow size={12} />
         <span className="text-xs font-medium tabular-nums">
-          {Math.abs(data.change24h).toFixed(2)}%
+          {Math.abs(data.changePct).toFixed(2)}%
         </span>
       </div>
     </div>
   )
 }
 
+// -- Main component --
+
 export default function TopBar() {
   const prices = useLivePrices()
   const time = useClock()
-  const [systemOnline, setSystemOnline] = useState(true)
+  const { status } = useSystemState()
 
-  // Poll system status
-  useEffect(() => {
-    let cancelled = false
-
-    async function checkStatus() {
-      try {
-        const res = await fetch('/api/v1/status')
-        if (!cancelled) setSystemOnline(res.ok)
-      } catch {
-        if (!cancelled) setSystemOnline(false)
-      }
-    }
-
-    checkStatus()
-    const interval = setInterval(checkStatus, 10000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [])
+  const isOnline = status === 'ONLINE' || status === 'TRADING'
+  const statusLabel = status || 'UNKNOWN'
+  const statusDotState: 'online' | 'offline' | 'degraded' =
+    isOnline ? 'online' :
+    status === 'INITIALIZING' ? 'degraded' : 'offline'
 
   return (
     <header className="sticky top-0 z-20 flex items-center justify-between h-14 px-6 bg-bg-secondary/60 backdrop-blur-xl border-b border-border-glass">
@@ -149,14 +150,14 @@ export default function TopBar() {
       <div className="flex items-center gap-4">
         {/* System status badge */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-border-glass">
-          {systemOnline ? (
+          {isOnline ? (
             <Wifi size={14} className="text-accent-green" />
           ) : (
             <WifiOff size={14} className="text-accent-red" />
           )}
-          <StatusDot status={systemOnline ? 'online' : 'offline'} size={6} />
-          <span className={`text-xs font-medium ${systemOnline ? 'text-accent-green' : 'text-accent-red'}`}>
-            {systemOnline ? 'ONLINE' : 'OFFLINE'}
+          <StatusDot status={statusDotState} size={6} />
+          <span className={`text-xs font-medium ${isOnline ? 'text-accent-green' : status === 'INITIALIZING' ? 'text-yellow-500' : 'text-accent-red'}`}>
+            {statusLabel}
           </span>
         </div>
 
