@@ -6,6 +6,10 @@ poll_interval: 60             # check every 60s — 4h/daily candles don't need 
 exchanges:
   - name: robinhood
     assets: [BTC, ETH]
+    spread_pct_per_side: 1.67        # Measured Robinhood spread per side
+    round_trip_spread_pct: 3.34      # Total cost to enter + exit
+    min_expected_move_pct: 7.0       # Only enter if expected move > 7% (2x spread)
+    longs_only: true                 # No shorts on Robinhood spot
 
 # Primary exchange
 exchange:
@@ -37,10 +41,10 @@ adaptive:
 risk:
   daily_loss_limit_pct: 5.0                    # Swing trades need room
   max_drawdown_pct: 15.0                       # Multi-day holds can swing
-  risk_per_trade_pct: 2.0                      # Larger positions — fewer trades, bigger conviction (was 0.5%)
-  atr_stop_mult: 3.0                           # Wide SL — don't get shaken out by noise (was 1.5)
-  atr_tp_mult: 10.0                            # TP = 10×ATR — target 5-10% moves (was 4.5)
-  hard_stop_pct: -7.0                          # Hard stop at -7% (spread=1.67% so real move = -5.33%, was -5% = only -3.33% real move)
+  risk_per_trade_pct: 1.0                      # Conservative sizing until WR improves (was 2.0%)
+  atr_stop_mult: 8.0                           # Wide SL for Robinhood 3.34% spread (8×ATR ≈ 3.5% for BTC, survives noise)
+  atr_tp_mult: 25.0                            # TP = 25×ATR — target 10%+ moves, nets ~7% after 3.34% spread
+  hard_stop_pct: -12.0                         # Hard stop at -12% (3.34% spread + 8.66% real adverse move room)
 
 # ── AI / LLM ──
 # Bybit uses Ollama (mistral 7B), Delta uses Claude API (haiku)
@@ -58,8 +62,8 @@ ai:
   fallback_on_quota_error: true
   use_local_on_failure: true
   bear_agent_enabled: true        # Second LLM call to argue AGAINST the trade
-  bear_veto_threshold: 8          # Veto only dangerous trades (need winners to be big)
-  bear_reduce_threshold: 6        # Only reduce at moderate risk (don't shrink every winner)
+  bear_veto_threshold: 6          # More conservative for Robinhood spread (was 8)
+  bear_reduce_threshold: 4        # Reduce earlier — spread makes moderate risk costly (was 6)
   facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
   risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
   edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
@@ -81,7 +85,7 @@ monitor:
 # Designed for Robinhood's 1.67% spread: only trades when expected move >> spread cost
 sniper:
   enabled: true                        # Default ON for Robinhood paper mode
-  min_confluence: 5                    # Need 5+ of 9 independent signals (was 4 — too easy, passed noise)
+  min_confluence: 6                    # Need 6+ of 9 signals for Robinhood (was 5 — higher bar for 3.34% spread)
   min_score: 8                         # Higher bar than normal min_entry_score (6)
   min_expected_move_pct: 5.0           # Only enter if expected move > 5% (clears 3.3% round-trip spread)
   compound_pct: 50.0                   # Reinvest 50% of realized profits into next trade

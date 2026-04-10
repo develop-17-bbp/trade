@@ -669,6 +669,22 @@ class TradingExecutor:
         for a in self.assets:
             self.bear_veto_stats[a] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
 
+        # ── EXCHANGE SPREAD CONFIGURATION ──
+        # Load spread constants from exchange config (critical for Robinhood profitability)
+        self._spread_per_side = 0.05   # Default: Bybit/Delta ~0.05%
+        self._round_trip_spread = 0.10
+        self._longs_only = False
+        for _ex_cfg in config.get('exchanges', []):
+            if _ex_cfg.get('name', '').lower() == self._exchange_name.lower():
+                self._spread_per_side = _ex_cfg.get('spread_pct_per_side', 0.05)
+                self._round_trip_spread = _ex_cfg.get('round_trip_spread_pct', self._spread_per_side * 2)
+                self._longs_only = _ex_cfg.get('longs_only', False)
+                break
+        if self._round_trip_spread > 1.0:
+            print(f"  [SPREAD] HIGH-SPREAD EXCHANGE: {self._exchange_name} | per-side={self._spread_per_side:.2f}% | round-trip={self._round_trip_spread:.2f}%")
+            if self._longs_only:
+                print(f"  [SPREAD] LONGS-ONLY mode enabled — all SHORT signals will be blocked")
+
         # ── SNIPER MODE: Patient, high-conviction, capital-protecting trading ──
         # Only enters on multi-confluence setups, compounds profits into bigger positions
         sniper_cfg = config.get('sniper', {})
@@ -698,6 +714,12 @@ class TradingExecutor:
         # Min/Max SL distance as % of price, per timeframe
         self.TF_SL_MIN_PCT = {'1m': 0.003, '5m': 0.005, '15m': 0.008, '1h': 0.012, '4h': 0.02, '1d': 0.03}
         self.TF_SL_MAX_PCT = {'1m': 0.01, '5m': 0.02, '15m': 0.03, '1h': 0.05, '4h': 0.08, '1d': 0.12}
+        # Widen SL/TP/ratchet bounds for high-spread exchanges (Robinhood ~3.34% round-trip)
+        if self._round_trip_spread > 1.0:
+            self.TF_SL_MIN_PCT = {k: max(v, 0.04) for k, v in self.TF_SL_MIN_PCT.items()}
+            self.TF_SL_MAX_PCT = {k: max(v, 0.15) for k, v in self.TF_SL_MAX_PCT.items()}
+            self.TF_RATCHET_SCALE = {k: max(v * 2.5, 5.0) for k, v in self.TF_RATCHET_SCALE.items()}
+            print(f"  [SPREAD] SL/ratchet widened: min_SL=4%+, max_SL=15%+, ratchet=2.5x scaled")
         self.tf_performance: Dict[str, Dict[str, Any]] = {}
         for tf in self.SIGNAL_TIMEFRAMES:
             self.tf_performance[tf] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
@@ -2464,6 +2486,10 @@ class TradingExecutor:
         # ── Determine primary signal (5m for backward compat + position mgmt) ──
         signal = tf_signals.get('5m', {}).get('signal', 'NEUTRAL')
         is_reversal_signal = False
+
+        # ── LONGS-ONLY GATE (Robinhood spot) ──
+        if self._longs_only and signal == 'SELL':
+            return  # Block all SHORT signals on longs-only exchanges
 
         # Print status with active signals across all timeframes
         active_tfs_str = ", ".join(f"{tf}={s['signal']}" for tf, s in active_tf_signals.items()) or "none"
@@ -4767,11 +4793,11 @@ class TradingExecutor:
         spread_pct = (best_ask - best_bid) / best_bid * 100
         print(f"  [{self._ex_tag}:{asset}] LIQUIDITY: spread={spread_pct:.1f}% bids={len(reasonable_bids)} asks={len(reasonable_asks)}")
 
-        # ── SPREAD vs EXPECTED MOVE FILTER (Robinhood) ──
+        # ── SPREAD vs EXPECTED MOVE FILTER ──
         # Block trades where expected TP move doesn't clear spread by wide margin
         # Pre-training showed: trades need expected_move > 2.5x spread to be profitable
-        # Old 1.5x was too lenient — 5% move - 3.34% spread = only 1.66% profit
-        if self._paper_mode and price > 0:
+        # Always active on high-spread exchanges (not just paper mode)
+        if self._round_trip_spread > 1.0 and price > 0:
             atr_tp = self.config.get('risk', {}).get('atr_tp_mult', 4.5)
             # Try to use higher-TF ATR if available (more accurate for swing trades)
             _filter_atr = current_atr
@@ -5064,6 +5090,11 @@ class TradingExecutor:
             pnl_pct = ((entry - price) / entry) * 100.0
             pnl_from_peak = ((peak - price) / peak) * 100.0 if peak > 0 else 0
 
+        # ── Spread-adjusted PnL for ratchet decisions ──
+        # On high-spread exchanges, ratchet levels must reflect TRUE profit after spread
+        _spread_adj = self._round_trip_spread if hasattr(self, '_round_trip_spread') and self._round_trip_spread > 0.5 else 0
+        ratchet_pnl = pnl_pct - _spread_adj  # True PnL after spread cost
+
         # OB imbalance — tracked for display
         ob_imbalance = ob_levels.get('imbalance', 0)
 
@@ -5298,8 +5329,9 @@ class TradingExecutor:
 
         if direction == 'LONG':
             # Walk through ratchet levels from highest to lowest
+            # Use spread-adjusted PnL so ratchet levels reflect TRUE profit
             for min_pnl, protect, atr_m, label in reversed(ratchet_levels):
-                if pnl_pct >= min_pnl:
+                if ratchet_pnl >= min_pnl:
                     if protect == 0.0:
                         # BREAKEVEN level — move SL to entry
                         if position_age >= min_age_for_breakeven and sl < entry:
@@ -5337,7 +5369,7 @@ class TradingExecutor:
 
         else:  # SHORT (PUT) — mirror: SL ratchets DOWNWARD
             for min_pnl, protect, atr_m, label in reversed(ratchet_levels):
-                if pnl_pct >= min_pnl:
+                if ratchet_pnl >= min_pnl:
                     if protect == 0.0:
                         # BREAKEVEN level — move SL to entry
                         if position_age >= min_age_for_breakeven and sl > entry:
@@ -5834,6 +5866,13 @@ class TradingExecutor:
         else:
             pnl_pct = ((entry - price) / entry) * 100.0
             pnl_usd = (entry - price) * qty * cs
+
+        # ── Deduct round-trip spread from P&L (Robinhood ~3.34%) ──
+        _spread_cost_pct = self._round_trip_spread if hasattr(self, '_round_trip_spread') else 0
+        if _spread_cost_pct > 0.5:
+            _spread_cost_usd = entry * qty * cs * (_spread_cost_pct / 100.0)
+            pnl_pct -= _spread_cost_pct
+            pnl_usd -= _spread_cost_usd
 
         sl_chain = '->'.join(pos.get('sl_levels', ['L1']))
         actual_l_count = len(pos.get('sl_levels', ['L1']))

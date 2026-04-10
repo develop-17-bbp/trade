@@ -72,6 +72,7 @@ def build_pattern_scanner_prompt(
     winner_dna: str,
     cross_asset_context: str,
     edge_stats: Optional[dict] = None,
+    spread_round_trip: float = 0.0,
 ) -> str:
     """Build PATTERN SCANNER prompt — Mistral's job is to FIND patterns, not decide."""
 
@@ -102,7 +103,8 @@ You are the EYES of the system — find every pattern, formation, and anomaly.
 STRATEGY CONTEXT (so you know what matters most):
 Our system trades EMA(8) NEW LINES (72% WR, PF 1.19 in 6-month backtest).
 The 28% losers share patterns: late entries, declining volume, reversal wicks, fighting macro trend.
-PAY SPECIAL ATTENTION to these danger signals — they predict the hard stop (-2%) deaths.
+PAY SPECIAL ATTENTION to these danger signals — they predict the hard stop deaths.
+{"" if spread_round_trip < 1.0 else f"SPREAD COST: This exchange has {spread_round_trip:.1f}% round-trip spread. ONLY flag patterns suggesting {spread_round_trip*2:.0f}%+ moves. Small patterns (<{spread_round_trip:.0f}% expected move) are IRRELEVANT — they lose money after spread."}
 
 ═══════════════════════════════════════════════════════════
 MARKET DATA
@@ -233,6 +235,7 @@ def build_risk_analyst_prompt(
     math_filter_warnings: list = None,
     score_reasons: list = None,
     edge_stats: Optional[dict] = None,
+    spread_round_trip: float = 0.0,
 ) -> str:
     """Build RISK ANALYST + DECISION prompt — Llama's job is to decide using pattern data."""
 
@@ -351,8 +354,15 @@ STEP 2 — TREND CONTINUATION POTENTIAL:
 - Is there room to run? Check distance to next support/resistance.
 - Momentum is {momentum} — enough fuel for continuation?
 - Volume is {vol_pat} — does it support the move?
-- Even a 0.5% move in the right direction = profitable with trailing SL.
-
+{"" if spread_round_trip < 1.0 else f"""
+STEP 2.5 — SPREAD ECONOMICS (CRITICAL FOR THIS EXCHANGE):
+- Round-trip spread cost: {spread_round_trip:.1f}% (paid on entry + exit)
+- Price MUST move at LEAST {spread_round_trip:.1f}% just to BREAK EVEN
+- Need {spread_round_trip * 2:.1f}%+ move for meaningful profit
+- Moves under {spread_round_trip:.1f}% are GUARANTEED LOSSES regardless of direction
+- ONLY proceed=true if you see strong multi-day trend / breakout potential ({spread_round_trip * 2:.0f}%+ move)
+- Small scalps and mean-reversion plays are IMPOSSIBLE on this exchange
+"""}
 STEP 3 — INSTITUTIONAL & STRUCTURAL ANALYSIS:
 - Check FVG/Order Block data: is price in a liquidity void (easy movement) or at a reaction zone (reversal risk)?
 - Check Market Structure: is BOS confirmed in our direction? Or is CHoCH warning of reversal?
@@ -367,12 +377,12 @@ STEP 4 — RISK ASSESSMENT:
 - If opposing Order Block is nearby, price may reverse before L4+
 
 STEP 5 — FINAL DECISION:
-- Patterns confirm direction + momentum present? proceed=true (trailing SL handles the rest)
-- Patterns STRONG + structure aligned? proceed=true, confidence 0.70-0.90
-- Patterns MIXED but direction still clear? proceed=true, confidence 0.50-0.70
+{"" if spread_round_trip < 1.0 else f"- HIGH-SPREAD EXCHANGE: Only proceed=true for {spread_round_trip * 2:.0f}%+ potential moves. REJECT marginal setups."}
+- Patterns STRONG + structure aligned + multi-day momentum? proceed=true, confidence 0.80-0.95
+- Patterns confirm direction but some risk? proceed=true, confidence 0.65-0.80
 - Patterns CONTRADICT signal or exhaustion clear? proceed=false, high risk score
 - No clear edge either way? proceed=false
-- IMPORTANT: When in doubt and patterns lean toward the signal direction, ENTER. Missing a winner costs more than a small L1 loss.
+{"- IMPORTANT: On this exchange, only take STRONG conviction trades. A small L1 loss costs " + f"{spread_round_trip:.1f}% in spread alone." if spread_round_trip > 1.0 else "- IMPORTANT: When in doubt and patterns lean toward the signal direction, ENTER. Missing a winner costs more than a small L1 loss."}
 
 RESPOND WITH ONLY JSON:
 {{"proceed": <true/false>, "confidence": <0.0-1.0>, "position_size_pct": <1-20>, "risk_score": <0-10>, "trade_quality": <0-10>, "predicted_l_level": "<L1/L2/L3/L4/L5+>", "pattern_alignment": "<CONFIRMS/CONTRADICTS/NEUTRAL>", "bull_case": "<specific pattern-backed reason for L4+>", "bear_case": "<specific pattern/risk that kills this trade>", "facilitator_verdict": "<one sentence: enter or reject and WHY>"}}"""
@@ -1156,6 +1166,7 @@ class TradingBrainV2:
             regime_info=regime_info, funding_info=funding_info,
             session_info=session_info, winner_dna=winner_dna_str,
             cross_asset_context=cross_asset_ctx, edge_stats=edge_stats,
+            spread_round_trip=self.config.get('exchanges', [{}])[0].get('round_trip_spread_pct', 0.0) if self.config.get('exchanges') else 0.0,
         )
 
         # Pass 2: Llama decides (builder function receives pattern_scan_result from Pass 1)
@@ -1172,6 +1183,7 @@ class TradingBrainV2:
             winner_dna=winner_dna_str, cross_asset_context=cross_asset_ctx,
             math_filter_warnings=math_filter_warnings, score_reasons=score_reasons,
             edge_stats=edge_stats,
+            spread_round_trip=self.config.get('exchanges', [{}])[0].get('round_trip_spread_pct', 0.0) if self.config.get('exchanges') else 0.0,
         )
 
         consensus_result = self.consensus.query_two_pass(

@@ -76,6 +76,12 @@ class RobinhoodPaperFetcher:
         self.config = config or {}
         self._client = None
         self._lock = threading.RLock()  # RLock: reentrant — record_entry calls record_exit
+        # Spread cost for P&L deduction
+        self._spread_cost_pct = 0.0
+        for ex in self.config.get('exchanges', []):
+            if ex.get('name', '').lower() == 'robinhood':
+                self._spread_cost_pct = ex.get('round_trip_spread_pct', 3.34)
+                break
 
         # Paper state — keyed by unique trade ID to support multiple concurrent positions per asset
         self._next_trade_id: int = 0
@@ -296,11 +302,15 @@ class RobinhoodPaperFetcher:
             else:
                 fill_price = pos.current_price
 
-            # Calculate PnL
+            # Calculate PnL (with spread deduction for honest reporting)
             if pos.direction == "LONG":
                 pnl_pct = ((fill_price - pos.entry_price) / pos.entry_price) * 100
             else:
                 pnl_pct = ((pos.entry_price - fill_price) / pos.entry_price) * 100
+
+            # Deduct round-trip spread cost for realistic P&L
+            if self._spread_cost_pct > 0:
+                pnl_pct -= self._spread_cost_pct
 
             pnl_usd = pos.quantity * pos.entry_price * (pnl_pct / 100)
 
