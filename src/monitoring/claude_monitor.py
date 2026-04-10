@@ -190,7 +190,7 @@ def cmd_ask(client, question):
     journal = load_recent_journal(15)
 
     system = """You are an expert crypto trading system assistant. Answer questions about this EMA(8) crossover + LLM confirmation trading system.
-The system trades BTC and ETH perpetual futures on Bybit testnet and Delta Exchange testnet."""
+The system trades BTC and ETH on Robinhood Crypto (real account, read-only API)."""
 
     prompt = f"""SYSTEM CONFIG:
 {json.dumps(config, indent=2, default=str)}

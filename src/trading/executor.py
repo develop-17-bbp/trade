@@ -1,7 +1,7 @@
 """
 Trading Executor — EMA(8) Crossover with LLM Confirmation
 ==========================================================
-Bybit USDT perpetual futures. LONG (CALL) and SHORT (PUT).
+Robinhood Crypto (real account). LONG (CALL) and SHORT (PUT).
 Dynamic trailing stop-loss L1 -> L2 -> L3 -> L4 ...
 """
 
@@ -295,7 +295,7 @@ logger = logging.getLogger(__name__)
 
 
 class TradingExecutor:
-    """EMA(8) crossover strategy with LLM confirmation on Bybit testnet."""
+    """EMA(8) crossover strategy with LLM confirmation on Robinhood Crypto."""
 
     def __init__(self, config: dict):
         self.config = config
@@ -350,10 +350,11 @@ class TradingExecutor:
             self._use_claude = False
 
         # Quality gates — bear veto handles dangerous trades, so confidence bar can be lower
-        self.min_confidence: float = 0.60  # Data: conf >= 0.7 is profitable. 0.6 gives brain some room.
+        _conf_threshold = ai_cfg.get('llm_trade_conf_threshold', 0.70)
+        self.min_confidence: float = max(float(_conf_threshold), 0.70)  # Never below 0.70
         self.min_atr_ratio: float = 0.0003
-        self.trade_cooldown: float = 300.0       # 5 min between any trades (was 120 — caused churning)
-        self.post_close_cooldown: float = 600.0   # 10 min after closing before new entry (was 180 — too short)
+        self.trade_cooldown: float = 600.0       # 10 min between trades (swing: less churn)
+        self.post_close_cooldown: float = 1200.0  # 20 min after closing before new entry (swing: wait for setup)
         self.asset_loss_streak: Dict[str, int] = {}    # consecutive losses per asset
         self.asset_cooldown_until: Dict[str, float] = {}  # timestamp when asset can trade again
 
@@ -363,7 +364,7 @@ class TradingExecutor:
 
         # Exchange
         exchange_name = config.get('exchange', {}).get('name', 'bybit')
-        testnet = config.get('mode', 'testnet') in ('testnet', 'paper')
+        testnet = config.get('mode', 'live') in ('testnet', 'paper')
         self.price_source = PriceFetcher(exchange_name=exchange_name, testnet=testnet)
 
         # LLM strategist (used as fallback / for deeper analysis)
@@ -516,9 +517,9 @@ class TradingExecutor:
                 print(f"  [ML] LightGBM init failed ({e})")
                 self._lgbm = None
 
-        # ── MetaTrader 5 Bridge ──
+        # ── MetaTrader 5 Bridge (skip entirely in paper mode) ──
         self._mt5: Optional[MT5Bridge] = None
-        if MT5_AVAILABLE:
+        if MT5_AVAILABLE and not self._paper_mode:
             mt5_cfg = config.get('mt5', {})
             if mt5_cfg.get('enabled', False):
                 try:
@@ -532,6 +533,8 @@ class TradingExecutor:
                 except Exception as e:
                     print(f"  [MT5] Bridge init failed: {e}")
                     self._mt5 = None
+        elif self._paper_mode:
+            print(f"  [MT5] Skipped — paper mode (no real orders)")
 
         # Set leverage to 1x (prevent amplified losses)
         try:
@@ -666,20 +669,41 @@ class TradingExecutor:
         for a in self.assets:
             self.bear_veto_stats[a] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
 
+        # ── SNIPER MODE: Patient, high-conviction, capital-protecting trading ──
+        # Only enters on multi-confluence setups, compounds profits into bigger positions
+        sniper_cfg = config.get('sniper', {})
+        self.sniper_enabled: bool = sniper_cfg.get('enabled', self._paper_mode)  # Default ON for Robinhood
+        self.sniper_min_confluence: int = sniper_cfg.get('min_confluence', 4)  # Need 4+ signals agreeing
+        self.sniper_min_score: int = sniper_cfg.get('min_score', 8)  # Higher bar than normal min_entry_score
+        self.sniper_min_expected_move_pct: float = sniper_cfg.get('min_expected_move_pct', 5.0)  # Must expect 5%+ move
+        self.sniper_compound_pct: float = sniper_cfg.get('compound_pct', 50.0)  # Reinvest 50% of profits
+        self.sniper_protect_principal: bool = sniper_cfg.get('protect_principal', True)  # Never risk original capital after first win
+        self.sniper_stats: Dict[str, int] = {'signals_seen': 0, 'filtered': 0, 'entered': 0, 'wins': 0, 'losses': 0}
+        self.sniper_profit_pool: float = 0.0  # Accumulated realized profits for compounding
+        self.sniper_principal: float = self.initial_capital  # Protected base capital
+        if self.sniper_enabled:
+            print(f"  [SNIPER] MODE ACTIVE — min confluence: {self.sniper_min_confluence} | min score: {self.sniper_min_score} | min move: {self.sniper_min_expected_move_pct}%")
+            print(f"  [SNIPER] Compound {self.sniper_compound_pct}% of profits | Protect principal: {self.sniper_protect_principal}")
+
         # ── Per-timeframe performance tracking (LLM learns which TFs profit) ──
-        self.SIGNAL_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h']
-        self.TF_FETCH_LIMITS = {'1m': 100, '5m': 100, '15m': 60, '1h': 50, '4h': 30}
+        # Configurable via adaptive.signal_timeframes (default: all TFs)
+        _cfg_tfs = adaptive.get('signal_timeframes', ['1m', '5m', '15m', '1h', '4h'])
+        self.SIGNAL_TIMEFRAMES = [str(tf) for tf in _cfg_tfs]
+        self.TF_FETCH_LIMITS = {'1m': 100, '5m': 100, '15m': 60, '1h': 50, '4h': 30, '1d': 20}
         # Scale ratchet thresholds by timeframe (higher TF = bigger moves = wider %)
-        self.TF_RATCHET_SCALE = {'1m': 0.5, '5m': 1.0, '15m': 1.5, '1h': 2.5, '4h': 5.0}
+        # Ratchet scale: how many % PnL to trigger breakeven/profit lock per TF
+        # Old: 4h=5.0, 1d=10.0 → breakeven needed +5%/+10% = too late, spread already ate profit
+        # New: 4h=3.0, 1d=5.0 → breakeven at +3%/+5% = just above spread cost (3.34%)
+        self.TF_RATCHET_SCALE = {'1m': 0.5, '5m': 1.0, '15m': 1.5, '1h': 2.5, '4h': 3.0, '1d': 5.0}
         # Min/Max SL distance as % of price, per timeframe
-        self.TF_SL_MIN_PCT = {'1m': 0.003, '5m': 0.005, '15m': 0.008, '1h': 0.012, '4h': 0.02}
-        self.TF_SL_MAX_PCT = {'1m': 0.01, '5m': 0.02, '15m': 0.03, '1h': 0.05, '4h': 0.08}
+        self.TF_SL_MIN_PCT = {'1m': 0.003, '5m': 0.005, '15m': 0.008, '1h': 0.012, '4h': 0.02, '1d': 0.03}
+        self.TF_SL_MAX_PCT = {'1m': 0.01, '5m': 0.02, '15m': 0.03, '1h': 0.05, '4h': 0.08, '1d': 0.12}
         self.tf_performance: Dict[str, Dict[str, Any]] = {}
         for tf in self.SIGNAL_TIMEFRAMES:
             self.tf_performance[tf] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
         # Cache HTF candles (1h/4h only refresh every few minutes, not every 10s poll)
         self._tf_cache: Dict[str, Dict] = {}   # key = f"{asset}_{tf}" -> {'ohlcv': ..., 'ts': time.time()}
-        self._tf_cache_ttl = {'1m': 30, '5m': 60, '15m': 120, '1h': 300, '4h': 600}
+        self._tf_cache_ttl = {'1m': 30, '5m': 60, '15m': 120, '1h': 300, '4h': 600, '1d': 3600}
 
         # ── Portfolio-level drawdown limit (Freqtrade pattern) ──
         # Halt ALL trading if cumulative realized losses exceed threshold
@@ -687,6 +711,8 @@ class TradingExecutor:
         self.daily_loss_limit_pct: float = risk.get('daily_loss_limit_pct', 3.0)
         self.session_start_equity: float = self.initial_capital
         self.session_realized_pnl: float = 0.0
+        self._trade_log: List[Dict] = []  # Complete trade history for session summary
+        self._last_tick_prices: Dict[str, float] = {}  # Latest price per asset for paper updates
         self.daily_realized_pnl: float = 0.0
         self.daily_reset_date: str = datetime.utcnow().strftime('%Y-%m-%d')
         self.trading_halted: bool = False
@@ -906,6 +932,20 @@ class TradingExecutor:
                 print(f"  [GUARD] MarketEventGuard ACTIVE — calendar-based high-risk pause")
             except Exception as e:
                 print(f"  [GUARD] MarketEventGuard init failed ({e})")
+
+        # ── Robinhood Paper Trading Tracker ──
+        self._paper = None
+        try:
+            from src.data.robinhood_fetcher import RobinhoodPaperFetcher
+            self._paper = RobinhoodPaperFetcher(config)
+            self._paper.load_state()
+            if self._paper.connected:
+                print(f"  [PAPER] Robinhood Paper Tracker ACTIVE — logging signals vs real prices")
+            else:
+                print(f"  [PAPER] Paper Tracker loaded (no Robinhood — using CCXT prices)")
+        except Exception as e:
+            print(f"  [PAPER] Paper Tracker init failed ({e})")
+            self._paper = None
 
         # ── Online training state: last full analysis timestamp ──
         self._last_full_meta_analysis = 0  # timestamp of last full cross-asset analysis
@@ -1564,7 +1604,7 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     @property
     def _exchange_client(self):
-        """Return the active exchange client (Bybit, Delta, or None)."""
+        """Return the active exchange client (Bybit, Delta, or None). Robinhood is read-only."""
         ps = self.price_source
         if hasattr(ps, 'bybit') and ps.bybit and ps.bybit.available:
             return ps.bybit
@@ -1576,21 +1616,31 @@ class TradingExecutor:
     def _exchange_name(self):
         """Return active exchange name."""
         ps = self.price_source
+        if hasattr(ps, 'robinhood') and ps.robinhood and ps.robinhood.authenticated:
+            return 'robinhood'
         if hasattr(ps, 'bybit') and ps.bybit and ps.bybit.available:
             return 'bybit'
         if hasattr(ps, 'delta') and ps.delta and ps.delta.available:
             return 'delta'
         return 'unknown'
 
+    @property
+    def _paper_mode(self) -> bool:
+        """True when running paper-only (Robinhood read-only, no order execution)."""
+        return self._exchange_name == 'robinhood'
+
     def _get_symbol(self, asset: str) -> str:
         """BTC -> exchange-specific symbol format."""
+        if self._exchange_name == 'robinhood':
+            return f"{asset}/USD"  # Kraken CCXT uses BTC/USD
         if self._exchange_name == 'delta':
             return f"{asset}USD"  # Delta uses BTCUSD
-        # Bybit always uses CCXT format — MT5 symbols are for MT5 execution only
         return f"{asset}/USDT:USDT"  # Bybit uses BTC/USDT:USDT
 
     def _get_spot_symbol(self, asset: str) -> str:
-        """BTC -> BTC/USDT"""
+        """BTC -> spot symbol."""
+        if self._exchange_name == 'robinhood':
+            return f"{asset}/USD"
         return f"{asset}/USDT"
 
     def _extract_ob_levels(self, order_book: dict, price: float) -> dict:
@@ -1623,7 +1673,6 @@ class TradingExecutor:
             return result
 
         # Calculate imbalance using only levels NEAR current price (within 3%)
-        # Testnet has fake walls far from price that skew imbalance to -1.00
         nearby_bid_vol = 0
         nearby_ask_vol = 0
         price_range = price * 0.03  # 3% from current price
@@ -1704,15 +1753,9 @@ class TradingExecutor:
                 new_ex = ccxt.delta({
                     'apiKey': old_ex.apiKey,
                     'secret': old_ex.secret,
-                    'sandbox': True,
                     'options': {'defaultType': 'future'},
                     'enableRateLimit': True,
                 })
-                if True:  # testnet
-                    new_ex.urls['api'] = {
-                        'public': 'https://cdn-ind.testnet.deltaex.org',
-                        'private': 'https://cdn-ind.testnet.deltaex.org',
-                    }
                 new_ex.load_markets()
                 self.price_source.delta.exchange = new_ex
                 self.price_source.exchange = new_ex
@@ -1727,7 +1770,8 @@ class TradingExecutor:
     def run(self):
         print("=" * 60)
         ex_name = self._exchange_name.upper()
-        print(f"  EMA(8) Crossover + LLM | {ex_name} Futures")
+        mode_tag = "PAPER TRADING" if self._paper_mode else "LIVE"
+        print(f"  EMA(8) Crossover + LLM | {ex_name} {mode_tag}")
         print(f"  Assets: {self.assets} | Poll: {self.poll_interval}s")
         if self._use_claude and self._claude_client:
             print(f"  LLM: Claude API ({self._claude_model}) -- Anthropic")
@@ -1735,7 +1779,62 @@ class TradingExecutor:
             print(f"  LLM: {self.ollama_model} @ {self.ollama_base_url}")
         bear_status = "ACTIVE" if self.bear_enabled else "OFF"
         print(f"  Bear Veto: {bear_status} (veto>={self.bear_veto_threshold} reduce>={self.bear_reduce_threshold})")
+        if self.sniper_enabled:
+            print(f"  SNIPER MODE: confluence>={self.sniper_min_confluence} | score>={self.sniper_min_score} | move>={self.sniper_min_expected_move_pct}% | compound={self.sniper_compound_pct}%")
         print("=" * 60)
+
+        # ── Subsystem Health Report ──
+        # Explicitly log which subsystems loaded vs failed (Risk 3: no silent degradation)
+        _subsystems = {
+            'Anthropic SDK': ANTHROPIC_AVAILABLE,
+            'AgentOrchestrator': ORCHESTRATOR_AVAILABLE,
+            'OnChain': ONCHAIN_AVAILABLE,
+            'MemoryVault': MEMORY_AVAILABLE,
+            'TradingBrainV2': BRAIN_V2_AVAILABLE,
+            'TradeProtections': PROTECTIONS_AVAILABLE,
+            'PriceAction': PRICE_ACTION_AVAILABLE,
+            'MarketStructure': MARKET_STRUCTURE_AVAILABLE,
+            'ProfitProtector': PROFIT_PROTECTOR_AVAILABLE,
+            'VPIN': VPIN_AVAILABLE,
+            'Hurst': HURST_AVAILABLE,
+            'HMM Regime': HMM_AVAILABLE,
+            'Kalman Filter': KALMAN_AVAILABLE,
+            'Volatility Model': VOLATILITY_MODEL_AVAILABLE,
+            'Cycle Detector': CYCLE_AVAILABLE,
+            'LightGBM': LIGHTGBM_AVAILABLE,
+            'LSTM Ensemble': LSTM_AVAILABLE,
+            'PatchTST': PATCHTST_AVAILABLE,
+            'Alpha Decay': ALPHA_DECAY_AVAILABLE,
+            'RL Agent': RL_AVAILABLE,
+            'MT5 Bridge': MT5_AVAILABLE,
+            'LLM Router': LLM_ROUTER_AVAILABLE,
+            'Prompt Constraints': PROMPT_CONSTRAINTS_AVAILABLE,
+            'Alerting': ALERTING_AVAILABLE,
+            'Position Sizing': POSITION_SIZING_AVAILABLE,
+            'Dynamic Risk': DYNAMIC_RISK_AVAILABLE,
+            'MetaSizer': META_SIZER_AVAILABLE,
+            'Vol Regime Detector': VOL_REGIME_DETECTOR_AVAILABLE,
+            'TradeTrace': TRADE_TRACE_AVAILABLE,
+            'FFT Cycle': FFT_CYCLE_AVAILABLE,
+            'Health Checker': HEALTH_CHECKER_AVAILABLE,
+            'Advanced Learning': ADVANCED_LEARNING_AVAILABLE,
+            'EVT Risk': EVT_RISK_AVAILABLE,
+            'Monte Carlo Risk': MC_RISK_AVAILABLE,
+            'Sentiment': SENTIMENT_AVAILABLE,
+            'Temporal Transformer': TEMPORAL_TRANSFORMER_AVAILABLE,
+            'Hawkes Process': HAWKES_AVAILABLE,
+            'Event Guard': EVENT_GUARD_AVAILABLE,
+        }
+        _ok = [k for k, v in _subsystems.items() if v]
+        _fail = [k for k, v in _subsystems.items() if not v]
+        print(f"\n  SUBSYSTEM HEALTH: {len(_ok)}/{len(_subsystems)} loaded")
+        if _fail:
+            print(f"  DEGRADED ({len(_fail)}): {', '.join(_fail)}")
+            logger.warning(f"[STARTUP] Degraded subsystems: {', '.join(_fail)}")
+        else:
+            print(f"  ALL SUBSYSTEMS OPERATIONAL")
+        print("=" * 60)
+
         self._run_live()
 
     # ------------------------------------------------------------------
@@ -1747,23 +1846,28 @@ class TradingExecutor:
                 loop_start = time.time()
                 self.bar_count += 1
 
-                # Fetch REAL account equity (wallet balance + unrealized PnL)
-                # Previously used wallet balance which hid -$31K in open losses
+                # Fetch account equity
                 unrealized_pnl = 0.0
                 wallet_balance = 0.0
-                try:
-                    if self._exchange_client:
-                        acct = self._exchange_client.get_account()
-                        total_equity = float(acct.get('equity', 0) or 0)
-                        available = float(acct.get('cash', 0) or 0)
-                        unrealized_pnl = float(acct.get('unrealized_pnl', 0) or 0)
-                        wallet_balance = float(acct.get('wallet_balance', 0) or 0)
-                        if total_equity > 0:
-                            self.equity = total_equity
-                        if available > 0:
-                            self.cash = available
-                except Exception:
-                    pass
+                if self._paper_mode:
+                    # Paper mode: equity tracked internally from simulated P&L
+                    if self._paper:
+                        wallet_balance = self._paper.equity
+                else:
+                    # Live mode: fetch from exchange
+                    try:
+                        if self._exchange_client:
+                            acct = self._exchange_client.get_account()
+                            total_equity = float(acct.get('equity', 0) or 0)
+                            available = float(acct.get('cash', 0) or 0)
+                            unrealized_pnl = float(acct.get('unrealized_pnl', 0) or 0)
+                            wallet_balance = float(acct.get('wallet_balance', 0) or 0)
+                            if total_equity > 0:
+                                self.equity = total_equity
+                            if available > 0:
+                                self.cash = available
+                    except Exception:
+                        pass
 
                 ret_pct = ((self.equity - self.initial_capital) / self.initial_capital) * 100.0
                 n_pos = len(self.positions)
@@ -1772,7 +1876,11 @@ class TradingExecutor:
                 bear_tag = f" | Bear: {total_vetoed}v/{total_reduced}r" if (total_vetoed + total_reduced) > 0 else ""
                 pnl_tag = f" | UPnL: ${unrealized_pnl:+,.2f}" if unrealized_pnl != 0 else ""
                 wallet_tag = f" | Wallet: ${wallet_balance:,.2f}" if wallet_balance > 0 and abs(wallet_balance - self.equity) > 1 else ""
-                print(f"\n[{self._ex_tag} BAR {self.bar_count}] Equity: ${self.equity:,.2f}{wallet_tag}{pnl_tag} | Cash: ${self.cash:,.2f} | Return: {ret_pct:+.2f}% | Positions: {n_pos}{bear_tag}")
+                sniper_tag = ""
+                if self.sniper_enabled:
+                    _ss = self.sniper_stats
+                    sniper_tag = f" | Sniper: {_ss['signals_seen']}seen/{_ss['filtered']}filtered/{_ss['entered']}entered pool=${self.sniper_profit_pool:,.2f}"
+                print(f"\n[{self._ex_tag} BAR {self.bar_count}] Equity: ${self.equity:,.2f}{wallet_tag}{pnl_tag} | Cash: ${self.cash:,.2f} | Return: {ret_pct:+.2f}% | Positions: {n_pos}{bear_tag}{sniper_tag}")
 
                 # ── Portfolio drawdown check — halt new entries if limit breached ──
                 if not self._check_drawdown_limits():
@@ -1799,6 +1907,18 @@ class TradingExecutor:
                     except Exception as e:
                         print(f"  [{self._ex_tag}:{asset}] ERROR: {e}")
                         logger.exception(f"Error processing {asset}")
+
+                # ── Paper Trading: update positions with prices from OHLCV feed ──
+                if self._paper:
+                    try:
+                        # Pass latest tick prices (already fetched from Kraken OHLCV)
+                        _live = {a: self._last_tick_prices.get(a, 0) for a in self.assets}
+                        self._paper.update_positions(live_prices=_live)
+                        self._paper.save_state()  # Save every bar so dashboard sees updates
+                        if self._paper.positions or self._paper.stats['exits'] > 0:
+                            print(f"  {self._paper.positions_status()}")
+                    except Exception as _pe:
+                        logger.debug(f"Paper update error: {_pe}")
 
                 # ── AUTONOMOUS ML RETRAIN ──
                 # 1. HMM quick retrain: every 6 hours (fast, uses live OHLCV)
@@ -1993,6 +2113,10 @@ class TradingExecutor:
                     except Exception as me:
                         logger.debug(f"Advanced learning loop error: {me}")
 
+                # Paper report every 100 bars (~17min at 10s poll)
+                if self._paper and self.bar_count % 100 == 0 and self._paper.stats['exits'] > 0:
+                    print(self._paper.report())
+
                 # Sleep until next bar
                 elapsed = time.time() - loop_start
                 sleep_time = max(1, self.poll_interval - int(elapsed))
@@ -2000,12 +2124,66 @@ class TradingExecutor:
                 time.sleep(sleep_time)
 
             except KeyboardInterrupt:
+                if self._paper:
+                    self._paper.save_state()
+                    print(self._paper.report())
+                self._print_session_summary()
                 print("\n[SHUTDOWN] Graceful exit.")
                 break
             except Exception as e:
                 print(f"  [{self._ex_tag} ERROR] {e}")
                 logger.exception("Main loop error")
                 time.sleep(5)
+
+    # ------------------------------------------------------------------
+    # Session Summary — printed on shutdown
+    # ------------------------------------------------------------------
+    def _print_session_summary(self):
+        """Print complete trade log table and session P&L summary."""
+        trades = self._trade_log
+        if not trades:
+            print("\n" + "=" * 80)
+            print("  SESSION SUMMARY: No trades executed")
+            print("=" * 80)
+            return
+
+        total_pnl = sum(t['realized_pnl'] for t in trades)
+        wins = sum(1 for t in trades if t['realized_pnl'] > 0)
+        losses = sum(1 for t in trades if t['realized_pnl'] <= 0)
+        n = len(trades)
+        wr = wins / n * 100 if n > 0 else 0
+        total_spread = sum(t.get('spread_cost', 0) for t in trades)
+        largest_win = max((t['realized_pnl'] for t in trades), default=0)
+        largest_loss = min((t['realized_pnl'] for t in trades), default=0)
+        avg_pnl = total_pnl / n if n > 0 else 0
+        gross_profit = sum(t['realized_pnl'] for t in trades if t['realized_pnl'] > 0)
+        gross_loss = abs(sum(t['realized_pnl'] for t in trades if t['realized_pnl'] < 0))
+        pf = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+
+        print("\n" + "=" * 100)
+        print("  SESSION TRADE LOG")
+        print("=" * 100)
+        print(f"  {'#':<4} {'Market':<10} {'Entry Price':>14} {'Exit Price':>14} {'Qty':>12} {'Type':<6} {'Realized P&L':>14} {'Spread':>10} {'Time':<20}")
+        print("  " + "-" * 96)
+
+        running_pnl = 0.0
+        for i, t in enumerate(trades, 1):
+            running_pnl += t['realized_pnl']
+            pnl_str = f"${t['realized_pnl']:+,.2f}"
+            spread_str = f"${t.get('spread_cost', 0):,.2f}" if t.get('spread_cost', 0) > 0 else "-"
+            print(f"  {i:<4} {t['market']:<10} ${t['entry_price']:>12,.2f} ${t['exit_price']:>12,.2f} {t['qty']:>12.6f} {t['direction']:<6} {pnl_str:>14} {spread_str:>10} {t['time']:<20}")
+
+        print("  " + "-" * 96)
+        print(f"\n  {'SUMMARY':^100}")
+        print("  " + "=" * 96)
+        pnl_color = "PROFIT" if total_pnl >= 0 else "LOSS"
+        print(f"  Total Trades:    {n:<6}  |  Wins: {wins}  |  Losses: {losses}  |  Win Rate: {wr:.1f}%")
+        print(f"  Net P&L:         ${total_pnl:+,.2f} ({pnl_color})")
+        print(f"  Gross Profit:    ${gross_profit:+,.2f}  |  Gross Loss: ${gross_loss:,.2f}  |  Profit Factor: {pf:.2f}")
+        print(f"  Largest Win:     ${largest_win:+,.2f}  |  Largest Loss: ${largest_loss:+,.2f}  |  Avg P&L: ${avg_pnl:+,.2f}")
+        if total_spread > 0:
+            print(f"  Total Spread:    ${total_spread:,.2f} (Robinhood)")
+        print("  " + "=" * 96)
 
     # ------------------------------------------------------------------
     # Per-asset processing
@@ -2065,8 +2243,8 @@ class TradingExecutor:
                 self._try_reconnect(asset)
                 return
 
-        # ── TESTNET PRICE SANITY ──
-        # 1. Reject candle-to-candle jumps > 25%
+        # ── PRICE SANITY ──
+        # Reject candle-to-candle jumps > 25% (data quality check)
         if len(closes) >= 3:
             for i in range(-2, 0):
                 prev_c = closes[i - 1]
@@ -2077,25 +2255,14 @@ class TradingExecutor:
                         print(f"  [{self._ex_tag}:{asset}] PRICE JUMP: {jump_pct:.1f}% between candles (${prev_c:,.0f} -> ${curr_c:,.0f}) — skipping")
                         return
 
-        # 2. Reject absolute fantasy prices (testnet returns $873K BTC, $345K BTC etc.)
-        # Use hardcoded sane ranges — these are generous 10x bands around expected prices
+        # Reject prices outside sane ranges (data quality)
         _sane_ranges = {'BTC': (5_000, 500_000), 'ETH': (200, 50_000)}
         _sane = _sane_ranges.get(asset)
         if _sane and len(closes) >= 1:
             last_price = closes[-1]
             if last_price < _sane[0] or last_price > _sane[1]:
-                print(f"  [{self._ex_tag}:{asset}] FANTASY PRICE: ${last_price:,.0f} outside sane range ${_sane[0]:,}-${_sane[1]:,} — testnet garbage, skipping")
+                print(f"  [{self._ex_tag}:{asset}] BAD PRICE: ${last_price:,.0f} outside sane range ${_sane[0]:,}-${_sane[1]:,} — skipping")
                 return
-
-        # 3. Cross-check: compare OHLCV median vs live ticker — large divergence = bad data
-        if len(closes) >= 10:
-            _sorted_closes = sorted(closes[-10:])
-            _median_price = _sorted_closes[len(_sorted_closes) // 2]
-            if _median_price > 0 and closes[-1] > 0:
-                _divergence = abs(closes[-1] - _median_price) / _median_price * 100
-                if _divergence > 50:
-                    print(f"  [{self._ex_tag}:{asset}] PRICE DIVERGENCE: last=${closes[-1]:,.0f} vs median=${_median_price:,.0f} ({_divergence:.0f}%) — testnet noise, skipping")
-                    return
 
         # ── Live tick price for SL management ──
         try:
@@ -2104,6 +2271,11 @@ class TradingExecutor:
         except Exception:
             live_price = closes[-1]
         tick_price = live_price
+
+        # Store tick price for paper position updates (avoids extra API calls)
+        if not hasattr(self, '_last_tick_prices'):
+            self._last_tick_prices = {}
+        self._last_tick_prices[asset] = tick_price
 
         # 5m EMA/ATR (always computed — used for position management + as fallback)
         ema_vals = ema(closes, self.ema_period)
@@ -2117,13 +2289,13 @@ class TradingExecutor:
         # ══════════════════════════════════════════════════════════════
         # FETCH ALL TIMEFRAMES & COMPUTE SIGNALS ON EACH
         # ══════════════════════════════════════════════════════════════
-        tf_data = {'5m': ohlcv}  # 5m already fetched
+        tf_data = {'5m': ohlcv}  # 5m always fetched for price/staleness/ATR
         tf_signals = {}
 
-        # Compute 5m signal
+        # Compute 5m signal (always — used for price management even if not traded)
         tf_signals['5m'] = self._compute_tf_signal(ohlcv, '5m')
 
-        # Fetch and compute signals for other timeframes (with caching)
+        # Fetch and compute signals for configured timeframes (with caching)
         for tf in self.SIGNAL_TIMEFRAMES:
             if tf == '5m':
                 continue
@@ -2135,8 +2307,20 @@ class TradingExecutor:
             except Exception as e:
                 logger.debug(f"{tf} fetch failed for {asset}: {e}")
 
-        # Active signals = timeframes with BUY or SELL
-        active_tf_signals = {tf: sig for tf, sig in tf_signals.items() if sig.get('signal') != 'NEUTRAL'}
+        # Active signals = ONLY from configured SIGNAL_TIMEFRAMES (not 5m unless configured)
+        # This prevents 5m scalp signals from triggering trades on Robinhood swing config
+        active_tf_signals = {
+            tf: sig for tf, sig in tf_signals.items()
+            if sig.get('signal') != 'NEUTRAL' and tf in self.SIGNAL_TIMEFRAMES
+        }
+
+        # Store best active TF's ATR for spread filter (higher TF = more accurate for swing)
+        if not hasattr(self, '_last_chosen_tf_atr'):
+            self._last_chosen_tf_atr = {}
+        if active_tf_signals:
+            _best_tf = max(active_tf_signals.keys(),
+                          key=lambda t: active_tf_signals[t].get('current_atr', 0))
+            self._last_chosen_tf_atr[asset] = active_tf_signals[_best_tf].get('current_atr', current_atr)
 
         # HTF alignment (computed from tf_signals)
         htf_1h_direction = tf_signals.get('1h', {}).get('ema_direction', 'FLAT')
@@ -2543,9 +2727,112 @@ class TradingExecutor:
         tf_signals = tf_signals or {}
         active_tf_signals = active_tf_signals or {}
 
-        # Need at least one active signal on ANY timeframe
-        if not active_tf_signals and signal == "NEUTRAL":
+        # Store tf_signals for use in later gates (e.g., SHORT direction gate)
+        if not hasattr(self, '_last_tf_signals'):
+            self._last_tf_signals = {}
+        self._last_tf_signals[asset] = tf_signals
+
+        # Need at least one active signal on a configured timeframe
+        if not active_tf_signals:
             return
+
+        # ══════════════════════════════════════════════════════════
+        # SNIPER MODE: Multi-confluence gate — wait for PERFECT setups
+        # Counts how many independent signals agree before allowing entry
+        # This is the PRIMARY quality filter for Robinhood's 3.3% spread
+        # ══════════════════════════════════════════════════════════
+        if self.sniper_enabled:
+            self.sniper_stats['signals_seen'] += 1
+            confluence_count = 0
+            confluence_reasons = []
+
+            # 1. Multiple timeframes agree (each active TF with same direction = +1)
+            _sniper_direction = signal  # BUY or SELL from 5m anchor
+            for tf, sig in active_tf_signals.items():
+                tf_sig = sig.get('signal', 'NEUTRAL')
+                if tf_sig != 'NEUTRAL':
+                    if (tf_sig == 'BUY' and _sniper_direction == 'BUY') or \
+                       (tf_sig == 'SELL' and _sniper_direction == 'SELL'):
+                        confluence_count += 1
+                        confluence_reasons.append(f"{tf}={tf_sig}")
+
+            # 2. HTF alignment bonus (+1 if 4h agrees, +1 if 1d agrees)
+            _htf_4h = tf_signals.get('4h', {}).get('ema_direction', 'FLAT')
+            _htf_1d = tf_signals.get('1d', {}).get('ema_direction', 'FLAT')
+            if (_sniper_direction == 'BUY' and _htf_4h == 'RISING') or \
+               (_sniper_direction == 'SELL' and _htf_4h == 'FALLING'):
+                confluence_count += 1
+                confluence_reasons.append(f"4h_ema={_htf_4h}")
+            if (_sniper_direction == 'BUY' and _htf_1d == 'RISING') or \
+               (_sniper_direction == 'SELL' and _htf_1d == 'FALLING'):
+                confluence_count += 1
+                confluence_reasons.append(f"1d_ema={_htf_1d}")
+
+            # 3. Volume confirmation (+1 if volume trending up SIGNIFICANTLY)
+            # Old: 20% jump fired on noise. New: 50% jump = real conviction
+            if len(volumes) >= 10:
+                _vol_avg_recent = sum(volumes[-3:]) / 3
+                _vol_avg_prior = sum(volumes[-10:-3]) / 7 if len(volumes) >= 10 else _vol_avg_recent
+                if _vol_avg_prior > 0 and _vol_avg_recent / _vol_avg_prior > 1.5:
+                    confluence_count += 1
+                    confluence_reasons.append(f"vol_up={_vol_avg_recent/_vol_avg_prior:.1f}x")
+
+            # 4. EMA slope acceleration (+1 if slope increasing AND strong)
+            # Old: 0.05% threshold = any random candle. New: 0.15% = real momentum
+            if len(ema_vals) >= 5:
+                _slope_now = abs(ema_vals[-1] - ema_vals[-2]) / ema_vals[-2] * 100 if ema_vals[-2] > 0 else 0
+                _slope_prev = abs(ema_vals[-3] - ema_vals[-4]) / ema_vals[-4] * 100 if ema_vals[-4] > 0 else 0
+                if _slope_now > _slope_prev * 1.5 and _slope_now > 0.15:
+                    confluence_count += 1
+                    confluence_reasons.append(f"accel={_slope_now:.3f}%")
+
+            # 5. Expected move vs spread cost (+1 if move > 2× spread)
+            _sniper_atr = current_atr
+            if hasattr(self, '_last_chosen_tf_atr') and self._last_chosen_tf_atr.get(asset, 0) > 0:
+                _sniper_atr = self._last_chosen_tf_atr[asset]
+            _atr_tp = self.config.get('risk', {}).get('atr_tp_mult', 10.0)
+            _expected_move = (_sniper_atr * _atr_tp / price) * 100 if price > 0 and _sniper_atr > 0 else 0
+            if _expected_move >= self.sniper_min_expected_move_pct:
+                confluence_count += 1
+                confluence_reasons.append(f"move={_expected_move:.1f}%")
+
+            # 6. Trend structure: higher highs (LONG) or lower lows (SHORT)
+            # Proves the trend is structurally intact, not just EMA noise
+            if len(closes) >= 20:
+                _recent_high = max(closes[-5:])
+                _prior_high = max(closes[-15:-5])
+                _recent_low = min(closes[-5:])
+                _prior_low = min(closes[-15:-5])
+                if _sniper_direction == 'BUY' and _recent_high > _prior_high and _recent_low > _prior_low:
+                    confluence_count += 1
+                    confluence_reasons.append("HH+HL")
+                elif _sniper_direction == 'SELL' and _recent_low < _prior_low and _recent_high < _prior_high:
+                    confluence_count += 1
+                    confluence_reasons.append("LL+LH")
+
+            # 7. Price above both EMA(8) for LONG / below for SHORT (+1)
+            # Confirms price has momentum, not just EMA slope
+            if len(ema_vals) >= 2:
+                _ema_now = ema_vals[-2]
+                if _sniper_direction == 'BUY' and closes[-1] > _ema_now and closes[-2] > _ema_now:
+                    confluence_count += 1
+                    confluence_reasons.append("price>EMA")
+                elif _sniper_direction == 'SELL' and closes[-1] < _ema_now and closes[-2] < _ema_now:
+                    confluence_count += 1
+                    confluence_reasons.append("price<EMA")
+
+            # GATE: Must meet minimum confluence
+            if confluence_count < self.sniper_min_confluence:
+                self.sniper_stats['filtered'] += 1
+                print(f"  [{self._ex_tag}:{asset}] SNIPER FILTER: confluence {confluence_count}/{self.sniper_min_confluence} — {', '.join(confluence_reasons) or 'none'} — WAIT")
+                return
+            else:
+                print(f"  [{self._ex_tag}:{asset}] SNIPER PASS: confluence {confluence_count}/{self.sniper_min_confluence} — {', '.join(confluence_reasons)}")
+
+            # Store for RL state (accessible later in evaluation)
+            if not hasattr(self, '_last_sniper_confluence'):
+                self._last_sniper_confluence = {}
+            self._last_sniper_confluence[asset] = confluence_count
 
         # Initialize math filter warnings list (used throughout evaluation)
         math_filter_warnings = []
@@ -2857,7 +3144,7 @@ class TradingExecutor:
                         if entry_p is None:
                             print(f"  [{self._ex_tag}:{asset}] SYNC SKIP: no avg_entry_price from exchange — can't calculate safe SL")
                             return
-                        # Reject if entry is >30% away from current price (testnet price artifact)
+                        # Reject if entry is >30% away from current price (data artifact)
                         entry_deviation = abs(entry_p - price) / price * 100 if price > 0 else 999
                         if entry_deviation > 30:
                             print(f"  [{self._ex_tag}:{asset}] SYNC SKIP: entry ${entry_p:,.0f} is {entry_deviation:.0f}% from current ${price:,.0f} — bad data")
@@ -3277,6 +3564,23 @@ class TradingExecutor:
                     _rank = sum(1 for v in _sorted if v <= current_atr)
                     _atr_pctile = _rank / len(_sorted)
                 _vol_ratio = volumes[-1] / (sum(volumes[-20:]) / 20) if len(volumes) >= 20 and sum(volumes[-20:]) > 0 else 1.0
+                # Compute Robinhood-specific state features
+                _spread_cost_pct = 3.34 if self._paper_mode else 0.1  # Round-trip spread
+                _atr_tp_mult = self.config.get('risk', {}).get('atr_tp_mult', 10.0)
+                _filter_atr = current_atr
+                if hasattr(self, '_last_chosen_tf_atr') and self._last_chosen_tf_atr.get(asset, 0) > 0:
+                    _filter_atr = self._last_chosen_tf_atr[asset]
+                _expected_move_pct = (_filter_atr * _atr_tp_mult / price) * 100 if price > 0 and _filter_atr > 0 else 0
+                _move_to_spread = _expected_move_pct / _spread_cost_pct if _spread_cost_pct > 0 else 10.0
+                _sniper_confl = self._last_sniper_confluence.get(asset, 0) if hasattr(self, '_last_sniper_confluence') else 0
+                _entry_sc = entry_score if 'entry_score' in dir() and isinstance(entry_score, int) else 0
+                # Timeframe rank: higher = better for spot trading
+                _tf_rank_map = {'5m': 0, '15m': 1, '1h': 2, '4h': 3, '1d': 4}
+                _chosen_tf_for_rl = ml_context.get('chosen_tf', self.SIGNAL_TIMEFRAMES[0] if self.SIGNAL_TIMEFRAMES else '4h')
+                _tf_rank = _tf_rank_map.get(_chosen_tf_for_rl, 2)
+                # Consecutive losses
+                _consec_losses = self.asset_loss_streak.get(asset, 0)
+
                 _state = EMATradeState(
                     ema_slope=_ema_slope,
                     ema_slope_bars=int(ml_context.get('new_line_bars', 1)),
@@ -3287,13 +3591,21 @@ class TradingExecutor:
                     higher_tf_alignment=ml_context.get('htf_alignment', 0),
                     atr_percentile=_atr_pctile,
                     volume_ratio=_vol_ratio,
-                    spread_atr_ratio=0.1,
+                    spread_atr_ratio=_spread_cost_pct / (_filter_atr / price * 100) if _filter_atr > 0 and price > 0 else 0.1,
                     recent_win_rate=self.edge_stats.get(asset, {}).get('win_rate', 0.5),
                     daily_pnl_pct=self.daily_realized_pnl / max(self.equity, 1) * 100,
                     open_positions=len(self.positions),
-                    consecutive_losses=0,
+                    consecutive_losses=_consec_losses,
                     hour_of_day=datetime.utcnow().hour,
                     day_of_week=datetime.utcnow().weekday(),
+                    # NEW Robinhood-specific features
+                    spread_cost_pct=_spread_cost_pct,
+                    expected_move_pct=_expected_move_pct,
+                    move_to_spread_ratio=_move_to_spread,
+                    is_spot=self._paper_mode,
+                    confluence_count=_sniper_confl,
+                    entry_score=_entry_sc,
+                    timeframe_rank=_tf_rank,
                 )
                 rl_decision = _rl.decide(_state)
                 ml_context['rl_action'] = rl_decision.reasoning
@@ -3301,8 +3613,23 @@ class TradingExecutor:
                 ml_context['rl_size_mult'] = rl_decision.position_size_mult
                 ml_context['rl_sl_mult'] = rl_decision.sl_buffer_mult
                 ml_context['rl_quality'] = round(rl_decision.quality_score, 2)
+                # Store RL state for feedback loop on trade close
+                ml_context['_rl_state'] = _state
+                ml_context['_rl_action_idx'] = rl_decision.action_idx if hasattr(rl_decision, 'action_idx') else 0
+                # Handle WAIT actions: RL says "not now, try again in N bars"
+                _rl_wait_bars = 0
                 if not rl_decision.enter_trade:
-                    math_filter_warnings.append(f"RL: SKIP recommended ({rl_decision.reasoning})")
+                    _rl_action = self.actions[rl_decision.action_idx] if hasattr(self, 'actions') else {}
+                    # Check if it's a wait action from the RL actions list
+                    rl_actions_list = _rl.actions if hasattr(_rl, 'actions') else []
+                    if rl_decision.action_idx < len(rl_actions_list):
+                        _rl_wait_bars = rl_actions_list[rl_decision.action_idx].get('wait_bars', 0)
+                    if _rl_wait_bars > 0:
+                        math_filter_warnings.append(f"RL: WAIT {_rl_wait_bars} bars ({rl_decision.reasoning})")
+                        # Set cooldown so we don't re-evaluate for N poll intervals
+                        self.last_trade_time[asset] = time.time() + (_rl_wait_bars * self.poll_interval * 0.5)
+                    else:
+                        math_filter_warnings.append(f"RL: SKIP recommended ({rl_decision.reasoning})")
             except Exception as e:
                 logger.debug(f"RL agent error: {e}")
 
@@ -3318,11 +3645,11 @@ class TradingExecutor:
                 from src.scripts.train_all_models import compute_strategy_features
                 import numpy as _np
                 opens_list = ohlcv.get('opens', closes)
-                # Build flat features (last bar only) using same 35 features as training
-                feat = _np.zeros((1, 40), dtype=_np.float32)
-                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=1, n_features=50)
+                # Dynamically match feature count to what the trained model expects
+                _model_n_features = _lgbm_raw.num_feature()
+                X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=1, n_features=max(_model_n_features, 50))
                 if X_seq is not None and len(X_seq) > 0:
-                    feat = X_seq[-1].reshape(1, -1)[:, :40]  # Flatten last seq, take 40 features
+                    feat = X_seq[-1].reshape(1, -1)[:, :_model_n_features]  # Match model's expected features
                     trade_prob = _lgbm_raw.predict(feat)[0]  # Binary: probability of TRADE class
                     trade_conf = float(trade_prob)
                     is_trade = trade_conf > 0.5
@@ -3624,6 +3951,9 @@ class TradingExecutor:
         min_entry_score = self.config.get('adaptive', {}).get('min_entry_score', 4)
         max_entry_score = self.config.get('adaptive', {}).get('max_entry_score', 7)
         short_score_penalty = self.config.get('adaptive', {}).get('short_score_penalty', 3)
+        # SNIPER: raise minimum score for higher-quality entries
+        if self.sniper_enabled:
+            min_entry_score = max(min_entry_score, self.sniper_min_score)
         effective_min = min_entry_score
         if signal == "SELL":  # SHORT entry needs higher score
             effective_min += short_score_penalty
@@ -4159,7 +4489,44 @@ class TradingExecutor:
         chosen_dir = unified.get('chosen_direction', 'CALL' if signal == 'BUY' else 'PUT')
         action = "LONG" if chosen_dir == "CALL" else "SHORT"
         direction_label = chosen_dir
-        chosen_tf = unified.get('chosen_timeframe', '5m')
+        _default_signal_tf = self.SIGNAL_TIMEFRAMES[0] if self.SIGNAL_TIMEFRAMES else '5m'
+        chosen_tf = unified.get('chosen_timeframe', _default_signal_tf)
+        if chosen_tf not in self.SIGNAL_TIMEFRAMES:
+            chosen_tf = _default_signal_tf
+
+        # ── POST-LLM DIRECTION GATE ──
+        # SHORT penalty must ALWAYS apply when final action is SHORT,
+        # regardless of original 5m signal (BUY/SELL/NEUTRAL).
+        # The pre-LLM gate only checks signal=="SELL", but the LLM can flip
+        # a BUY or NEUTRAL signal to SHORT, bypassing the penalty.
+        #
+        # ROBINHOOD SPOT: Shorts are extremely dangerous with 3.3% spread
+        # Pre-training data: shorts lose ~70% after spread on both BTC and ETH
+        # Block shorts entirely on paper/Robinhood unless score is exceptional
+        if action == "SHORT":
+            short_penalty = self.config.get('adaptive', {}).get('short_score_penalty', 4)
+            min_score = self.config.get('adaptive', {}).get('min_entry_score', 4)
+            if self.sniper_enabled:
+                min_score = max(min_score, self.sniper_min_score)
+            required = min_score + short_penalty  # sniper: 8 + 4 = 12 (nearly impossible)
+            if entry_score < required:
+                print(f"  [{self._ex_tag}:{asset}] SHORT SCORE BLOCK: score {entry_score} < {required} required for SHORT (LONG bias) -- skipping")
+                return
+
+            # ── Robinhood SHORT hard-block ──
+            # Robinhood spot has ~1.67% spread. SHORTs lose ~70% after spread.
+            # Block ALL shorts on Robinhood/paper unless 1d EMA is confirmed FALLING.
+            _htf_1d_dir = 'FLAT'
+            if hasattr(self, '_last_tf_signals'):
+                _htf_1d_dir = self._last_tf_signals.get(asset, {}).get('1d', {}).get('ema_direction', 'FLAT')
+            if self._paper_mode:
+                if _htf_1d_dir != 'FALLING':
+                    print(f"  [{self._ex_tag}:{asset}] SHORT BLOCKED: 1d EMA not FALLING ({_htf_1d_dir}) -- LONG-only market on Robinhood")
+                    return
+                # Additional Robinhood SHORT guard: require LLM confidence >= 0.90 for shorts
+                if confidence < 0.90:
+                    print(f"  [{self._ex_tag}:{asset}] SHORT BLOCKED: confidence {confidence:.2f} < 0.90 required for SHORT on Robinhood")
+                    return
 
         # Quality gate: confidence (adaptive via meta overlay)
         if confidence < _active_min_confidence:
@@ -4171,8 +4538,9 @@ class TradingExecutor:
             self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
         self.bear_veto_stats[asset]['passed'] += 1
 
-        # ── Off-hour size reduction (journal-learned) ──
-        if not getattr(self, '_is_profitable_hour', True):
+        # ── Off-hour size reduction (journal-learned) — DISABLED for Robinhood ──
+        # Crypto is 24/7, and Robinhood spread demands full position sizes to overcome cost
+        if not self._paper_mode and not getattr(self, '_is_profitable_hour', True):
             reduce_factor = self.config.get('filters', {}).get('reduce_size_off_hours', 0.5)
             if reduce_factor < 1.0:
                 old_size = size_pct
@@ -4189,6 +4557,19 @@ class TradingExecutor:
                 if abs(mult - 1.0) > 0.05:
                     print(f"  [{self._ex_tag}:{asset}] EDGE: {mult:.2f}x ({edge['wins']}W/{edge['losses']}L) size {old_size:.0f}% -> {size_pct:.0f}%")
 
+        # ── SNIPER: Profit Compounding — risk profits, protect principal ──
+        # After first win, increase position size using accumulated profits
+        # Principal stays safe; only profits are used for bigger bets
+        _sniper_bonus_equity = 0.0
+        if self.sniper_enabled and self.sniper_profit_pool > 0:
+            _compound_amount = self.sniper_profit_pool * (self.sniper_compound_pct / 100.0)
+            if self.sniper_protect_principal:
+                # Only risk profits — don't touch original capital beyond base risk_per_trade
+                _sniper_bonus_equity = _compound_amount
+                print(f"  [{self._ex_tag}:{asset}] SNIPER COMPOUND: +${_compound_amount:,.2f} from profit pool (${self.sniper_profit_pool:,.2f} total)")
+            else:
+                _sniper_bonus_equity = _compound_amount
+
         # Calculate position size — ATR-based dynamic sizing when available, fixed % fallback
         max_size_pct = 20 if self.equity < 500 else 5
         size_pct = max(1, min(max_size_pct, size_pct))
@@ -4203,11 +4584,14 @@ class TradingExecutor:
         if POSITION_SIZING_AVAILABLE and current_atr > 0 and price > 0:
             try:
                 risk_pct = self.config.get('risk', {}).get('risk_per_trade_pct', 1.0)
+                # Match ATR multiplier to ACTUAL SL distance from config (atr_stop_mult)
+                # Old bug: sized for 2xATR but SL placed at 3xATR = 50% more risk than intended
+                _atr_sl_mult = self.config.get('risk', {}).get('atr_stop_mult', 3.0)
                 atr_qty = atr_position_size(
                     account_balance=self.equity,
                     atr_value=current_atr,
                     risk_pct=risk_pct,
-                    atr_multiplier=2.0,  # 2xATR stop distance (matches trailing SL logic)
+                    atr_multiplier=_atr_sl_mult,  # Must match actual SL distance
                 )
                 atr_notional = atr_qty * price
                 # Clamp ATR-sized notional to max_size_pct of equity
@@ -4238,13 +4622,22 @@ class TradingExecutor:
                 notional = min(llm_notional, atr_notional)
                 atr_size_pct = (atr_notional / self.equity) * 100 if self.equity > 0 else 0
                 kelly_tag = f" x Kelly={kelly_mult:.2f}" if kelly_mult < 0.99 else ""
-                print(f"  [{self._ex_tag}:{asset}] ATR SIZING: risk={risk_pct}% x 2xATR=${current_atr:,.2f}{kelly_tag} -> ${atr_notional:,.0f} ({atr_size_pct:.1f}%) | LLM={size_pct:.0f}% -> using {'ATR' if atr_notional < llm_notional else 'LLM'}")
+                print(f"  [{self._ex_tag}:{asset}] ATR SIZING: risk={risk_pct}% x {_atr_sl_mult}xATR=${current_atr:,.2f}{kelly_tag} -> ${atr_notional:,.0f} ({atr_size_pct:.1f}%) | LLM={size_pct:.0f}% -> using {'ATR' if atr_notional < llm_notional else 'LLM'}")
                 atr_sized = True
             except Exception as sz_err:
                 logger.debug(f"ATR sizing error: {sz_err}")
 
         if not atr_sized:
             notional = self.equity * (size_pct / 100.0)
+
+        # ── SNIPER: Add compound bonus to notional (profits risked on top of base position) ──
+        # Capped at 50% of base notional to prevent oversized positions
+        if _sniper_bonus_equity > 0:
+            old_notional = notional
+            _max_compound = notional * 0.5  # Never more than 50% bonus
+            _sniper_bonus_equity = min(_sniper_bonus_equity, _max_compound)
+            notional += _sniper_bonus_equity
+            print(f"  [{self._ex_tag}:{asset}] SNIPER SIZE: ${old_notional:,.0f} + ${_sniper_bonus_equity:,.0f} compound = ${notional:,.0f}")
 
         # ── META OVERLAY: apply risk multiplier to position size (SECONDARY knob) ──
         if _meta_risk_mult != 1.0:
@@ -4353,10 +4746,9 @@ class TradingExecutor:
             except Exception as e:
                 logger.warning(f"[{asset}] Protection pre-entry error (proceeding): {e}")
 
-        # PRE-CHECK: Liquidity sanity check (widened for testnet)
-        # Only block if order book is completely empty — testnet has thin but usable books
+        # PRE-CHECK: Liquidity sanity check
         ob_check = self.price_source.fetch_order_book(self._get_symbol(asset), limit=10)
-        max_dev = price * 0.10  # 10% — wide enough for testnet spreads
+        max_dev = price * 0.05  # 5% deviation max
 
         reasonable_asks = [a for a in ob_check.get('asks', []) if float(a[0]) <= price + max_dev]
         reasonable_bids = [b for b in ob_check.get('bids', []) if float(b[0]) >= price - max_dev]
@@ -4375,6 +4767,27 @@ class TradingExecutor:
         spread_pct = (best_ask - best_bid) / best_bid * 100
         print(f"  [{self._ex_tag}:{asset}] LIQUIDITY: spread={spread_pct:.1f}% bids={len(reasonable_bids)} asks={len(reasonable_asks)}")
 
+        # ── SPREAD vs EXPECTED MOVE FILTER (Robinhood) ──
+        # Block trades where expected TP move doesn't clear spread by wide margin
+        # Pre-training showed: trades need expected_move > 2.5x spread to be profitable
+        # Old 1.5x was too lenient — 5% move - 3.34% spread = only 1.66% profit
+        if self._paper_mode and price > 0:
+            atr_tp = self.config.get('risk', {}).get('atr_tp_mult', 4.5)
+            # Try to use higher-TF ATR if available (more accurate for swing trades)
+            _filter_atr = current_atr
+            if hasattr(self, '_last_chosen_tf_atr') and self._last_chosen_tf_atr.get(asset, 0) > 0:
+                _filter_atr = self._last_chosen_tf_atr[asset]
+            if _filter_atr > 0:
+                expected_move_pct = (_filter_atr * atr_tp / price) * 100
+                round_trip_spread = spread_pct * 2  # pay spread on entry AND exit
+                _spread_mult = 2.5  # Need 2.5x spread clearance (was 1.5x)
+                if expected_move_pct < round_trip_spread * _spread_mult:
+                    print(f"  [{self._ex_tag}:{asset}] SPREAD FILTER: expected move {expected_move_pct:.2f}% < {_spread_mult}x spread {round_trip_spread*_spread_mult:.2f}% -- SKIP")
+                    return
+                else:
+                    _edge_ratio = expected_move_pct / round_trip_spread if round_trip_spread > 0 else 99
+                    print(f"  [{self._ex_tag}:{asset}] SPREAD OK: expected move {expected_move_pct:.2f}% vs spread cost {round_trip_spread:.2f}% (edge={_edge_ratio:.1f}x)")
+
         # Volume warning (log only, don't block)
         if side == 'buy':
             exit_vol = sum(float(b[1]) for b in reasonable_bids)
@@ -4389,51 +4802,64 @@ class TradingExecutor:
 
         print(f"  [{self._ex_tag}:{asset}] LIQUIDITY OK: spread={spread_pct:.2f}% bids={len(reasonable_bids)} asks={len(reasonable_asks)}")
 
-        # Place order — fallback to limit if market order is rejected (testnet price cap)
         symbol = self._get_symbol(asset)
-        result = self.price_source.place_order(
-            symbol=symbol,
-            side=side,
-            amount=qty,
-            order_type=entry_type,
-            price=order_price,
-        )
 
-        # If market order rejected (Bybit 30208 = price cap), retry as limit at best ask/bid
-        # Only use prices within 5% of current price — testnet has fake walls at 2x price
-        if result.get('status') != 'success' and '30208' in str(result.get('message', '')):
-            try:
-                ob = self.price_source.fetch_order_book(symbol, limit=10)
-                limit_price = None
-                max_deviation = price * 0.05  # 5% max from current price
+        # ── Paper Mode (Robinhood): simulate fill at real bid/ask ──
+        if self._paper_mode:
+            # Fill at ask for LONG, bid for SHORT (realistic paper fills)
+            if side == 'buy':
+                fill_price = best_ask
+            else:
+                fill_price = best_bid
+            order_id = f"paper_{asset}_{int(time.time())}"
+            price = fill_price
+            print(f"  [{self._ex_tag}:{asset}] PAPER FILL: {side.upper()} {qty:.6f} @ ${fill_price:,.2f} (spread={spread_pct:.2f}%)")
+        else:
+            # ── Live Mode: Place real order ──
+            result = self.price_source.place_order(
+                symbol=symbol,
+                side=side,
+                amount=qty,
+                order_type=entry_type,
+                price=order_price,
+            )
 
-                if side == 'buy' and ob.get('asks'):
-                    for ask_price, ask_vol in ob['asks']:
-                        if float(ask_price) <= price + max_deviation:
-                            limit_price = float(ask_price)
-                            break
-                elif side == 'sell' and ob.get('bids'):
-                    for bid_price, bid_vol in ob['bids']:
-                        if float(bid_price) >= price - max_deviation:
-                            limit_price = float(bid_price)
-                            break
+            # If market order rejected, retry as limit at best ask/bid
+            if result.get('status') != 'success' and '30208' in str(result.get('message', '')):
+                try:
+                    ob = self.price_source.fetch_order_book(symbol, limit=10)
+                    limit_price = None
+                    max_deviation = price * 0.05  # 5% max from current price
 
-                if limit_price:
-                    print(f"  [{self._ex_tag}:{asset}] Market rejected (price cap) -- retrying LIMIT @ ${limit_price:,.2f}")
-                    result = self.price_source.place_order(
-                        symbol=symbol, side=side, amount=qty,
-                        order_type='limit', price=limit_price,
-                    )
-                else:
-                    print(f"  [{self._ex_tag}:{asset}] Market rejected & no reasonable limit price within 5% -- SKIP")
-            except Exception as e:
-                print(f"  [{self._ex_tag}:{asset}] Limit fallback failed: {e}")
+                    if side == 'buy' and ob.get('asks'):
+                        for ask_price, ask_vol in ob['asks']:
+                            if float(ask_price) <= price + max_deviation:
+                                limit_price = float(ask_price)
+                                break
+                    elif side == 'sell' and ob.get('bids'):
+                        for bid_price, bid_vol in ob['bids']:
+                            if float(bid_price) >= price - max_deviation:
+                                limit_price = float(bid_price)
+                                break
 
-        if result.get('status') == 'success':
+                    if limit_price:
+                        print(f"  [{self._ex_tag}:{asset}] Market rejected (price cap) -- retrying LIMIT @ ${limit_price:,.2f}")
+                        result = self.price_source.place_order(
+                            symbol=symbol, side=side, amount=qty,
+                            order_type='limit', price=limit_price,
+                        )
+                    else:
+                        print(f"  [{self._ex_tag}:{asset}] Market rejected & no reasonable limit price within 5% -- SKIP")
+                except Exception as e:
+                    print(f"  [{self._ex_tag}:{asset}] Limit fallback failed: {e}")
+
+            if result.get('status') != 'success':
+                print(f"  [{self._ex_tag}:{asset}] ORDER FAILED: {result.get('message', result)}")
+                return
+
             order_id = result.get('order_id', 'unknown')
 
             # Get ACTUAL fill price from exchange (not signal price)
-            # Testnet has thin liquidity — market fills can be far from expected price
             fill_price = price
             try:
                 time.sleep(0.5)  # Brief wait for fill
@@ -4451,165 +4877,158 @@ class TradingExecutor:
                 pass
             price = fill_price  # Use actual fill for all subsequent calculations
 
-            # Compute initial stop-loss (L1) using ORDER BOOK + ATR
-            # Scale SL bounds by chosen timeframe (higher TF = wider SL)
-            tf_min_pct = self.TF_SL_MIN_PCT.get(chosen_tf, 0.005)
-            tf_max_pct = self.TF_SL_MAX_PCT.get(chosen_tf, 0.02)
+        # Compute initial stop-loss (L1) using ORDER BOOK + ATR
+        # Scale SL bounds by chosen timeframe (higher TF = wider SL)
+        tf_min_pct = self.TF_SL_MIN_PCT.get(chosen_tf, 0.005)
+        tf_max_pct = self.TF_SL_MAX_PCT.get(chosen_tf, 0.02)
 
-            # Use chosen TF's ATR if available
-            init_atr = current_atr
+        # Use chosen TF's ATR if available
+        init_atr = current_atr
+        try:
+            tf_sig = (active_tf_signals or {}).get(chosen_tf)
+            if tf_sig and tf_sig.get('current_atr', 0) > 0:
+                init_atr = tf_sig['current_atr']
+        except Exception:
+            pass
+
+        # ════════════════════════════════════════════════════════════
+        # L1 INITIAL SL: EMA LINE as PRIMARY, ATR as EMERGENCY FALLBACK
+        # ════════════════════════════════════════════════════════════
+        sl_distance_emergency = init_atr * 3.0
+        sl_distance_emergency = max(sl_distance_emergency, price * tf_min_pct)
+        sl_distance_emergency = min(sl_distance_emergency, price * tf_max_pct * 1.5)
+
+        ema_sl_buffer = init_atr * 1.0
+        current_ema_val = ema_vals[-2] if len(ema_vals) >= 2 else None
+
+        sl_source = "ATR_EMERGENCY"
+        if action == 'LONG':
+            sl_price = price - sl_distance_emergency
+            if current_ema_val and current_ema_val > 0:
+                ema_sl = current_ema_val - ema_sl_buffer
+                ema_dist_pct = (price - ema_sl) / price * 100
+                if 0.1 <= ema_dist_pct <= 3.0 and ema_sl < price:
+                    sl_price = ema_sl
+                    sl_source = f"EMA_LINE@${current_ema_val:,.2f}"
+            bid_wall = ob_levels.get('bid_wall', 0)
+            if bid_wall > 0 and bid_wall < price:
+                ob_sl = bid_wall * 0.999
+                ob_dist_pct = (price - ob_sl) / price * 100
+                if 0.3 <= ob_dist_pct <= 2.0 and ob_sl > sl_price:
+                    sl_price = ob_sl
+                    sl_source = f"OB_BID_WALL@${bid_wall:,.2f}"
+        else:  # SHORT
+            sl_price = price + sl_distance_emergency
+            if current_ema_val and current_ema_val > 0:
+                ema_sl = current_ema_val + ema_sl_buffer
+                ema_dist_pct = (ema_sl - price) / price * 100
+                if 0.1 <= ema_dist_pct <= 3.0 and ema_sl > price:
+                    sl_price = ema_sl
+                    sl_source = f"EMA_LINE@${current_ema_val:,.2f}"
+            ask_wall = ob_levels.get('ask_wall', 0)
+            if ask_wall > 0 and ask_wall > price:
+                ob_sl = ask_wall * 1.001
+                ob_dist_pct = (ob_sl - price) / price * 100
+                if 0.3 <= ob_dist_pct <= 2.0 and ob_sl < sl_price:
+                    sl_price = ob_sl
+                    sl_source = f"OB_ASK_WALL@${ask_wall:,.2f}"
+
+        imb = ob_levels.get('imbalance', 0)
+        print(f"  [{self._ex_tag}:{asset}] ORDER OK [{chosen_tf}]: {order_id} | SL L1=${sl_price:,.2f} ({sl_source}) | OB imbalance={imb:+.2f}")
+
+        # Track sniper entry
+        if self.sniper_enabled:
+            self.sniper_stats['entered'] += 1
+
+        sl_order_id = None
+
+        # Record position (with chosen timeframe for scaled SL management)
+        self.positions[asset] = {
+            'direction': action,          # LONG or SHORT
+            'side': side,
+            'entry_price': price,
+            'qty': qty,
+            'order_id': order_id,
+            'sl': sl_price,
+            'sl_order_id': sl_order_id,
+            'sl_levels': ['L1'],
+            'peak_price': price,
+            'entry_time': time.time(),
+            'confidence': confidence,
+            'reasoning': reasoning,
+            'predicted_l_level': unified.get('predicted_l_level', '?'),
+            'risk_score': risk_score,
+            'bear_risk': risk_score if self.bear_enabled else 0,
+            'hurst': hurst_value,
+            'hurst_regime': hurst_regime,
+            'breakeven_moved': False,
+            'is_reversal': is_reversal_signal,
+            'trade_timeframe': chosen_tf,   # LLM chose this TF
+            'agent_votes': orch_result.get('agent_votes', {}) if orch_result else {},
+            'entry_tag': self._protections.tagger.tag_entry(
+                signal=signal, entry_score=entry_score,
+                regime=unified.get('brain_details', {}).get('regime', ''),
+                htf_alignment=htf_alignment, is_reversal=is_reversal_signal,
+                ema_slope=slope_pct, consensus=unified.get('brain_details', {}).get('consensus', '')
+            ) if self._protections else 'untagged',
+            'dca_count': 0,
+            'rl_state': ml_context.get('_rl_state', None),        # RL state at entry (for learning)
+            'rl_action_idx': ml_context.get('_rl_action_idx', 0),  # RL action chosen at entry
+        }
+        self.last_trade_time[asset] = time.time()
+
+        # ── Paper Trade: Record entry with real Robinhood price ──
+        if self._paper:
             try:
-                tf_sig = (active_tf_signals or {}).get(chosen_tf)
-                if tf_sig and tf_sig.get('current_atr', 0) > 0:
-                    init_atr = tf_sig['current_atr']
-            except Exception:
-                pass
+                self._paper.record_entry(
+                    asset=asset, direction=action, price=price,
+                    score=entry_score, quantity=qty,
+                    sl_price=sl_price, tp_price=0,
+                    ml_confidence=ml_confidence if 'ml_confidence' in dir() else 0,
+                    llm_confidence=confidence,
+                    size_pct=size_pct, reasoning=reasoning[:200] if reasoning else '',
+                )
+                self._paper.save_state()  # Immediate save for dashboard
+            except Exception as _pe:
+                logger.warning(f"[PAPER] Entry record failed: {_pe}")
 
-            # ════════════════════════════════════════════════════════════
-            # L1 INITIAL SL: EMA LINE as PRIMARY, ATR as EMERGENCY FALLBACK
-            # ════════════════════════════════════════════════════════════
-            # The EMA(8) line IS the trend line. Our strategy enters on new
-            # EMA line → we should exit when price crosses BACK through EMA.
-            # Initial SL = EMA line + small ATR buffer (to survive wicks).
-            # ATR-only SL (old method) killed 37% of trades at 0% win rate
-            # because it was arbitrary — not tied to the actual trend structure.
-            # ════════════════════════════════════════════════════════════
+        # ── Alert: Trade Entry ──
+        self._send_alert('INFO', f'{self._ex_tag} ENTRY {action} {asset}',
+            f'{action} {asset} @ ${price:,.2f} | size={size_pct:.0f}% | conf={confidence:.2f} | risk={risk_score}/10 | TF={chosen_tf}',
+            {'asset': asset, 'direction': action, 'price': price, 'size_pct': size_pct,
+             'confidence': confidence, 'risk_score': risk_score, 'timeframe': chosen_tf})
 
-            # ATR emergency SL (wide — only triggers if EMA SL fails)
-            sl_distance_emergency = init_atr * 3.0  # 3x ATR emergency backstop
-            sl_distance_emergency = max(sl_distance_emergency, price * tf_min_pct)
-            sl_distance_emergency = min(sl_distance_emergency, price * tf_max_pct * 1.5)
+        # ── Dynamic Risk: Register trade for monitoring (NO stop management) ──
+        if self._dynamic_risk:
+            try:
+                heat = sum(1 for _ in self.positions) / max(len(self.assets), 1)
+                allowed, reason = self._dynamic_risk.check_trade_allowed(
+                    asset, size_pct / 100.0, heat)
+                if not allowed:
+                    print(f"  [{self._ex_tag}:{asset}] DRM WARNING: {reason} (trade already placed, monitoring)")
+                self._dynamic_risk.update_pnl(0)  # Register activity
+            except Exception as drm_err:
+                logger.debug(f"DRM register error: {drm_err}")
 
-            # EMA-based SL: place SL beyond the EMA line with ATR buffer
-            # At entry, price is near EMA — need wider buffer to survive first pullback
-            ema_sl_buffer = init_atr * 1.0  # Full ATR buffer beyond EMA for initial breathing room
-            current_ema_val = ema_vals[-2] if len(ema_vals) >= 2 else None
-
-            sl_source = "ATR_EMERGENCY"
-            if action == 'LONG':
-                # Emergency SL (wide ATR)
-                sl_price = price - sl_distance_emergency
-
-                # EMA-based SL: just below the EMA line
-                if current_ema_val and current_ema_val > 0:
-                    ema_sl = current_ema_val - ema_sl_buffer
-                    # EMA SL must be below current price and within reasonable range
-                    ema_dist_pct = (price - ema_sl) / price * 100
-                    if 0.1 <= ema_dist_pct <= 3.0 and ema_sl < price:
-                        sl_price = ema_sl
-                        sl_source = f"EMA_LINE@${current_ema_val:,.2f}"
-
-                # Order book bid wall can tighten further (but not override EMA)
-                bid_wall = ob_levels.get('bid_wall', 0)
-                if bid_wall > 0 and bid_wall < price:
-                    ob_sl = bid_wall * 0.999
-                    ob_dist_pct = (price - ob_sl) / price * 100
-                    if 0.3 <= ob_dist_pct <= 2.0 and ob_sl > sl_price:
-                        sl_price = ob_sl
-                        sl_source = f"OB_BID_WALL@${bid_wall:,.2f}"
-            else:  # SHORT
-                # Emergency SL (wide ATR)
-                sl_price = price + sl_distance_emergency
-
-                # EMA-based SL: just above the EMA line
-                if current_ema_val and current_ema_val > 0:
-                    ema_sl = current_ema_val + ema_sl_buffer
-                    ema_dist_pct = (ema_sl - price) / price * 100
-                    if 0.1 <= ema_dist_pct <= 3.0 and ema_sl > price:
-                        sl_price = ema_sl
-                        sl_source = f"EMA_LINE@${current_ema_val:,.2f}"
-
-                # Order book ask wall can tighten further
-                ask_wall = ob_levels.get('ask_wall', 0)
-                if ask_wall > 0 and ask_wall > price:
-                    ob_sl = ask_wall * 1.001
-                    ob_dist_pct = (ob_sl - price) / price * 100
-                    if 0.3 <= ob_dist_pct <= 2.0 and ob_sl < sl_price:
-                        sl_price = ob_sl
-                        sl_source = f"OB_ASK_WALL@${ask_wall:,.2f}"
-
-            imb = ob_levels.get('imbalance', 0)
-            print(f"  [{self._ex_tag}:{asset}] ORDER OK [{chosen_tf}]: {order_id} | SL L1=${sl_price:,.2f} ({sl_source}) | OB imbalance={imb:+.2f}")
-
-            # SL managed by polling loop (10s) — no exchange stop orders
-            # Exchange SL was creating orphan positions that cost $2-3 each to close
-            sl_order_id = None
-
-            # Record position (with chosen timeframe for scaled SL management)
-            self.positions[asset] = {
-                'direction': action,          # LONG or SHORT
-                'side': side,
-                'entry_price': price,
-                'qty': qty,
-                'order_id': order_id,
-                'sl': sl_price,
-                'sl_order_id': sl_order_id,
-                'sl_levels': ['L1'],
-                'peak_price': price,
-                'entry_time': time.time(),
-                'confidence': confidence,
-                'reasoning': reasoning,
-                'predicted_l_level': unified.get('predicted_l_level', '?'),
-                'risk_score': risk_score,
-                'bear_risk': risk_score if self.bear_enabled else 0,
-                'hurst': hurst_value,
-                'hurst_regime': hurst_regime,
-                'breakeven_moved': False,
-                'is_reversal': is_reversal_signal,
-                'trade_timeframe': chosen_tf,   # LLM chose this TF
-                'agent_votes': orch_result.get('agent_votes', {}) if orch_result else {},
-                'entry_tag': self._protections.tagger.tag_entry(
-                    signal=signal, entry_score=entry_score,
-                    regime=unified.get('brain_details', {}).get('regime', ''),
-                    htf_alignment=htf_alignment, is_reversal=is_reversal_signal,
-                    ema_slope=slope_pct, consensus=unified.get('brain_details', {}).get('consensus', '')
-                ) if self._protections else 'untagged',
-                'dca_count': 0,
-            }
-            self.last_trade_time[asset] = time.time()
-
-            # ── Alert: Trade Entry ──
-            self._send_alert('INFO', f'{self._ex_tag} ENTRY {action} {asset}',
-                f'{action} {asset} @ ${price:,.2f} | size={size_pct:.0f}% | conf={confidence:.2f} | risk={risk_score}/10 | TF={chosen_tf}',
-                {'asset': asset, 'direction': action, 'price': price, 'size_pct': size_pct,
-                 'confidence': confidence, 'risk_score': risk_score, 'timeframe': chosen_tf})
-
-            # ── Dynamic Risk: Register trade for monitoring (NO stop management) ──
-            if self._dynamic_risk:
-                try:
-                    heat = sum(1 for _ in self.positions) / max(len(self.assets), 1)
-                    allowed, reason = self._dynamic_risk.check_trade_allowed(
-                        asset, size_pct / 100.0, heat)
-                    if not allowed:
-                        print(f"  [{self._ex_tag}:{asset}] DRM WARNING: {reason} (trade already placed, monitoring)")
-                    self._dynamic_risk.update_pnl(0)  # Register activity
-                except Exception as drm_err:
-                    logger.debug(f"DRM register error: {drm_err}")
-
-            # ── MT5: Mirror/execute trade on MetaTrader 5 ──
-            if self._mt5 and self._mt5.connected:
-                try:
-                    if self._mt5.mode == 'execute':
-                        # Execute mode: open position directly on MT5
-                        mt5_result = self._mt5.open_position(
-                            asset=asset, direction=action, price=price,
-                            qty=qty, sl=sl_price,
-                            comment=f"S{entry_score}_C{confidence:.0%}_{chosen_tf}"
-                        )
-                        if mt5_result.get('status') == 'success':
-                            self.positions[asset]['mt5_ticket'] = mt5_result.get('order_id')
-                    else:
-                        # Mirror mode: replicate for visualization
-                        self._mt5.mirror_open(
-                            asset=asset, direction=action, price=price,
-                            qty=qty, sl=sl_price,
-                            entry_score=entry_score, confidence=confidence
-                        )
-                except Exception as e:
-                    print(f"  [MT5:{asset}] Bridge entry failed: {e}")
-        else:
-            err = result.get('message', str(result))
-            print(f"  [{self._ex_tag}:{asset}] ORDER FAILED: {err}")
+        # ── MT5: Mirror/execute trade on MetaTrader 5 (skip in paper mode) ──
+        if self._mt5 and self._mt5.connected and not self._paper_mode:
+            try:
+                if self._mt5.mode == 'execute':
+                    mt5_result = self._mt5.open_position(
+                        asset=asset, direction=action, price=price,
+                        qty=qty, sl=sl_price,
+                        comment=f"S{entry_score}_C{confidence:.0%}_{chosen_tf}"
+                    )
+                    if mt5_result.get('status') == 'success':
+                        self.positions[asset]['mt5_ticket'] = mt5_result.get('order_id')
+                else:
+                    self._mt5.mirror_open(
+                        asset=asset, direction=action, price=price,
+                        qty=qty, sl=sl_price,
+                        entry_score=entry_score, confidence=confidence
+                    )
+            except Exception as e:
+                print(f"  [MT5:{asset}] Bridge entry failed: {e}")
 
     # ------------------------------------------------------------------
     # Position management — Aggressive Trailing SL (L1→L2→...→L38+)
@@ -4645,12 +5064,14 @@ class TradingExecutor:
             pnl_pct = ((entry - price) / entry) * 100.0
             pnl_from_peak = ((peak - price) / peak) * 100.0 if peak > 0 else 0
 
-        # OB imbalance — tracked for display only (testnet OB too unreliable for exits)
+        # OB imbalance — tracked for display
         ob_imbalance = ob_levels.get('imbalance', 0)
 
         # ── 2. HARD STOP: max loss — non-negotiable ──
-        # Bybit testnet has inflated prices → use wider stop to avoid noise hits
-        hard_stop_pct = -2.5 if self._exchange_name == 'bybit' else -1.8  # 10yr analysis: -1.8% optimal (PF 1.14)
+        # Robinhood: spread alone is ~1.67%, so -1.8% hard stop kills every trade.
+        # Use configurable hard stop: paper mode with wide spread needs -5%+
+        _default_hard_stop = -5.0 if self._paper_mode else -1.8
+        hard_stop_pct = self.config.get('risk', {}).get('hard_stop_pct', _default_hard_stop)
         # But if asset is blacklisted (stuck, can't close), retry close if profitable or at hard stop
         is_stuck = asset in self.failed_close_assets
         if is_stuck and pnl_pct >= 1.0:
@@ -4681,8 +5102,9 @@ class TradingExecutor:
         duration_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
         # TIME EXIT: Only close if held too long AND losing/flat.
         # If profitable, ALWAYS let EMA line exit handle it (ride the trend).
-        max_hold_losers = 180  # 3hr for losers (backtest: PF 0.92→1.32)
-        max_hold_winners = max(self.max_hold_minutes, 720)  # 12hr for winners
+        # Scale loser hold time: paper mode with wide spreads = hold longer (give time to recover from spread)
+        max_hold_losers = 1440 if self._paper_mode else 180  # 24hr for Robinhood losers, 3hr for futures
+        max_hold_winners = max(self.max_hold_minutes, 720)  # config max or 12hr minimum
         if not is_stuck:
             if pnl_pct <= -0.5 and duration_min >= max_hold_losers:
                 print(f"  [{self._ex_tag}:{asset}] TIME EXIT: held {duration_min:.0f}min (max {max_hold_losers:.0f}) P&L={pnl_pct:+.2f}% — closing stale loser")
@@ -5264,135 +5686,137 @@ class TradingExecutor:
         qty = pos['qty']
         symbol = self._get_symbol(asset)
 
-        # Get actual position qty from Bybit
-        actual_qty = qty
-        try:
-            if self._exchange_client:
-                positions = self._exchange_client.get_positions()
-                for p in positions:
-                    if asset in p.get('symbol', ''):
-                        actual_qty = float(p.get('qty', qty))
-                        break
-        except Exception:
-            pass
-
-        # Close side is opposite of entry side
         close_side = 'sell' if direction == 'LONG' else 'buy'
 
-        # Place close order — try limit at best price first, then market fallback
-        # Testnet market orders fill at terrible prices due to thin books
-        remaining_qty = actual_qty
-        for close_attempt in range(3):
-            # Try limit order at best bid/ask for better fill
-            close_price = None
+        # ── Paper Mode (Robinhood): simulate exit fill at real bid/ask ──
+        if self._paper_mode:
             try:
-                ob = self.price_source.fetch_order_book(symbol, limit=10)
+                ob = self.price_source.fetch_order_book(symbol, limit=5)
                 if close_side == 'sell' and ob.get('bids'):
-                    close_price = float(ob['bids'][0][0])
+                    price = float(ob['bids'][0][0])  # LONG exit at bid
                 elif close_side == 'buy' and ob.get('asks'):
-                    close_price = float(ob['asks'][0][0])
+                    price = float(ob['asks'][0][0])  # SHORT exit at ask
+                else:
+                    price = self.price_source.fetch_latest_price(symbol) or price
+            except Exception:
+                price = self.price_source.fetch_latest_price(symbol) or price
+            print(f"  [{self._ex_tag}:{asset}] PAPER CLOSE: {close_side.upper()} {qty:.6f} @ ${price:,.2f} | reason={reason}")
+        else:
+            # ── Live Mode: Place real close orders ──
+            actual_qty = qty
+            try:
+                if self._exchange_client:
+                    positions = self._exchange_client.get_positions()
+                    for p in positions:
+                        if asset in p.get('symbol', ''):
+                            actual_qty = float(p.get('qty', qty))
+                            break
             except Exception:
                 pass
 
-            if close_price and close_attempt == 0:
-                # First attempt: aggressive limit order (reduceOnly to close, not open)
+            remaining_qty = actual_qty
+            for close_attempt in range(3):
+                close_price = None
+                try:
+                    ob = self.price_source.fetch_order_book(symbol, limit=10)
+                    if close_side == 'sell' and ob.get('bids'):
+                        close_price = float(ob['bids'][0][0])
+                    elif close_side == 'buy' and ob.get('asks'):
+                        close_price = float(ob['asks'][0][0])
+                except Exception:
+                    pass
+
+                if close_price and close_attempt == 0:
+                    result = self.price_source.place_order(
+                        symbol=symbol,
+                        side=close_side,
+                        amount=remaining_qty,
+                        order_type='limit',
+                        price=close_price,
+                        reduce_only=True,
+                    )
+                    print(f"  [{self._ex_tag}:{asset}] CLOSE LIMIT @ ${close_price:,.2f}")
+                    time.sleep(2)
+                    try:
+                        ex_positions = self._exchange_client.get_positions()
+                        still_has = any(asset in p.get('symbol','') and float(p.get('qty',0)) > 0 for p in ex_positions)
+                        if not still_has:
+                            price = close_price
+                            break
+                        open_orders = self._exchange_client.exchange.fetch_open_orders(symbol)
+                        for o in open_orders:
+                            try:
+                                self._exchange_client.exchange.cancel_order(o['id'], symbol)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
                 result = self.price_source.place_order(
                     symbol=symbol,
                     side=close_side,
                     amount=remaining_qty,
-                    order_type='limit',
-                    price=close_price,
+                    order_type='market',
+                    price=None,
                     reduce_only=True,
                 )
-                print(f"  [{self._ex_tag}:{asset}] CLOSE LIMIT @ ${close_price:,.2f}")
-                time.sleep(2)  # Wait for fill
-                # Check if filled
-                try:
-                    ex_positions = self._exchange_client.get_positions()
-                    still_has = any(asset in p.get('symbol','') and float(p.get('qty',0)) > 0 for p in ex_positions)
-                    if not still_has:
-                        price = close_price  # Use limit price for P&L
-                        break
-                    # Limit didn't fill — cancel and use market
-                    open_orders = self._exchange_client.exchange.fetch_open_orders(symbol)
-                    for o in open_orders:
-                        try:
-                            self._exchange_client.exchange.cancel_order(o['id'], symbol)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
 
-            # Fallback: market order (reduceOnly to close, not open new position)
-            result = self.price_source.place_order(
-                symbol=symbol,
-                side=close_side,
-                amount=remaining_qty,
-                order_type='market',
-                price=None,
-                reduce_only=True,
-            )
-
-            if result.get('status') != 'success':
-                err = result.get('message', str(result))
-                if 'NoImmediate' in str(err) or 'cancel' in str(err).lower():
-                    print(f"  [{self._ex_tag}:{asset}] CLOSE FAILED (no liquidity): {err}")
-                    self.failed_close_assets[asset] = time.time()
-                    self._closing_in_progress.discard(asset)
-                    return
-                else:
-                    print(f"  [{self._ex_tag}:{asset}] CLOSE WARNING: {err}")
-
-            # Check remaining position on exchange
-            time.sleep(1)
-            try:
-                if self._exchange_client:
-                    ex_positions = self._exchange_client.get_positions()
-                    still_open = False
-                    for p in ex_positions:
-                        if asset in p.get('symbol', '') and float(p.get('qty', 0)) > 0:
-                            remaining_qty = float(p.get('qty', 0))
-                            still_open = True
-                    if not still_open:
-                        break  # Fully closed
-                    if close_attempt < 2:
-                        print(f"  [{self._ex_tag}:{asset}] Partial fill — {remaining_qty} remaining, retrying...")
-                    else:
-                        print(f"  [{self._ex_tag}:{asset}] CLOSE INCOMPLETE — {remaining_qty} still open after 3 attempts")
+                if result.get('status') != 'success':
+                    err = result.get('message', str(result))
+                    if 'NoImmediate' in str(err) or 'cancel' in str(err).lower():
+                        print(f"  [{self._ex_tag}:{asset}] CLOSE FAILED (no liquidity): {err}")
                         self.failed_close_assets[asset] = time.time()
                         self._closing_in_progress.discard(asset)
                         return
-                else:
-                    break
-            except Exception:
-                break
+                    else:
+                        print(f"  [{self._ex_tag}:{asset}] CLOSE WARNING: {err}")
 
-        # ── Fetch actual fill price from exchange (don't trust trigger price) ──
-        actual_exit = price
-        try:
-            if self._exchange_client:
-                # Check if position is fully closed and get last trade price
-                time.sleep(0.5)
-                ex_positions = self._exchange_client.get_positions()
-                # If position closed, fetch recent fills
-                still_open = any(
-                    asset in p.get('symbol', '') and float(p.get('qty', 0)) > 0
-                    for p in ex_positions
-                )
-                if not still_open:
-                    # Try to get actual fill price from recent trades
-                    try:
-                        recent = self._exchange_client.exchange.fetch_my_trades(symbol, limit=3)
-                        if recent:
-                            last_fill = recent[-1]
-                            actual_exit = float(last_fill.get('price', price))
-                            if abs(actual_exit - price) / price > 0.002:  # >0.2% slippage
-                                print(f"  [{self._ex_tag}:{asset}] EXIT SLIPPAGE: expected ${price:,.2f} filled ${actual_exit:,.2f} ({(actual_exit-price)/price*100:+.2f}%)")
-                    except Exception:
-                        pass  # Use trigger price if can't fetch fills
-        except Exception:
-            pass
-        price = actual_exit
+                time.sleep(1)
+                try:
+                    if self._exchange_client:
+                        ex_positions = self._exchange_client.get_positions()
+                        still_open = False
+                        for p in ex_positions:
+                            if asset in p.get('symbol', '') and float(p.get('qty', 0)) > 0:
+                                remaining_qty = float(p.get('qty', 0))
+                                still_open = True
+                        if not still_open:
+                            break
+                        if close_attempt < 2:
+                            print(f"  [{self._ex_tag}:{asset}] Partial fill — {remaining_qty} remaining, retrying...")
+                        else:
+                            print(f"  [{self._ex_tag}:{asset}] CLOSE INCOMPLETE — {remaining_qty} still open after 3 attempts")
+                            self.failed_close_assets[asset] = time.time()
+                            self._closing_in_progress.discard(asset)
+                            return
+                    else:
+                        break
+                except Exception:
+                    break
+
+            # Fetch actual fill price from exchange
+            actual_exit = price
+            try:
+                if self._exchange_client:
+                    time.sleep(0.5)
+                    ex_positions = self._exchange_client.get_positions()
+                    still_open = any(
+                        asset in p.get('symbol', '') and float(p.get('qty', 0)) > 0
+                        for p in ex_positions
+                    )
+                    if not still_open:
+                        try:
+                            recent = self._exchange_client.exchange.fetch_my_trades(symbol, limit=3)
+                            if recent:
+                                last_fill = recent[-1]
+                                actual_exit = float(last_fill.get('price', price))
+                                if abs(actual_exit - price) / price > 0.002:
+                                    print(f"  [{self._ex_tag}:{asset}] EXIT SLIPPAGE: expected ${price:,.2f} filled ${actual_exit:,.2f} ({(actual_exit-price)/price*100:+.2f}%)")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            price = actual_exit
 
         # ── Calculate P&L (correct for contract-based exchanges) ──
         # Delta: qty = number of contracts. 1 BTC contract = 0.001 BTC, 1 ETH contract = 0.01 ETH
@@ -5444,8 +5868,8 @@ class TradingExecutor:
             except Exception:
                 pass
 
-        # ── MT5: Close mirrored/executed position ──
-        if self._mt5 and self._mt5.connected:
+        # ── MT5: Close mirrored/executed position (skip in paper mode) ──
+        if self._mt5 and self._mt5.connected and not self._paper_mode:
             try:
                 if self._mt5.mode == 'execute':
                     self._mt5.close_position(asset, price, reason)
@@ -5457,6 +5881,55 @@ class TradingExecutor:
         # Track realized PnL for drawdown limits
         self.session_realized_pnl += pnl_usd
         self.daily_realized_pnl += pnl_usd
+
+        # ── SNIPER: Feed profits into compound pool ──
+        if self.sniper_enabled:
+            if pnl_usd > 0:
+                self.sniper_profit_pool += pnl_usd
+                self.sniper_stats['wins'] += 1
+                print(f"  [{self._ex_tag}:{asset}] SNIPER WIN: +${pnl_usd:,.2f} → profit pool: ${self.sniper_profit_pool:,.2f}")
+            else:
+                # Losses reduce profit pool first (protect principal)
+                if self.sniper_protect_principal and self.sniper_profit_pool > 0:
+                    absorbed = min(self.sniper_profit_pool, abs(pnl_usd))
+                    self.sniper_profit_pool -= absorbed
+                    print(f"  [{self._ex_tag}:{asset}] SNIPER LOSS: ${pnl_usd:,.2f} | pool absorbed ${absorbed:,.2f} → pool: ${self.sniper_profit_pool:,.2f}")
+                self.sniper_stats['losses'] += 1
+
+        # ── Trade Log: record + print formatted trade row ──
+        notional = entry * qty * (1.0 if self._exchange_name != 'delta' else {'BTC': 0.001, 'ETH': 0.01}.get(asset, 0.001))
+        spread_fee = notional * 0.0085 if self._paper_mode else 0  # ~0.85% Robinhood spread per side
+        trade_record = {
+            'market': f"{asset}/USD",
+            'entry_price': entry,
+            'exit_price': price,
+            'qty': qty,
+            'direction': direction,
+            'realized_pnl': pnl_usd,
+            'spread_cost': spread_fee * 2,  # entry + exit
+            'duration_min': duration_min,
+            'reason': reason,
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        self._trade_log.append(trade_record)
+
+        # Print trade row
+        n = len(self._trade_log)
+        pnl_symbol = "+" if pnl_usd >= 0 else ""
+        total_pnl = sum(t['realized_pnl'] for t in self._trade_log)
+        wins = sum(1 for t in self._trade_log if t['realized_pnl'] > 0)
+        losses = sum(1 for t in self._trade_log if t['realized_pnl'] <= 0)
+        wr = wins / n * 100 if n > 0 else 0
+        print(f"  +-----------------------------------------------------------------------")
+        print(f"  | TRADE #{n}: {direction} {asset}/USD")
+        print(f"  | Entry: ${entry:,.2f}  ->  Exit: ${price:,.2f}  |  Qty: {qty:.6f}")
+        print(f"  | Realized P&L: {pnl_symbol}${pnl_usd:,.2f} ({pnl_pct:+.2f}%)  |  Reason: {reason}")
+        if self._paper_mode:
+            print(f"  | Spread Cost: ~${spread_fee * 2:,.2f}  |  Duration: {duration_min:.1f}min")
+        else:
+            print(f"  | Duration: {duration_min:.1f}min")
+        print(f"  | -- Session: Total P&L: ${total_pnl:+,.2f}  |  Trades: {n} (W:{wins} L:{losses})  |  WR: {wr:.0f}%")
+        print(f"  +-----------------------------------------------------------------------")
 
         # Update agent orchestrator weights (learn from outcome)
         if self._orchestrator and pos.get('agent_votes'):
@@ -5663,6 +6136,60 @@ class TradingExecutor:
                 self._profit_protector.update_balance(self.equity)
             except Exception as e:
                 logger.debug(f"Profit Protector log error: {e}")
+
+        # ── RL FEEDBACK LOOP: Learn from trade outcome (spread-aware) ──
+        # This is the CRITICAL missing piece: RL agent now learns from every closed trade
+        # With spread cost included, it learns to avoid trades where move < spread
+        _rl = self._rl_per_asset.get(asset) if hasattr(self, '_rl_per_asset') else None
+        if _rl and pos.get('rl_state') is not None:
+            try:
+                # Compute spread cost for this trade
+                _spread_cost_pct = 0.0
+                if self._paper_mode:
+                    # Robinhood: ~1.67% per side = ~3.34% round-trip
+                    _spread_cost_pct = 3.34
+                else:
+                    # Futures: typical spread ~0.05-0.1% round-trip
+                    _spread_cost_pct = 0.1
+
+                # Map exit reason to exit_type
+                _exit_type = 'unknown'
+                reason_lower = reason.lower()
+                if 'ema' in reason_lower or 'line' in reason_lower:
+                    _exit_type = 'ema_exit'
+                elif 'ratchet' in reason_lower or 'trailing' in reason_lower:
+                    _exit_type = 'ratchet'
+                elif 'hard stop' in reason_lower:
+                    _exit_type = 'hard_stop'
+                elif 'sl' in reason_lower or 'stop' in reason_lower:
+                    _exit_type = 'sl'
+                elif 'time' in reason_lower:
+                    _exit_type = 'time'
+
+                _trade_result = {
+                    'pnl_pct': pnl_pct,
+                    'exit_type': _exit_type,
+                    'hold_bars': int(duration_min),
+                    'was_skipped': False,
+                    'spread_cost_pct': _spread_cost_pct,
+                    'is_spot': self._paper_mode,  # Robinhood = spot
+                }
+                _rl.record_trade_result(
+                    state=pos['rl_state'],
+                    action_idx=pos.get('rl_action_idx', 0),
+                    trade_result=_trade_result,
+                )
+                print(f"  [{self._ex_tag}:{asset}] RL LEARNED: {_exit_type} net_pnl={pnl_pct - _spread_cost_pct:+.2f}% (raw={pnl_pct:+.2f}% - spread={_spread_cost_pct:.2f}%)")
+            except Exception as _rl_err:
+                logger.debug(f"RL feedback error: {_rl_err}")
+
+        # ── Paper Trade: Record exit with real Robinhood price ──
+        if self._paper:
+            try:
+                self._paper.record_exit(asset, reason=reason)
+                self._paper.save_state()  # Immediate save for dashboard
+            except Exception as _pe:
+                logger.warning(f"[PAPER] Exit record failed: {_pe}")
 
         # Remove from positions
         del self.positions[asset]
@@ -6057,9 +6584,10 @@ CRITICAL: If no timeframe has a clean setup, set proceed=false. Capital preserva
 
             # Validate chosen_timeframe — must be one of the active signals
             active_tf_signals = active_tf_signals or {}
-            chosen_tf = str(result.get('chosen_timeframe', '5m'))
+            _default_tf = self.SIGNAL_TIMEFRAMES[0] if self.SIGNAL_TIMEFRAMES else '5m'
+            chosen_tf = str(result.get('chosen_timeframe', _default_tf))
             if chosen_tf not in self.SIGNAL_TIMEFRAMES:
-                chosen_tf = '5m'
+                chosen_tf = _default_tf
             # If LLM chose a TF with no active signal, pick the best active one
             if active_tf_signals and chosen_tf not in active_tf_signals:
                 # Fall back to highest entry_score active TF

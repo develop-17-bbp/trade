@@ -245,7 +245,7 @@ for name, s, desc in source_details:
 st.markdown('<div class="section-title">ENVIRONMENT</div>', unsafe_allow_html=True)
 
 env_vars = [
-    ("BINANCE_TESTNET_KEY", bool(os.environ.get("BINANCE_TESTNET_KEY"))),
+    ("ROBINHOOD_API_KEY", bool(os.environ.get("ROBINHOOD_API_KEY"))),
     ("NEWSAPI_KEY", bool(os.environ.get("NEWSAPI_KEY"))),
     ("CRYPTOPANIC_TOKEN", bool(os.environ.get("CRYPTOPANIC_TOKEN"))),
     ("REASONING_LLM_KEY", bool(os.environ.get("REASONING_LLM_KEY"))),

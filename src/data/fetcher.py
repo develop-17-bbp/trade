@@ -1,16 +1,16 @@
 """
 Enhanced Price Data Fetcher
 ============================
-Multi-timeframe OHLCV data from CCXT (Binance and other exchanges).
+Multi-timeframe OHLCV data from CCXT and Robinhood Crypto API.
 Supports:
   - Historical OHLCV candle fetching
   - Multi-timeframe data (1m, 5m, 15m, 1h, 4h, 1d)
   - Ticker (current price) snapshot
   - Data normalization and validation
-  - Binance Testnet for paper trading with fake money
+  - Robinhood Crypto API (real account, read-only)
   - Alpaca Paper Trading (crypto + stocks)
   - LiveCoinWatch fast price data
-  - Order placement (testnet / live)
+  - Order placement (live)
 """
 
 import os
@@ -337,26 +337,26 @@ class AlpacaClient:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Bybit Testnet Client (Futures — supports LONG + SHORT)
+# Bybit Client (Futures — supports LONG + SHORT)
 # ═══════════════════════════════════════════════════════════════════
 
 class BybitClient:
     """
-    Bybit testnet/live client via CCXT.
+    Bybit client via CCXT.
     Uses USDT-margined linear perpetual futures for full LONG + SHORT.
     """
 
     def __init__(self, api_key: Optional[str] = None,
                  api_secret: Optional[str] = None,
-                 testnet: bool = True):
-        self.api_key = api_key or os.environ.get('BYBIT_TESTNET_KEY', '')
-        self.api_secret = api_secret or os.environ.get('BYBIT_TESTNET_SECRET', '')
+                 testnet: bool = False):
+        self.api_key = api_key or os.environ.get('BYBIT_API_KEY', os.environ.get('BYBIT_TESTNET_KEY', ''))
+        self.api_secret = api_secret or os.environ.get('BYBIT_API_SECRET', os.environ.get('BYBIT_TESTNET_SECRET', ''))
         self.testnet = testnet
         self.available = False
         self.exchange = None
 
         if not (self.api_key and self.api_secret):
-            logger.warning("[BYBIT] No API keys — set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
+            logger.warning("[BYBIT] No API keys — set BYBIT_API_KEY / BYBIT_API_SECRET")
             return
 
         try:
@@ -382,7 +382,7 @@ class BybitClient:
             balance = self.exchange.fetch_balance()
             usdt = float(balance.get('USDT', {}).get('total', 0) or 0)
             btc = float(balance.get('BTC', {}).get('total', 0) or 0)
-            logger.info(f"[BYBIT] Connected to {'TESTNET' if testnet else 'LIVE'}")
+            logger.info(f"[BYBIT] Connected ({'sandbox' if testnet else 'live'})")
             logger.info(f"[BYBIT] USDT: {usdt:,.2f} | BTC: {btc:,.6f}")
             self.available = True
         except Exception as e:
@@ -577,14 +577,12 @@ class BybitClient:
 
 class DeltaClient:
     """
-    Delta Exchange testnet/live client via CCXT.
-    Uses correct testnet URL: cdn-ind.testnet.deltaex.org
-    (ccxt default URL is wrong for Delta testnet)
+    Delta Exchange client via CCXT.
     """
 
     def __init__(self, api_key: Optional[str] = None,
                  api_secret: Optional[str] = None,
-                 testnet: bool = True):
+                 testnet: bool = False):
         self.api_key = api_key or os.environ.get('DELTA_API_KEY', '')
         self.api_secret = api_secret or os.environ.get('DELTA_API_SECRET', '')
         self.testnet = testnet
@@ -645,7 +643,7 @@ class DeltaClient:
             # Verify auth
             balance = self.exchange.fetch_balance()
             usd = float(balance.get('USD', {}).get('total', 0) or 0)
-            logger.info(f"[DELTA] Connected to {'TESTNET' if testnet else 'LIVE'}")
+            logger.info(f"[DELTA] Connected ({'sandbox' if testnet else 'live'})")
             logger.info(f"[DELTA] USD: {usd:,.2f}")
             self.available = True
         except Exception as e:
@@ -753,8 +751,8 @@ class PriceFetcher:
 
     VALID_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1M']
 
-    def __init__(self, exchange_name: str = "alpaca",
-                 testnet: bool = True,
+    def __init__(self, exchange_name: str = "robinhood",
+                 testnet: bool = False,
                  api_key: Optional[str] = None,
                  api_secret: Optional[str] = None,
                  max_requests_per_second: int = 10):
@@ -774,6 +772,7 @@ class PriceFetcher:
         self.alpaca: Optional[AlpacaClient] = None
         self.bybit: Optional[BybitClient] = None
         self.delta: Optional[DeltaClient] = None
+        self.robinhood = None  # RobinhoodCryptoClient
 
         # ── LiveCoinWatch (fast price data) ──
         self.lcw: Optional[LiveCoinWatchFetcher] = None
@@ -785,7 +784,9 @@ class PriceFetcher:
         self.exchange = None
 
         # ── Initialize based on exchange_name ──
-        if 'delta' in self.exchange_name:
+        if 'robinhood' in self.exchange_name:
+            self._init_robinhood()
+        elif 'delta' in self.exchange_name:
             self._init_delta(api_key, api_secret, testnet)
         elif 'bybit' in self.exchange_name:
             self._init_bybit(api_key, api_secret, testnet)
@@ -805,33 +806,14 @@ class PriceFetcher:
         self._available = self.bybit.available
 
         if self.bybit.available:
-            print(f"  [BYBIT] {'TESTNET' if testnet else 'LIVE'} trading connected")
+            print(f"  [BYBIT] Live trading connected")
             acct = self.bybit.get_account()
             if 'equity' in acct:
                 print(f"  [BYBIT] Equity: ${acct['equity']:,.2f} | USDT: ${acct.get('cash', 0):,.2f}")
-            if testnet:
-                # Bybit TESTNET has frozen/stale OHLCV data — use real Bybit mainnet for candles
-                # Orders still go to testnet via self.bybit, only OHLCV reads from mainnet
-                try:
-                    import ccxt as _ccxt_bybit
-                    self.exchange = _ccxt_bybit.bybit({
-                        'enableRateLimit': True,
-                        'options': {'defaultType': 'swap'},
-                    })
-                    # Verify mainnet data is actually live
-                    _test = self.exchange.fetch_ohlcv('BTC/USDT:USDT', '5m', limit=2)
-                    if _test and len(_test) >= 2:
-                        print("  [DATA] Bybit MAINNET OHLCV for real candle data (orders go to testnet)")
-                    else:
-                        raise RuntimeError("mainnet returned empty")
-                except Exception as _e:
-                    self.exchange = self.bybit.exchange
-                    print(f"  [DATA] Bybit testnet OHLCV (mainnet failed: {str(_e)[:80]})")
-            else:
-                self.exchange = self.bybit.exchange
-                print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
+            self.exchange = self.bybit.exchange
+            print(f"  [DATA] Bybit CCXT initialized for OHLCV data")
         else:
-            print(f"  [BYBIT] Not connected - set BYBIT_TESTNET_KEY / BYBIT_TESTNET_SECRET")
+            print(f"  [BYBIT] Not connected - set BYBIT_API_KEY / BYBIT_API_SECRET")
             self._init_ccxt_readonly()
 
     def _init_delta(self, api_key, api_secret, testnet):
@@ -845,7 +827,7 @@ class PriceFetcher:
         self._available = self.delta.available
 
         if self.delta.available:
-            print(f"  [DELTA] {'TESTNET' if testnet else 'LIVE'} trading connected")
+            print(f"  [DELTA] Live trading connected")
             acct = self.delta.get_account()
             if 'equity' in acct:
                 print(f"  [DELTA] Equity: ${acct['equity']:,.2f} | Cash: ${acct.get('cash', 0):,.2f}")
@@ -883,6 +865,34 @@ class PriceFetcher:
             self._available = True
             print(f"  [INFO] Running with CCXT data only (no order execution without Alpaca)")
 
+    def _init_robinhood(self):
+        """Initialize Robinhood Crypto API (read-only real account)."""
+        try:
+            from src.integrations.robinhood_crypto import RobinhoodCryptoClient
+            self.robinhood = RobinhoodCryptoClient()
+            if self.robinhood.authenticated:
+                acct = self.robinhood.get_account()
+                if acct and 'error' not in acct:
+                    print(f"  [ROBINHOOD] Connected | Account: {acct.get('account_number', '?')} | Buying Power: ${acct.get('buying_power', '?')}")
+                    self._authenticated = True
+                    self._available = True
+                else:
+                    print(f"  [ROBINHOOD] Auth failed: {acct}")
+                    self._available = False
+            else:
+                print(f"  [ROBINHOOD] Not configured — set ROBINHOOD_API_KEY + ROBINHOOD_PRIVATE_KEY in .env")
+                self._available = False
+        except Exception as e:
+            print(f"  [ROBINHOOD] Init failed: {e}")
+            self._available = False
+
+        # Also init CCXT for OHLCV data (Robinhood API has no historical candles)
+        self._init_ccxt_readonly()
+
+        if not self._available and self.exchange is not None:
+            self._available = True
+            print(f"  [INFO] Running with CCXT data + Robinhood quotes (read-only)")
+
     def _init_ccxt_readonly(self):
         """Initialize a CCXT exchange for read-only OHLCV data."""
         try:
@@ -906,8 +916,8 @@ class PriceFetcher:
                     'recvWindow': 60000,
                 },
             }
-            key = api_key or os.environ.get('BINANCE_TESTNET_KEY' if testnet else 'BINANCE_API_KEY', '')
-            secret = api_secret or os.environ.get('BINANCE_TESTNET_SECRET' if testnet else 'BINANCE_API_SECRET', '')
+            key = api_key or os.environ.get('BINANCE_API_KEY', '')
+            secret = api_secret or os.environ.get('BINANCE_API_SECRET', '')
             if key and secret:
                 exchange_config['apiKey'] = key
                 exchange_config['secret'] = secret
@@ -919,11 +929,8 @@ class PriceFetcher:
             except Exception:
                 pass
 
-            if testnet:
-                self.exchange.set_sandbox_mode(True)
-                print(f"  [TESTNET] Connected to {exchange_name.upper()} Testnet (sandbox mode)")
-
             self._available = True
+            print(f"  [DATA] {exchange_name.upper()} CCXT initialized")
         except Exception as e:
             print(f"[WARN] CCXT {exchange_name} not available ({e}).")
             self.exchange = None
@@ -1098,7 +1105,7 @@ class PriceFetcher:
         return result
 
     # ------------------------------------------------------------------
-    # Order execution (testnet or live)
+    # Order execution
     # ------------------------------------------------------------------
 
     def get_slippage_stats(self) -> Dict:

@@ -83,7 +83,7 @@ class SystemHealthChecker:
         HFT-grade latency monitoring.
         Institutional threshold: 250ms.
         """
-        threshold = 5000.0 # 5s for cloud/testnet sandbox
+        threshold = 5000.0 # 5s for cloud API
         is_healthy = True
         
         if api_latency_ms > threshold:

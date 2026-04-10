@@ -21,8 +21,8 @@ _API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 try:
     _cfg_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
     with open(_cfg_path) as _f:
-        _mode = yaml.safe_load(_f).get('mode', 'testnet')
-    if _mode in ('testnet', 'live') and not _API_KEY:
+        _mode = yaml.safe_load(_f).get('mode', 'live')
+    if _mode == 'live' and not _API_KEY:
         logger.warning(
             "SECURITY: DASHBOARD_API_KEY is not set in %s mode. "
             "API endpoints are unauthenticated. Set DASHBOARD_API_KEY env var.", _mode

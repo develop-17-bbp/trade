@@ -170,18 +170,22 @@ class DashboardState:
             return _DEFAULT_STATE.copy()
 
     def _write_file(self, state: Dict[str, Any]):
-        """Atomically write state to disk."""
+        """Atomically write state to disk with error logging."""
+        tmp_path = STATE_FILE + ".tmp"
         try:
-            tmp_path = STATE_FILE + ".tmp"
             with open(tmp_path, 'w') as f:
                 json.dump(state, f)
             # Atomic rename (as close as Windows allows)
-            if os.path.exists(STATE_FILE):
-                os.replace(tmp_path, STATE_FILE)
-            else:
-                os.rename(tmp_path, STATE_FILE)
-        except Exception:
-            pass
+            os.replace(tmp_path, STATE_FILE)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[DashboardState] Write failed: {e}")
+            # Clean up temp file on failure
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
     def _read_modify_write(self, modifier_fn):
         """Thread-safe read-modify-write cycle."""
@@ -366,9 +370,10 @@ class DashboardState:
         self._read_modify_write(_mod)
 
     def get_full_state(self) -> Dict:
-        """Read-only: returns latest state from disk."""
-        self.state = self._read_file()
-        return self.state
+        """Read-only: returns latest state from disk (thread-safe)."""
+        with self._lock:
+            self.state = self._read_file()
+            return self.state.copy()
 
     def update_open_positions(self, positions: Dict[str, Any]):
         """Push current open positions with entry price, size, unrealized P&L."""

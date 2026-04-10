@@ -4,19 +4,16 @@
 # ============================================================
 
 # ── General Settings ──
-mode: testnet                  # execution mode: 'paper', 'testnet', or 'live'
-# 'demo' key has been deprecated; real-time Binance CCXT data is required
-# demo: false                    # previously controlled synthetic vs live data
+mode: live                     # execution mode: 'live' (Robinhood real account)
 
 assets:
   - BTC
   - ETH
 
-# ── Exchange Configuration (for testnet/live) ──
+# ── Exchange Configuration ──
 exchange:
-  name: binance
-  api_key: ""                  # Alternatively use env var BINANCE_API_KEY / BINANCE_TESTNET_KEY
-  api_secret: ""               # Alternatively use env var BINANCE_API_SECRET / BINANCE_TESTNET_SECRET
+  name: robinhood
+  # API keys in .env: ROBINHOOD_API_KEY, ROBINHOOD_PRIVATE_KEY
 
 
 initial_capital: 100000.0      # Starting capital in USD

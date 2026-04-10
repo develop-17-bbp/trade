@@ -72,7 +72,7 @@ class StateStore:
             """
             CREATE TABLE IF NOT EXISTS system_meta (
                 id            INTEGER PRIMARY KEY CHECK (id = 1),
-                mode          TEXT NOT NULL DEFAULT 'paper',
+                mode          TEXT NOT NULL DEFAULT 'live',
                 last_run_time REAL NOT NULL,
                 updated_at    REAL NOT NULL
             )

@@ -120,9 +120,17 @@ class MT5Bridge:
             return False
 
         terminal_path = self.mt5_config.get('terminal_path', None)
-        login = self.mt5_config.get('login', None)
-        password = self.mt5_config.get('password', '')
-        server = self.mt5_config.get('server', '')
+        # Support env var references in config: ${MT5_LOGIN} -> os.environ['MT5_LOGIN']
+        def _resolve(val, env_key=None):
+            if isinstance(val, str) and val.startswith('${') and val.endswith('}'):
+                return os.environ.get(val[2:-1], '')
+            if val is None and env_key:
+                return os.environ.get(env_key, '')
+            return val
+
+        login = _resolve(self.mt5_config.get('login', None), 'MT5_LOGIN')
+        password = _resolve(self.mt5_config.get('password', ''), 'MT5_PASSWORD')
+        server = _resolve(self.mt5_config.get('server', ''), 'MT5_SERVER')
 
         # Initialize MT5
         init_kwargs = {}

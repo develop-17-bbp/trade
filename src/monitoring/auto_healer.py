@@ -844,7 +844,7 @@ Respond ONLY with JSON:
 
         prompt = f"""You are a Python trading system debugger. Analyze this error and provide a fix.
 
-SYSTEM: Crypto trading bot using EMA(8) crossover + LLM confirmation on Bybit/Delta testnet.
+SYSTEM: Crypto trading bot using EMA(8) crossover + LLM confirmation on Robinhood Crypto.
 Key files: src/trading/executor.py, src/data/fetcher.py, config.yaml
 
 ERROR LOG:

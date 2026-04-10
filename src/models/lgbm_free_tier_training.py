@@ -354,7 +354,7 @@ def train_free_tier():
     logger.info(f"\n💾 Model saved to: models/lgbm_free_tier_v1.txt")
     
     print("\n📈 Next Steps:")
-    print("  1. Test on live data: python src/main.py --mode testnet")
+    print("  1. Test on live data: python -m src.main")
     print("  2. Run backtest: python src/main.py --backtest --mode free-tier")
     print("  3. When ready, add Glassnode ($499): (premium data)")
     

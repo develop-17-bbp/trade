@@ -244,7 +244,7 @@ Layers Online:
 - L8: Tactical Memory ✅
 - L9: RL Agent ⏳
 
-Trading Mode: TESTNET (Binance Sandbox)
+Trading Mode: LIVE (Robinhood Crypto)
 API Connection: ✅ ACTIVE
 Risk Controls: ✅ ACTIVE
 
@@ -347,7 +347,7 @@ MARKET CONDITIONS OBSERVED
 ===========================
 Primary Market:         CRYPTO (24/7)
 Trading Hours:          {self.today.strftime('%H:%M')} UTC
-System Execution Mode:  SHADOW (simulated, testnet)
+System Execution Mode:  LIVE (Robinhood Crypto)
 Portfolio Heat:         {stats['total_trades']*0.061:.1f}% (safe)
 
 RECOMMENDATIONS

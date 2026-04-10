@@ -1,7 +1,7 @@
 """
 PHASE 5: Execution Router
 =========================
-Smart order routing with failover between testnet and live execution.
+Smart order routing with failover between exchanges.
 Handles exchange switching and execution reliability.
 """
 
@@ -17,7 +17,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ExecutionMode(Enum):
-    TESTNET = "testnet"
     LIVE = "live"
     SIMULATION = "simulation"
 
@@ -50,35 +49,34 @@ class ExchangeStatus:
 class ExecutionRouter:
     """
     Intelligent execution router with automatic failover and exchange optimization.
-    Routes orders between testnet and live execution with reliability guarantees.
+    Routes orders between exchanges with reliability guarantees.
     """
 
-    def __init__(self, mode: ExecutionMode = ExecutionMode.TESTNET, price_source=None):
+    def __init__(self, mode: ExecutionMode = ExecutionMode.LIVE, price_source=None):
         self.mode = mode
-        # Real exchange for testnet/live order placement (PriceFetcher instance)
+        # Real exchange for order placement (PriceFetcher instance)
         self.price_source = price_source
 
         # Exchange configurations
         self.exchanges = {
+            "robinhood": {
+                "live_url": "https://trading.robinhood.com",
+                "fee_maker": 0.0,
+                "fee_taker": 0.0,
+                "max_orders_per_second": 2
+            },
             "alpaca": {
-                "paper_url": "https://paper-api.alpaca.markets",
                 "live_url": "https://api.alpaca.markets",
-                "fee_maker": 0.0,    # Alpaca: zero commission on crypto
+                "fee_maker": 0.0,
                 "fee_taker": 0.0,
                 "max_orders_per_second": 10
             },
             "binance": {
-                "testnet_url": "https://testnet.binance.vision",
                 "live_url": "https://api.binance.com",
-                "fee_maker": 0.001,  # 0.1%
+                "fee_maker": 0.001,
                 "fee_taker": 0.001,
                 "max_orders_per_second": 10
             },
-            "robinhood": {
-                "fee_maker": 0.0,
-                "fee_taker": 0.0,
-                "max_orders_per_second": 5
-            }
         }
 
         # HFT Execution Bridge (Multi-Language Readiness)
@@ -266,7 +264,7 @@ class ExecutionRouter:
 
     def set_execution_mode(self, mode: ExecutionMode):
         """
-        Switch execution mode (testnet/live/simulation).
+        Switch execution mode (live/simulation).
 
         Args:
             mode: New execution mode
@@ -325,9 +323,7 @@ class ExecutionRouter:
 
         # Execute based on mode
         try:
-            if self.mode == ExecutionMode.TESTNET:
-                result = self._execute_testnet_order(exchange, symbol, side, quantity, price, order_type)
-            elif self.mode == ExecutionMode.LIVE:
+            if self.mode == ExecutionMode.LIVE:
                 result = self._execute_live_order(exchange, symbol, side, quantity, price, order_type)
             elif self.mode == ExecutionMode.SIMULATION:
                 result = self._execute_simulation_order(exchange, symbol, side, quantity, price, order_type)
@@ -387,55 +383,6 @@ class ExecutionRouter:
             return available_exchanges[0][0]
 
         return None
-
-    def _execute_testnet_order(self, exchange: str, symbol: str, side: str,
-                              quantity: float, price: Optional[float],
-                              order_type: str) -> ExecutionResult:
-        """Execute order on testnet/sandbox environment via real Binance testnet API."""
-
-        # ── Attempt real Binance testnet API execution ──
-        if self.price_source is not None and getattr(self.price_source, 'is_authenticated', False):
-            try:
-                result = self.price_source.place_order(
-                    symbol=symbol,
-                    side=side,
-                    amount=quantity,
-                    order_type=order_type,
-                    price=price,
-                )
-                if result.get('status') == 'success':
-                    fill_price = result.get('price') or price or self._get_simulated_price(symbol, side)
-                    fee_info = result.get('fee') or {}
-                    fee_cost = float(fee_info.get('cost', 0.0)) if isinstance(fee_info, dict) else 0.0
-                    logger.info(f"  [TESTNET-REAL] Order {result['order_id']} filled at {fill_price}")
-                    return ExecutionResult(
-                        success=True,
-                        order_id=str(result['order_id']),
-                        executed_price=round(float(fill_price), 4),
-                        executed_quantity=float(result.get('filled') or quantity),
-                        fee=round(fee_cost, 6),
-                        exchange_used=exchange
-                    )
-                else:
-                    # API returned error — log and fall through to simulation
-                    logger.warning(f"  [TESTNET-API] Order failed: {result.get('message')} — using simulation fallback")
-            except Exception as e:
-                logger.warning(f"  [TESTNET-API] Exception: {e} — using simulation fallback")
-
-        # ── Simulation fallback (when API unavailable or not authenticated) ──
-        time.sleep(random.uniform(0.05, 0.2))
-        executed_price = price if price else self._get_simulated_price(symbol, side)
-        fee_rate = self.exchanges[exchange]["fee_taker"]
-        fee = executed_price * quantity * fee_rate
-
-        return ExecutionResult(
-            success=True,
-            order_id=f"testnet_{exchange}_{int(time.time())}_{random.randint(1000, 9999)}",
-            executed_price=round(executed_price, 4),
-            executed_quantity=quantity,
-            fee=round(fee, 6),
-            exchange_used=exchange
-        )
 
     def _execute_live_order(self, exchange: str, symbol: str, side: str,
                            quantity: float, price: Optional[float],

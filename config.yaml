@@ -1,18 +1,15 @@
 # ── General Settings ──
-mode: testnet                  # execution mode: 'paper', 'testnet', or 'live'
-poll_interval: 10             # check every 10s, analyze 5m candles, trade on crossovers
+mode: live                     # execution mode: 'live' (Robinhood real account)
+poll_interval: 60             # check every 60s — 4h/daily candles don't need fast polling
 
 # ── Exchange Configuration ──
-# Both exchanges run independently with same strategy
 exchanges:
-  - name: bybit
-    assets: [BTC, ETH]
-  - name: delta
+  - name: robinhood
     assets: [BTC, ETH]
 
-# Primary exchange (for backward compatibility)
+# Primary exchange
 exchange:
-  name: bybit
+  name: robinhood
 
 # ── Assets ──
 assets:
@@ -21,23 +18,29 @@ assets:
 
 initial_capital: 100000.0
 
-# ── EMA Crossover Strategy ──
+# ── EMA Crossover Strategy (Robinhood Spread-Adapted) ──
+# Robinhood spread ~1.67% round-trip ~3.3% — need 5%+ moves to profit
+# Only trade 4h/1d signals — catch multi-day swings
 adaptive:
   ema_crossover_primary: true
   ema_period: 8                                # EMA period (matches chart)
   struct_window: 5                             # Structure points for SL (L1->L4)
-  min_entry_score: 4                           # v13: LONG min score (backtest: PF 1.003 BTC, 1.001 ETH)
-  max_entry_score: 7                           # v13: cap high scores (8+ = momentum traps)
-  short_score_penalty: 3                       # v13: SHORTs need score 7+ (LONG bias in crypto)
-  sr_assets: [ETH]                             # v14: S/R levels for ETH only (PF 1.02), hurts BTC
+  min_entry_score: 6                           # Only high-quality setups
+  max_entry_score: 15                          # Don't cap strong momentum (daily TF = bigger scores)
+  short_score_penalty: 4                       # SHORTs need score 10+ (6+4) — LONG bias in crypto
+  sr_assets: [ETH]                             # S/R levels for ETH only
+  signal_timeframes: [4h, 1d]                 # Robinhood: only 4h and daily — need 5%+ moves
 
-# ── Risk (minimal — daily loss limit only) ──
+# ── Risk (Robinhood Spread-Adapted) ──
+# Must overcome 3.3% round-trip spread cost
+# Wider everything: SL, TP, hold time, position size
 risk:
-  daily_loss_limit_pct: 3.0
-  max_drawdown_pct: 10.0
-  risk_per_trade_pct: 0.5
-  atr_stop_mult: 1.5
-  atr_tp_mult: 4.5
+  daily_loss_limit_pct: 5.0                    # Swing trades need room
+  max_drawdown_pct: 15.0                       # Multi-day holds can swing
+  risk_per_trade_pct: 2.0                      # Larger positions — fewer trades, bigger conviction (was 0.5%)
+  atr_stop_mult: 3.0                           # Wide SL — don't get shaken out by noise (was 1.5)
+  atr_tp_mult: 10.0                            # TP = 10×ATR — target 5-10% moves (was 4.5)
+  hard_stop_pct: -7.0                          # Hard stop at -7% (spread=1.67% so real move = -5.33%, was -5% = only -3.33% real move)
 
 # ── AI / LLM ──
 # Bybit uses Ollama (mistral 7B), Delta uses Claude API (haiku)
@@ -50,13 +53,13 @@ ai:
   claude_model: "claude-haiku-4-5" # Cost-effective for trade decisions (~$0.001/call)
   use_llm_trade_decider: true
   llm_trade_decider_mode: "primary"
-  llm_trade_conf_threshold: 0.60
+  llm_trade_conf_threshold: 0.80               # Robinhood: only high-conviction (was 0.60)
   rate_limit_calls_per_minute: 15
   fallback_on_quota_error: true
   use_local_on_failure: true
   bear_agent_enabled: true        # Second LLM call to argue AGAINST the trade
-  bear_veto_threshold: 9          # risk_score >= 9 = VETO (only extreme danger)
-  bear_reduce_threshold: 7        # risk_score 7-8 = reduce position 30% (floor 1%)
+  bear_veto_threshold: 8          # Veto only dangerous trades (need winners to be big)
+  bear_reduce_threshold: 6        # Only reduce at moderate risk (don't shrink every winner)
   facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
   risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
   edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
@@ -73,8 +76,19 @@ monitor:
   auto_fix: true                  # Apply safe fixes (null guards, type casts, defaults)
   max_fixes_per_hour: 5           # Rate limit auto-fixes
 
+# ── Sniper Mode (Patient, High-Conviction Trading) ──
+# Waits for multi-confluence perfect setups, compounds profits into bigger positions
+# Designed for Robinhood's 1.67% spread: only trades when expected move >> spread cost
+sniper:
+  enabled: true                        # Default ON for Robinhood paper mode
+  min_confluence: 5                    # Need 5+ of 9 independent signals (was 4 — too easy, passed noise)
+  min_score: 8                         # Higher bar than normal min_entry_score (6)
+  min_expected_move_pct: 5.0           # Only enter if expected move > 5% (clears 3.3% round-trip spread)
+  compound_pct: 50.0                   # Reinvest 50% of realized profits into next trade
+  protect_principal: true              # After first win, only risk profits — never touch original capital extra
+
 # ── Time-Based Exits ──
-max_hold_minutes: 360             # Close stale/losing positions after 6 hours
+max_hold_minutes: 10080           # Hold up to 7 DAYS — let big moves develop (was 6 hrs)
 
 # ── MetaTrader 5 ──
 # Bridge to MT5 terminal for visual tracking and/or direct execution
@@ -83,9 +97,9 @@ mt5:
   enabled: true
   mode: execute                      # 'mirror' (visual only) or 'execute' (trade through MT5)
   terminal_path: "C:/Program Files/MetaTrader 5/terminal64.exe"  # Auto-detect if omitted
-  login: 5048969803       # MT5 account number
-  password: "@c0sOyFd" #MT5 password
-  server: "MetaQuotes-Demo" #Server name
+  login: ${MT5_LOGIN}       # MT5 account number (from .env)
+  password: ${MT5_PASSWORD} # MT5 password (from .env)
+  server: ${MT5_SERVER}     # Server name (from .env)
   symbol_map:
     BTC: "BTC"                       # MetaQuotes-Demo: iShares Bitcoin Trust ETF
     ETH: "ETH"                       # MetaQuotes-Demo: iShares Ethereum Trust ETF
@@ -94,9 +108,15 @@ mt5:
     ETH: 1.0                         # Min lot for ETH ETF (1 share)
   magic_number: 888888               # Unique EA ID for our trades
 
+# ── Robinhood Crypto (read-only paper tracking) ──
+robinhood:
+  enabled: true                      # Robinhood Crypto API (read-only)
+  assets: [BTC, ETH]
+  poll_interval: 30                  # Price snapshot interval (seconds)
+
 # ── Order Execution ──
 # LIMIT preferred: places at best bid/ask for instant fill + slippage protection
-# Market orders pay the spread and can slip badly on thin testnet books
+# Market orders pay the spread
 execution:
   entry_type: "limit"
   exit_type: "limit"

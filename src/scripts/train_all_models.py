@@ -209,7 +209,6 @@ def fetch_training_data(asset='BTC', timeframe='5m', bars=5000):
         exchange = ccxt.bybit({
             'enableRateLimit': True,
             'options': {'defaultType': 'linear'},
-            'sandbox': True,
         })
         symbol = f"{asset}/USDT:USDT"
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=min(200, bars) if bars > 0 else 200)
@@ -222,7 +221,7 @@ def fetch_training_data(asset='BTC', timeframe='5m', bars=5000):
                 'closes': [float(x[4]) for x in ohlcv],
                 'volumes': [float(x[5]) for x in ohlcv],
             }
-            print(f"  Fetched {len(ohlcv)} bars from Bybit testnet")
+            print(f"  Fetched {len(ohlcv)} bars from Bybit")
             return data
     except Exception as e:
         print(f"  Bybit fetch failed: {e}")

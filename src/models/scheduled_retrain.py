@@ -60,15 +60,15 @@ except ImportError:
 # ============================================================================
 
 RETRAIN_CONFIG = {
-    'lookback_bars': 15000,        # ~625 days of hourly data
+    'lookback_bars': 3600,         # ~600 days of 4h data (6 bars/day × 600 days)
     'validation_pct': 0.15,        # 15% holdout for walk-forward validation
     'test_pct': 0.10,              # 10% final test set (never trained on)
     'optuna_trials': 40,           # Bayesian optimization trials
     'min_accuracy_improvement': 0.005,  # New model must beat old by 0.5%
-    'label_threshold': 0.001,      # ±0.1% for directional labels
+    'label_threshold': 0.005,      # ±0.5% for directional labels (wider for 4h: need bigger moves)
     'early_stopping_rounds': 30,
     'boost_rounds': 500,
-    'timeframe': '1h',
+    'timeframe': '4h',             # 4h timeframe for Robinhood swing trading (was 1h)
     'model_dir': 'models',
     'history_file': 'models/retrain_history.json',
 }
@@ -197,9 +197,10 @@ def build_features(df: pd.DataFrame, onchain: Optional[Dict] = None) -> pd.DataF
     feat['macd_signal'] = feat['macd'].ewm(span=9).mean()
 
     # ── Volatility (8 features) ──
-    feat['returns_1h'] = returns
-    feat['returns_4h'] = returns.rolling(4).sum()
-    feat['returns_24h'] = returns.rolling(24).sum()
+    # Adaptive to timeframe: 4h bar = 4 bars/day, 1h = 24 bars/day, 1d = 1 bar/day
+    feat['returns_1bar'] = returns
+    feat['returns_4bar'] = returns.rolling(4).sum()   # 4h TF: ~16h | 1h TF: ~4h | 1d TF: ~4d
+    feat['returns_24bar'] = returns.rolling(24).sum()  # 4h TF: ~4 days | 1h TF: ~1 day
     feat['realized_vol_20'] = returns.rolling(20).std()
     feat['realized_vol_50'] = returns.rolling(50).std()
     feat['vol_ratio'] = feat['realized_vol_20'] / (feat['realized_vol_50'] + 1e-10)
@@ -261,6 +262,16 @@ def build_features(df: pd.DataFrame, onchain: Optional[Dict] = None) -> pd.DataF
         feat['day_of_week'] = df['timestamp'].dt.dayofweek
         feat['is_weekend'] = (feat['day_of_week'] >= 5).astype(int)
 
+    # ── Swing Trading Features (7 features — useful for 4h/1d timeframes) ──
+    # These capture multi-day patterns that matter for swing trades on Robinhood
+    feat['ema_8'] = close.ewm(span=8).mean()
+    feat['ema_21'] = close.ewm(span=21).mean()
+    feat['ema_8_21_cross'] = (feat['ema_8'] - feat['ema_21']) / (close + 1e-10)  # EMA crossover strength
+    feat['ema_8_slope'] = feat['ema_8'].pct_change(3)  # 3-bar EMA slope (4h: ~12h momentum)
+    feat['price_ema8_dist'] = (close - feat['ema_8']) / (feat['atr_14'] + 1e-10)  # Distance in ATR units
+    feat['range_expansion'] = (high - low) / (high.rolling(10).max() - low.rolling(10).min() + 1e-10)  # Is today's range expanding?
+    feat['higher_high'] = ((high > high.shift(1)) & (low > low.shift(1))).astype(int)  # Higher high + higher low pattern
+
     # ── On-chain snapshot features (4 features — constant across dataset) ──
     if onchain:
         feat['fear_greed_index'] = onchain.get('fear_greed_index', 50) / 100
@@ -298,11 +309,15 @@ def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int)
     return dx.rolling(period).mean()
 
 
-def create_labels(df: pd.DataFrame, threshold: float = 0.001,
-                  forward_bars: int = 4) -> pd.Series:
+def create_labels(df: pd.DataFrame, threshold: float = 0.005,
+                  forward_bars: int = 6) -> pd.Series:
     """
     Create directional labels based on forward return.
     +1 = LONG, 0 = FLAT, -1 = SHORT
+
+    For 4h timeframe: forward_bars=6 = 24h lookahead, threshold=0.5%
+    For 1h timeframe: forward_bars=4 = 4h lookahead, threshold=0.1%
+    For 1d timeframe: forward_bars=3 = 3 day lookahead, threshold=1.0%
     """
     future_return = df['close'].shift(-forward_bars) / df['close'] - 1
     labels = pd.Series(0, index=df.index)
@@ -467,17 +482,38 @@ def save_model_with_versioning(model: lgb.Booster, model_path: str,
     """
     os.makedirs(os.path.dirname(model_path) or '.', exist_ok=True)
 
-    # Backup existing model
+    # Backup existing model (handle read-only files on Windows)
     if os.path.exists(model_path):
         backup_path = model_path.replace('.txt', '_prev.txt')
-        shutil.copy2(model_path, backup_path)
-        logger.info(f"Previous model backed up to {backup_path}")
+        try:
+            # Remove read-only flag if present (Windows)
+            if os.path.exists(backup_path):
+                os.chmod(backup_path, 0o666)
+            shutil.copy2(model_path, backup_path)
+            logger.info(f"Previous model backed up to {backup_path}")
+        except PermissionError:
+            logger.warning(f"Cannot backup model (permission denied) — overwriting directly")
+            try:
+                os.remove(backup_path)
+                shutil.copy2(model_path, backup_path)
+            except Exception:
+                pass  # Continue even if backup fails
 
-    # Save new model
+    # Save new model (ensure writable on Windows)
+    if os.path.exists(model_path):
+        try:
+            os.chmod(model_path, 0o666)
+        except Exception:
+            pass
     model.save_model(model_path)
 
     # Save optimized version too
     optimized_path = model_path.replace('.txt', '_optimized.txt')
+    if os.path.exists(optimized_path):
+        try:
+            os.chmod(optimized_path, 0o666)
+        except Exception:
+            pass
     model.save_model(optimized_path)
 
     # Save feature importance
@@ -489,6 +525,11 @@ def save_model_with_versioning(model: lgb.Booster, model_path: str,
     }).sort_values('importance', ascending=False)
 
     imp_path = os.path.join(os.path.dirname(model_path), 'lgbm_feature_importance.csv')
+    if os.path.exists(imp_path):
+        try:
+            os.chmod(imp_path, 0o666)
+        except Exception:
+            pass
     imp_df.to_csv(imp_path, index=False)
 
     logger.info(f"Model saved to {model_path} (accuracy={metrics['accuracy']:.4f})")
