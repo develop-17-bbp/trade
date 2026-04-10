@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { CandlestickChart, BookOpen, Layers, Radio, Clock } from 'lucide-react'
+import { CandlestickChart as CandleIcon, BookOpen, Layers, Radio, Clock } from 'lucide-react'
 import GlassCard from '../components/cards/GlassCard'
 import PositionCard from '../components/cards/PositionCard'
+import CandlestickChart from '../components/charts/CandlestickChart'
 import { useSystemState } from '../hooks/useSystemState'
 
 // -- Animation --
@@ -64,6 +65,7 @@ function directionLabel(dir: string): string {
 
 export default function Trading() {
   const { positions, trades, portfolio, loading, error } = useSystemState()
+  const [selectedAsset, setSelectedAsset] = useState('BTC')
 
   const recentTrades = useMemo(() => {
     return [...trades]
@@ -93,34 +95,29 @@ export default function Trading() {
         <GlassCard className="relative overflow-hidden">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <CandlestickChart size={18} className="text-accent-blue" />
-              <h2 className="text-sm font-semibold text-text-primary">BTC / USD</h2>
-              <span className="text-xs text-text-muted">1H</span>
+              <CandleIcon size={18} className="text-[#00aaff]" />
+              <h2 className="text-sm font-semibold text-[#e8ecf4]">{selectedAsset} / USD</h2>
             </div>
             <div className="flex items-center gap-2">
-              {['1m', '5m', '15m', '1H', '4H', '1D'].map((tf) => (
+              {['BTC', 'ETH'].map((a) => (
                 <button
-                  key={tf}
-                  className={`text-[10px] px-2 py-1 rounded ${
-                    tf === '1H'
-                      ? 'bg-accent-blue/10 text-accent-blue'
-                      : 'text-text-muted hover:text-text-primary'
+                  key={a}
+                  onClick={() => setSelectedAsset(a)}
+                  className={`text-[10px] px-2.5 py-1 rounded font-medium ${
+                    a === selectedAsset
+                      ? 'bg-[#00aaff]/10 text-[#00aaff] border border-[#00aaff]/30'
+                      : 'text-[#6b7a99] hover:text-[#e8ecf4]'
                   } transition-colors`}
                 >
-                  {tf}
+                  {a}
                 </button>
               ))}
+              <span className="text-[10px] text-[#6b7a99] ml-2">4H + EMA(8)</span>
             </div>
           </div>
 
-          {/* Placeholder for TradingView / lightweight-charts */}
-          <div className="flex items-center justify-center h-80 rounded-lg bg-bg-primary/60 border border-border-glass">
-            <div className="text-center space-y-2">
-              <CandlestickChart size={40} className="text-text-muted/30 mx-auto" />
-              <p className="text-text-muted text-sm">TradingView Chart -- BTC/USD</p>
-              <p className="text-text-muted/60 text-xs">lightweight-charts integration pending</p>
-            </div>
-          </div>
+          {/* Real TradingView Lightweight Chart */}
+          <CandlestickChart asset={selectedAsset} height={380} />
         </GlassCard>
       </motion.div>
 

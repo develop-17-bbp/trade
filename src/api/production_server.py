@@ -390,6 +390,46 @@ async def dashboard_aggregate(_=Depends(_require_api_key)):
     }
 
 # ─────────────────────────────────────────
+# GROUP: OHLCV DATA (for TradingView chart)
+# ─────────────────────────────────────────
+
+@app.get("/api/v1/ohlcv/{asset}", tags=["Market Data"])
+async def ohlcv_data(asset: str, timeframe: str = "1h", limit: int = 200):
+    """OHLCV candle data from local parquet files for charting."""
+    symbol = asset.upper() + "USDT"
+    tf_map = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
+    tf = tf_map.get(timeframe.lower(), "1h")
+
+    bars = []
+    try:
+        import pandas as pd
+        parquet_path = os.path.join(PROJECT_ROOT, 'data', f'{symbol}-{tf}.parquet')
+        if os.path.exists(parquet_path):
+            df = pd.read_parquet(parquet_path)
+            df.columns = [c.lower() for c in df.columns]
+            # Normalize timestamp
+            if 'timestamp' in df.columns:
+                ts = df['timestamp']
+                if hasattr(ts.dtype, 'tz') or str(ts.dtype).startswith('datetime'):
+                    df['timestamp'] = pd.to_datetime(ts).astype('int64') // 10**9
+                elif ts.max() > 1e12:
+                    df['timestamp'] = ts // 1000  # ms to seconds
+            df = df.tail(limit)
+            for _, row in df.iterrows():
+                bars.append({
+                    "time": int(row.get('timestamp', 0)),
+                    "open": float(row.get('open', 0)),
+                    "high": float(row.get('high', 0)),
+                    "low": float(row.get('low', 0)),
+                    "close": float(row.get('close', 0)),
+                    "volume": float(row.get('volume', 0)),
+                })
+    except Exception as e:
+        logger.warning(f"OHLCV load failed for {symbol}-{tf}: {e}")
+
+    return {"asset": asset.upper(), "timeframe": tf, "bars": bars, "count": len(bars)}
+
+# ─────────────────────────────────────────
 # GROUP: MARKET DATA & SIGNALS
 # ─────────────────────────────────────────
 
