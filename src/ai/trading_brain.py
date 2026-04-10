@@ -1207,6 +1207,24 @@ class TradingBrainV2:
             print(f"[BRAIN:{asset}] CALIBRATED confidence: {raw_confidence:.2f} -> {calibrated_conf:.2f}")
         confidence = calibrated_conf
 
+        # ── Confidence stuck detection ──
+        # If LLM returns identical confidence 5+ times in a row, it's not discriminating
+        if not hasattr(self, '_recent_confidences'):
+            self._recent_confidences = []
+        self._recent_confidences.append(round(raw_confidence, 2))
+        if len(self._recent_confidences) > 10:
+            self._recent_confidences = self._recent_confidences[-10:]
+        if len(self._recent_confidences) >= 5:
+            last_5 = self._recent_confidences[-5:]
+            if len(set(last_5)) == 1:  # All identical
+                # Force variation based on actual trade quality metrics
+                score_factor = entry_score / 10.0  # 0.0-1.0
+                regime_name_local = regime_info.get("regime", "UNKNOWN")
+                regime_factor = 0.8 if regime_name_local in ['CHOPPY', 'CRISIS', 'VOLATILE'] else 1.0
+                old_conf = confidence
+                confidence = confidence * score_factor * regime_factor
+                print(f"[BRAIN:{asset}] CONFIDENCE STUCK at {raw_confidence:.2f} x5 — forced variation: {old_conf:.2f} -> {confidence:.2f} (score={score_factor:.1f} regime={regime_factor:.1f})")
+
         # Pattern-based confidence adjustment
         pat_strength = patterns.get("strength", 5)
         pat_bias = patterns.get("bias", "NEUTRAL")

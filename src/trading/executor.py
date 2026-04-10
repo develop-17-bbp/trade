@@ -4559,6 +4559,16 @@ class TradingExecutor:
             print(f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {_active_min_confidence:.2f}")
             return
 
+        # ── ROBINHOOD HARD GATE — LLM cannot override these constraints ──
+        _rh_ok, _rh_reason = self._robinhood_hard_gate(
+            asset=asset, action=action, confidence=confidence,
+            risk_score=risk_score, trade_quality=unified.get('trade_quality', 5),
+            entry_score=entry_score, price=price, atr=current_atr,
+        )
+        if not _rh_ok:
+            print(f"  [{self._ex_tag}:{asset}] ROBINHOOD GATE BLOCKED: {_rh_reason}")
+            return
+
         # Track bear stats
         if asset not in self.bear_veto_stats:
             self.bear_veto_stats[asset] = {'vetoed': 0, 'reduced': 0, 'passed': 0}
@@ -5061,6 +5071,50 @@ class TradingExecutor:
     # Core idea: profit becomes investment, investment becomes safe
     # On every favorable tick, push SL forward so losses come from profits only
     # ------------------------------------------------------------------
+    def _robinhood_hard_gate(self, asset: str, action: str, confidence: float,
+                              risk_score: int, trade_quality: int, entry_score: int,
+                              price: float, atr: float) -> tuple:
+        """
+        HARD CONSTRAINTS for Robinhood — LLM cannot override these.
+        These are math-verified gates based on spread economics.
+
+        Returns:
+            (proceed: bool, reason: str)
+        """
+        # Only apply on high-spread exchanges
+        if not hasattr(self, '_round_trip_spread') or self._round_trip_spread <= 1.0:
+            return True, "low-spread exchange — no Robinhood gates"
+
+        # 1. LONGS ONLY (belt-and-suspenders — also checked earlier)
+        if action == "SHORT":
+            return False, "SHORT blocked on Robinhood spot"
+
+        # 2. ENTRY SCORE >= 7 (currently only enforced for shorts!)
+        if entry_score < 7:
+            return False, f"entry_score {entry_score} < 7 required for Robinhood LONG"
+
+        # 3. EXPECTED MOVE > 2× SPREAD (ATR-based projected move must justify spread)
+        atr_tp_mult = self.config.get('risk', {}).get('atr_tp_mult', 25.0)
+        if price > 0 and atr > 0:
+            atr_move_pct = (atr * atr_tp_mult / price) * 100
+            min_move = self._round_trip_spread * 2  # Need 2× spread for viable trade
+            if atr_move_pct < min_move:
+                return False, f"ATR move {atr_move_pct:.1f}% < {min_move:.1f}% (2x spread needed)"
+
+        # 4. CONFIDENCE >= 0.75 (high bar for Robinhood)
+        if confidence < 0.75:
+            return False, f"confidence {confidence:.2f} < 0.75 required on Robinhood"
+
+        # 5. TRADE QUALITY >= 6 (no marginal setups on high-spread exchange)
+        if trade_quality < 6:
+            return False, f"quality {trade_quality} < 6 required on Robinhood"
+
+        # 6. RISK SCORE <= 5 (spread amplifies losses — must be conservative)
+        if risk_score > 5:
+            return False, f"risk {risk_score} > 5 max on Robinhood"
+
+        return True, "passed all Robinhood gates"
+
     def _manage_position(self, asset: str, price: float, ohlcv: dict,
                          ema_vals: list, atr_vals: list, ema_direction: str,
                          signal: str, ob_levels: dict = None):
@@ -6650,6 +6704,24 @@ CRITICAL: If no timeframe has a clean setup, set proceed=false. Capital preserva
                 result['proceed'] = False
             if tq <= 5:
                 result['position_size_pct'] = min(result['position_size_pct'], max_position_pct * 0.5)
+
+            # ── Robinhood-specific response clamping ──
+            if hasattr(self, '_round_trip_spread') and self._round_trip_spread > 1.0:
+                # Floor risk awareness — Robinhood trades always have base risk from spread
+                if result.get('risk_score', 0) < 3:
+                    result['risk_score'] = 3
+                # Cap position size at 5% (spread makes large positions dangerous)
+                result['position_size_pct'] = min(result.get('position_size_pct', 5), 5)
+                # Block low-quality trades even if LLM says proceed
+                if result.get('trade_quality', 5) < 6 and result.get('proceed', False):
+                    result['proceed'] = False
+                    result['facilitator_verdict'] = 'BLOCKED: quality too low for high-spread exchange'
+                # Force longs-only
+                if hasattr(self, '_longs_only') and self._longs_only:
+                    if result.get('chosen_direction', 'CALL') == 'PUT':
+                        result['chosen_direction'] = 'CALL'
+                        result['proceed'] = False
+                        result['facilitator_verdict'] = 'BLOCKED: SHORT not allowed on Robinhood'
 
             # Print compact summary
             bull = str(result.get('bull_case', ''))[:60]

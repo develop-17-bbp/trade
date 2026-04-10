@@ -294,7 +294,7 @@ def fetch_multi_timeframe_data(asset='BTC', base_bars=20000, use_all_local=False
 # MULTI-TIMEFRAME FEATURES (45 features for maximum pattern detection)
 # =====================================================================
 
-def compute_mtf_features(all_data, seq_len=30, n_features=45):
+def compute_mtf_features(all_data, seq_len=30, n_features=45, spread_cost_pct=0.0):
     """
     Build MULTI-TIMEFRAME feature sequences.
     Combines micro (1m/5m), meso (15m/1h), and macro (4h/1d) features.
@@ -616,8 +616,17 @@ def compute_mtf_features(all_data, seq_len=30, n_features=45):
         l_level_dist[min(best_l, 7)] += 1
 
         # BINARY: SKIP (0) = L1 death, TRADE (1) = L2+ (trailing SL locks profit)
+        # For high-spread exchanges (Robinhood), also check that profit exceeds spread cost
         if best_l >= 2:
-            labels.append(1)  # TRADE — trailing SL will lock profits
+            if spread_cost_pct > 0:
+                # Estimate best PnL from L-level and check if it clears spread
+                best_pnl_est = best_l * 0.5  # Rough: each L-level ≈ 0.5% more profit
+                if best_pnl_est > spread_cost_pct:
+                    labels.append(1)  # TRADE — profitable AFTER spread
+                else:
+                    labels.append(0)  # SKIP — spread eats all profit
+            else:
+                labels.append(1)  # TRADE — trailing SL will lock profits
         else:
             labels.append(0)  # SKIP — would die at L1, lose money
 
@@ -630,7 +639,7 @@ def compute_mtf_features(all_data, seq_len=30, n_features=45):
     return X, y
 
 
-def compute_strategy_features(closes, highs, lows, opens, volumes, seq_len=30, n_features=50):
+def compute_strategy_features(closes, highs, lows, opens, volumes, seq_len=30, n_features=50, spread_cost_pct=0.0):
     """
     Build feature sequences for 5m-only data.
     50 features: 30 strategy + 5 Kalman + 5 EMA new-line inflection + 10 Category B risk/ML.
@@ -968,7 +977,12 @@ def compute_strategy_features(closes, highs, lows, opens, volumes, seq_len=30, n
             best_l = max(best_l, max_l_level)
 
         # BINARY: SKIP (L1 death) vs TRADE (L2+ = trailing SL locks profit)
-        labels.append(1 if best_l >= 2 else 0)
+        # For Robinhood: also check spread clearance
+        if spread_cost_pct > 0 and best_l >= 2:
+            best_pnl_est = best_l * 0.5
+            labels.append(1 if best_pnl_est > spread_cost_pct else 0)
+        else:
+            labels.append(1 if best_l >= 2 else 0)
 
     X = np.array(sequences, dtype=np.float32)
     y = np.array(labels, dtype=np.int64)
@@ -2185,11 +2199,24 @@ def main():
                         help='Autonomous continuous training loop')
     parser.add_argument('--loop-hours', type=float, default=4.0)
     parser.add_argument('--max-cycles', type=int, default=0)
+    parser.add_argument('--exchange', default='bybit',
+                        help='Exchange profile: bybit (default, 0.05%% spread) or robinhood (3.34%% spread)')
+    parser.add_argument('--spread', type=float, default=0.0,
+                        help='Custom round-trip spread %% (overrides exchange default)')
     args = parser.parse_args()
 
     assets = ['BTC', 'ETH'] if args.asset == 'ALL' else [args.asset]
     use_mtf = not args.no_mtf
     use_all_local = args.use_local
+
+    # ── Exchange-specific training profile ──
+    if args.exchange.lower() == 'robinhood':
+        spread_cost_pct = args.spread if args.spread > 0 else 3.34
+        print(f"\n  [ROBINHOOD MODE] Training with {spread_cost_pct:.2f}% round-trip spread cost in labels")
+        print(f"  [ROBINHOOD MODE] Only LONG labels (shorts disabled)")
+        print(f"  [ROBINHOOD MODE] Labels: TRADE only if PnL > spread cost")
+    else:
+        spread_cost_pct = args.spread  # 0.0 = no spread deduction (futures/low-spread)
 
     if args.loop:
         cycle = 0
