@@ -2487,10 +2487,6 @@ class TradingExecutor:
         signal = tf_signals.get('5m', {}).get('signal', 'NEUTRAL')
         is_reversal_signal = False
 
-        # ── LONGS-ONLY GATE (Robinhood spot) ──
-        if self._longs_only and signal == 'SELL':
-            return  # Block all SHORT signals on longs-only exchanges
-
         # Print status with active signals across all timeframes
         active_tfs_str = ", ".join(f"{tf}={s['signal']}" for tf, s in active_tf_signals.items()) or "none"
         ob_imb = ob_levels.get('imbalance', 0)
@@ -2520,6 +2516,10 @@ class TradingExecutor:
         if asset in self.positions:
             self._manage_position(asset, tick_price, ohlcv, ema_vals, atr_vals, ema_direction, signal, ob_levels)
         else:
+            # ── LONGS-ONLY GATE (Robinhood spot) — only block new SHORT entries, not status/management ──
+            if self._longs_only and signal == 'SELL' and not active_tf_signals:
+                return  # 5m is SELL and no higher TF has a BUY — skip
+
             # Need at least ONE active signal on any timeframe to evaluate entry
             if not active_tf_signals:
                 return  # No crossover on any TF — nothing to evaluate
