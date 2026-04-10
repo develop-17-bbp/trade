@@ -11,6 +11,13 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+# Load .env so Robinhood API keys are available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[2] / '.env', override=True)
+except ImportError:
+    pass
+
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -40,6 +47,50 @@ def _load_robinhood_paper_state() -> dict:
             return json.load(f)
     except Exception:
         return {}
+
+def _get_live_robinhood_prices() -> dict:
+    """Fetch LIVE prices directly from Robinhood Crypto API."""
+    try:
+        from src.integrations.robinhood_crypto import RobinhoodCryptoClient
+        client = RobinhoodCryptoClient()
+        if not client.authenticated:
+            return {}
+        prices = {}
+        for asset in ["BTC", "ETH"]:
+            data = client.get_best_price(f"{asset}-USD")
+            if data and "results" in data and data["results"]:
+                r = data["results"][0]
+                bid = float(r.get("bid_inclusive_of_sell_spread", 0))
+                ask = float(r.get("ask_inclusive_of_buy_spread", 0))
+                mid = float(r.get("price", (bid + ask) / 2 if bid and ask else 0))
+                spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 0
+                prices[asset] = {
+                    "price": mid,
+                    "bid": bid,
+                    "ask": ask,
+                    "spread_pct": round(spread_pct, 2),
+                    "change_pct": 0,
+                    "timestamp": r.get("timestamp", ""),
+                }
+        return prices
+    except Exception as e:
+        logger.debug(f"Robinhood live price fetch failed: {e}")
+        return {}
+
+# Cache for Robinhood prices (avoid rate limiting — cache for 10 seconds)
+_rh_price_cache = {"data": {}, "ts": 0}
+
+def _get_cached_robinhood_prices() -> dict:
+    """Get cached Robinhood prices (refreshes every 10s)."""
+    import time
+    now = time.time()
+    if now - _rh_price_cache["ts"] > 10:
+        prices = _get_live_robinhood_prices()
+        if prices:
+            _rh_price_cache["data"] = prices
+            _rh_price_cache["ts"] = now
+    return _rh_price_cache["data"]
+
 
 def _load_robinhood_paper_trades() -> list:
     """Load Robinhood paper trade log (JSONL)."""
@@ -191,22 +242,28 @@ async def trade_stats(_=Depends(_require_api_key)):
 
 @app.get("/api/v1/prices", tags=["Market Data"])
 async def live_prices():
-    """Live BTC/ETH prices — tries Robinhood paper positions first, then dashboard state."""
+    """Live BTC/ETH prices — fetches DIRECTLY from Robinhood API (cached 10s)."""
     prices = {}
 
-    # Try Robinhood paper state (has real bid/ask from Robinhood API)
-    rh = _load_robinhood_paper_state()
-    for tid, pos_data in rh.get("positions", {}).items():
-        if isinstance(pos_data, dict):
-            asset = pos_data.get("asset", tid.split("_")[0] if "_" in tid else tid)
-            if asset not in prices:
-                prices[asset] = {
-                    "price": pos_data.get("current_price", pos_data.get("entry_price", 0)),
-                    "change_pct": pos_data.get("current_pnl_pct", 0),
-                    "bid": pos_data.get("entry_bid", 0),
-                    "ask": pos_data.get("entry_ask", 0),
-                    "spread_pct": pos_data.get("entry_spread_pct", 0),
-                }
+    # PRIMARY: Fetch LIVE from Robinhood Crypto API (cached 10s to avoid rate limits)
+    rh_live = _get_cached_robinhood_prices()
+    if rh_live:
+        prices.update(rh_live)
+
+    # FALLBACK: Try Robinhood paper state
+    if not prices:
+        rh = _load_robinhood_paper_state()
+        for tid, pos_data in rh.get("positions", {}).items():
+            if isinstance(pos_data, dict):
+                asset = pos_data.get("asset", tid.split("_")[0] if "_" in tid else tid)
+                if asset not in prices:
+                    prices[asset] = {
+                        "price": pos_data.get("current_price", pos_data.get("entry_price", 0)),
+                        "change_pct": pos_data.get("current_pnl_pct", 0),
+                        "bid": pos_data.get("entry_bid", 0),
+                        "ask": pos_data.get("entry_ask", 0),
+                        "spread_pct": pos_data.get("entry_spread_pct", 0),
+                    }
 
     # Fall back to dashboard state active_assets
     state = DashboardState().get_full_state()
