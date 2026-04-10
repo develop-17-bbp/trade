@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { createChart, type IChartApi, type ISeriesApi, type CandlestickData, ColorType } from 'lightweight-charts'
+import { createChart, type IChartApi, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts'
 
 interface OHLCVBar {
-  time: number  // unix seconds
+  time: number
   open: number
   high: number
   low: number
   close: number
-  volume?: number
 }
 
 interface Props {
@@ -18,8 +17,10 @@ interface Props {
 export default function CandlestickChart({ asset = 'BTC', height = 360 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
-  const emaRef = useRef<ISeriesApi<'Line'> | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const candleRef = useRef<any>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const emaRef = useRef<any>(null)
   const [bars, setBars] = useState<OHLCVBar[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -33,6 +34,8 @@ export default function CandlestickChart({ asset = 'BTC', height = 360 }: Props)
         const data = await res.json()
         if (!cancelled && data?.bars?.length > 0) {
           setBars(data.bars)
+        } else {
+          throw new Error('No bars')
         }
       } catch {
         // Generate sample data if API unavailable
@@ -42,19 +45,19 @@ export default function CandlestickChart({ asset = 'BTC', height = 360 }: Props)
         for (let i = 200; i >= 0; i--) {
           const t = now - i * 3600
           const change = (Math.random() - 0.48) * price * 0.008
-          const open = price
-          const close = price + change
-          const high = Math.max(open, close) + Math.random() * price * 0.003
-          const low = Math.min(open, close) - Math.random() * price * 0.003
-          sample.push({ time: t, open, high, low, close })
-          price = close
+          const o = price
+          const c = price + change
+          const h = Math.max(o, c) + Math.random() * price * 0.003
+          const l = Math.min(o, c) - Math.random() * price * 0.003
+          sample.push({ time: t, open: o, high: h, low: l, close: c })
+          price = c
         }
         if (!cancelled) setBars(sample)
       }
       if (!cancelled) setLoading(false)
     }
     fetchData()
-    const interval = setInterval(fetchData, 60000) // refresh every minute
+    const interval = setInterval(fetchData, 60000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [asset])
 
@@ -93,7 +96,8 @@ export default function CandlestickChart({ asset = 'BTC', height = 360 }: Props)
       },
     })
 
-    const candleSeries = chart.addCandlestickSeries({
+    // lightweight-charts v5 API
+    const candle = chart.addSeries(CandlestickSeries, {
       upColor: '#00ff88',
       downColor: '#ff3366',
       borderUpColor: '#00ff88',
@@ -102,7 +106,7 @@ export default function CandlestickChart({ asset = 'BTC', height = 360 }: Props)
       wickDownColor: '#ff3366',
     })
 
-    const emaSeries = chart.addLineSeries({
+    const ema = chart.addSeries(LineSeries, {
       color: '#00aaff',
       lineWidth: 2,
       priceLineVisible: false,
@@ -110,10 +114,9 @@ export default function CandlestickChart({ asset = 'BTC', height = 360 }: Props)
     })
 
     chartRef.current = chart
-    seriesRef.current = candleSeries
-    emaRef.current = emaSeries
+    candleRef.current = candle
+    emaRef.current = ema
 
-    // Resize observer
     const ro = new ResizeObserver(() => {
       if (containerRef.current && chartRef.current) {
         chartRef.current.applyOptions({ width: containerRef.current.clientWidth })
@@ -128,36 +131,28 @@ export default function CandlestickChart({ asset = 'BTC', height = 360 }: Props)
     }
   }, [height])
 
-  // Update data
+  // Update data when bars change
   useEffect(() => {
-    if (!seriesRef.current || bars.length === 0) return
+    if (!candleRef.current || bars.length === 0) return
 
-    const candleData: CandlestickData[] = bars.map(b => ({
-      time: b.time as any,
-      open: b.open,
-      high: b.high,
-      low: b.low,
-      close: b.close,
-    }))
-    seriesRef.current.setData(candleData)
+    // Set candle data
+    candleRef.current.setData(
+      bars.map(b => ({ time: b.time as unknown, open: b.open, high: b.high, low: b.low, close: b.close }))
+    )
 
-    // Compute EMA(8)
-    const emaData: { time: any; value: number }[] = []
+    // Compute and set EMA(8)
     const period = 8
-    let ema = bars[0]?.close ?? 0
+    let emaVal = bars[0]?.close ?? 0
     const mult = 2 / (period + 1)
-    for (const b of bars) {
-      ema = b.close * mult + ema * (1 - mult)
-      emaData.push({ time: b.time as any, value: ema })
-    }
+    const emaData = bars.map(b => {
+      emaVal = b.close * mult + emaVal * (1 - mult)
+      return { time: b.time as unknown, value: emaVal }
+    })
     if (emaRef.current) {
       emaRef.current.setData(emaData)
     }
 
-    // Fit content
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent()
-    }
+    chartRef.current?.timeScale().fitContent()
   }, [bars])
 
   return (
