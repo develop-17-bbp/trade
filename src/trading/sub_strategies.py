@@ -5,7 +5,11 @@ These are rule-based kernels that the Meta-Controller can switch between.
 """
 from typing import List, Dict, Optional
 import numpy as np
-from src.indicators.indicators import sma, rsi, macd, bollinger_bands, atr, vwap
+from src.indicators.indicators import (
+    sma, ema, rsi, macd, bollinger_bands, atr, stochastic, vwap, obv, adx,
+    bb_width, roc, williams_r, chaikin_money_flow, mfi, supertrend,
+    volume_delta, choppiness_index,
+)
 
 class SubStrategy:
     def generate_signal(self, prices: List[float], highs: List[float], lows: List[float], volumes: List[float]) -> int:
@@ -117,6 +121,436 @@ class ScalpingStrategy(SubStrategy):
             return 1
         # Short: Price below EMA and Stoch K crosses below D in overbought zone (> 70)
         elif last_price < last_ema and last_k > 70 and last_k < last_d:
+            return -1
+        return 0
+
+
+class ICTStrategy(SubStrategy):
+    """
+    Inner Circle Trader — Smart Money Concepts (Liquidity Sweeps).
+    Detects institutional liquidity grabs: price sweeps past a swing level
+    then reverses, trapping retail traders.
+    Best for: ALL regimes. Used by institutional traders worldwide.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 30:
+            return 0
+        arr_h = np.asarray(highs, dtype=float)
+        arr_l = np.asarray(lows, dtype=float)
+        arr_c = np.asarray(prices, dtype=float)
+
+        # Find recent swing high/low over lookback window (excluding last 2 bars)
+        lb = 20
+        swing_high = np.max(arr_h[-lb - 2:-2])
+        swing_low = np.min(arr_l[-lb - 2:-2])
+
+        prev_high = arr_h[-2]
+        prev_low = arr_l[-2]
+        curr_close = arr_c[-1]
+        prev_close = arr_c[-2]
+
+        # Bullish liquidity sweep: previous bar swept below swing low, current bar closes back above
+        swept_low = prev_low < swing_low
+        reclaimed_low = curr_close > swing_low and curr_close > prev_close
+
+        # Bearish liquidity sweep: previous bar swept above swing high, current bar closes back below
+        swept_high = prev_high > swing_high
+        rejected_high = curr_close < swing_high and curr_close < prev_close
+
+        if swept_low and reclaimed_low:
+            return 1
+        if swept_high and rejected_high:
+            return -1
+        return 0
+
+
+class WyckoffAccumulationStrategy(SubStrategy):
+    """
+    Wyckoff Accumulation — Detect "Spring" (false breakdown with volume).
+    Identifies selling climax followed by a spring (price breaks support
+    then snaps back with volume confirmation).
+    Best for: SIDEWAYS to TRENDING transition.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 40:
+            return 0
+        arr_c = np.asarray(prices, dtype=float)
+        arr_l = np.asarray(lows, dtype=float)
+        arr_h = np.asarray(highs, dtype=float)
+        arr_v = np.asarray(volumes, dtype=float)
+
+        # Identify trading range: support/resistance from bars [-40:-5]
+        support = np.min(arr_l[-40:-5])
+        resistance = np.max(arr_h[-40:-5])
+        avg_vol = np.mean(arr_v[-40:-5])
+
+        # Spring detection: bar[-2] broke below support, bar[-1] closes back inside range
+        spring_break = arr_l[-2] < support
+        spring_close = arr_c[-1] > support and arr_c[-1] > arr_c[-2]
+        vol_surge = arr_v[-1] > avg_vol * 1.3
+
+        # Upthrust (distribution): bar[-2] broke above resistance, bar[-1] closes back inside
+        upthrust_break = arr_h[-2] > resistance
+        upthrust_close = arr_c[-1] < resistance and arr_c[-1] < arr_c[-2]
+        upthrust_vol = arr_v[-1] > avg_vol * 1.3
+
+        if spring_break and spring_close and vol_surge:
+            return 1
+        if upthrust_break and upthrust_close and upthrust_vol:
+            return -1
+        return 0
+
+
+class FibonacciRetracementStrategy(SubStrategy):
+    """
+    Fibonacci Retracement — Buy at 0.618 pullback in uptrend, sell at 0.618 in downtrend.
+    Waits for a significant move, then enters when price retraces to a key
+    Fibonacci level with RSI confirmation.
+    Best for: TRENDING markets after pullback.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 50:
+            return 0
+        arr_c = np.asarray(prices, dtype=float)
+        rsi_vals = rsi(prices, 14)
+
+        # Detect significant swing: highest high and lowest low in last 50 bars
+        recent_high = float(np.max(arr_c[-50:]))
+        recent_low = float(np.min(arr_c[-50:]))
+        swing_range = recent_high - recent_low
+        if swing_range <= 0:
+            return 0
+
+        high_idx = int(np.argmax(arr_c[-50:]))
+        low_idx = int(np.argmin(arr_c[-50:]))
+        last_price = arr_c[-1]
+        last_rsi = rsi_vals[-1] if rsi_vals else 50
+
+        # Uptrend (low came before high): look for pullback to buy
+        if low_idx < high_idx:
+            fib_618 = recent_high - 0.618 * swing_range
+            fib_50 = recent_high - 0.50 * swing_range
+            # Price near 0.618 level (within 1% tolerance) and RSI oversold-ish
+            if fib_618 * 0.99 <= last_price <= fib_50 * 1.01 and last_rsi < 45:
+                return 1
+
+        # Downtrend (high came before low): look for rally to sell
+        if high_idx < low_idx:
+            fib_618 = recent_low + 0.618 * swing_range
+            fib_50 = recent_low + 0.50 * swing_range
+            if fib_50 * 0.99 <= last_price <= fib_618 * 1.01 and last_rsi > 55:
+                return -1
+
+        return 0
+
+
+class VWAPBounceStrategy(SubStrategy):
+    """
+    VWAP Bounce — Institutional benchmark mean-reversion.
+    VWAP is the volume-weighted average price that institutional algos target.
+    Buy when price dips below VWAP by 1+ ATR and starts reverting.
+    Best for: INTRADAY, ALL regimes.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 20 or len(volumes) < 20:
+            return 0
+        vwap_vals = vwap(prices[-20:], volumes[-20:])
+        atr_vals = atr(highs, lows, prices, 14)
+        if vwap_vals is None or atr_vals is None or len(vwap_vals) == 0 or len(atr_vals) == 0:
+            return 0
+
+        last_vwap = vwap_vals[-1]
+        last_atr = atr_vals[-1]
+        if np.isnan(last_vwap) or np.isnan(last_atr) or last_atr <= 0:
+            return 0
+
+        last_price = prices[-1]
+        prev_price = prices[-2]
+        deviation = last_price - last_vwap
+
+        # Buy: price below VWAP by 1+ ATR and starting to revert up
+        if deviation < -last_atr and last_price > prev_price:
+            return 1
+        # Sell: price above VWAP by 1+ ATR and starting to revert down
+        if deviation > last_atr and last_price < prev_price:
+            return -1
+        return 0
+
+
+class OrderBlockStrategy(SubStrategy):
+    """
+    Order Block — Identify institutional order blocks (last opposite candle
+    before a strong impulsive move). When price returns to the order block,
+    enter in the direction of the original impulse.
+    Best for: ALL regimes, institutional flow.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 30:
+            return 0
+        arr_c = np.asarray(prices, dtype=float)
+        arr_o = np.roll(arr_c, 1)  # approximate open as previous close
+        arr_o[0] = arr_c[0]
+        arr_h = np.asarray(highs, dtype=float)
+        arr_l = np.asarray(lows, dtype=float)
+        atr_vals = atr(highs, lows, prices, 14)
+        if atr_vals is None or len(atr_vals) == 0:
+            return 0
+        last_atr = atr_vals[-1]
+        if np.isnan(last_atr) or last_atr <= 0:
+            return 0
+
+        # Search for bullish order block: last bearish candle before a strong bullish impulse
+        for i in range(-15, -3):
+            is_bearish = arr_c[i] < arr_o[i]  # red candle
+            impulse_up = arr_c[i + 1] - arr_c[i] > 1.5 * last_atr  # strong green follow
+            if is_bearish and impulse_up:
+                ob_high = arr_h[i]
+                ob_low = arr_l[i]
+                # Current price has returned to the order block zone
+                if ob_low <= arr_c[-1] <= ob_high and arr_c[-1] > arr_c[-2]:
+                    return 1
+
+        # Search for bearish order block: last bullish candle before a strong bearish impulse
+        for i in range(-15, -3):
+            is_bullish = arr_c[i] > arr_o[i]  # green candle
+            impulse_down = arr_c[i] - arr_c[i + 1] > 1.5 * last_atr  # strong red follow
+            if is_bullish and impulse_down:
+                ob_high = arr_h[i]
+                ob_low = arr_l[i]
+                if ob_low <= arr_c[-1] <= ob_high and arr_c[-1] < arr_c[-2]:
+                    return -1
+
+        return 0
+
+
+class DivergenceStrategy(SubStrategy):
+    """
+    RSI Divergence — Detect bullish/bearish divergence between price and RSI.
+    BUY when price makes lower low but RSI makes higher low (bullish divergence).
+    SELL when price makes higher high but RSI makes lower high (bearish divergence).
+    Best for: TREND EXHAUSTION detection.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 30:
+            return 0
+        rsi_vals = rsi(prices, 14)
+        if rsi_vals is None or len(rsi_vals) < 30:
+            return 0
+        arr_c = np.asarray(prices, dtype=float)
+        arr_r = np.asarray(rsi_vals, dtype=float)
+
+        # Compare two swing windows: [-20:-10] vs [-10:]
+        price_prev_low = np.min(arr_c[-20:-10])
+        price_curr_low = np.min(arr_c[-10:])
+        rsi_prev_low = np.nanmin(arr_r[-20:-10])
+        rsi_curr_low = np.nanmin(arr_r[-10:])
+
+        price_prev_high = np.max(arr_c[-20:-10])
+        price_curr_high = np.max(arr_c[-10:])
+        rsi_prev_high = np.nanmax(arr_r[-20:-10])
+        rsi_curr_high = np.nanmax(arr_r[-10:])
+
+        # Bullish divergence: price lower low, RSI higher low
+        if price_curr_low < price_prev_low and rsi_curr_low > rsi_prev_low:
+            if arr_r[-1] < 40:  # Only in oversold territory
+                return 1
+
+        # Bearish divergence: price higher high, RSI lower high
+        if price_curr_high > price_prev_high and rsi_curr_high < rsi_prev_high:
+            if arr_r[-1] > 60:  # Only in overbought territory
+                return -1
+
+        return 0
+
+
+class BreakAndRetestStrategy(SubStrategy):
+    """
+    Break and Retest — Wait for price to break a key level, then retest it
+    as new support/resistance before entering.
+    BUY: break above resistance, pullback to retest (now support), hold.
+    SELL: break below support, rally to retest (now resistance), rejected.
+    Best for: BREAKOUT markets.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 40:
+            return 0
+        arr_c = np.asarray(prices, dtype=float)
+        arr_h = np.asarray(highs, dtype=float)
+        arr_l = np.asarray(lows, dtype=float)
+
+        # Key levels from bars [-40:-10]
+        resistance = np.max(arr_h[-40:-10])
+        support = np.min(arr_l[-40:-10])
+
+        # Check if price broke above resistance in bars [-10:-3]
+        broke_above = np.any(arr_c[-10:-3] > resistance)
+        # Retest: price pulled back near resistance (within 0.5%) in bars [-3:-1]
+        near_resistance = np.any(np.abs(arr_l[-3:-1] - resistance) / resistance < 0.005)
+        # Holding: current close is above resistance
+        holding_above = arr_c[-1] > resistance and arr_c[-1] > arr_c[-2]
+
+        if broke_above and near_resistance and holding_above:
+            return 1
+
+        # Check if price broke below support
+        broke_below = np.any(arr_c[-10:-3] < support)
+        near_support = np.any(np.abs(arr_h[-3:-1] - support) / support < 0.005)
+        holding_below = arr_c[-1] < support and arr_c[-1] < arr_c[-2]
+
+        if broke_below and near_support and holding_below:
+            return -1
+
+        return 0
+
+
+class MovingAverageCrossStrategy(SubStrategy):
+    """
+    Golden Cross / Death Cross — 50 SMA crosses 200 SMA.
+    Classic institutional strategy used by fund managers worldwide.
+    BUY: 50 SMA crosses above 200 SMA + price above both.
+    SELL: 50 SMA crosses below 200 SMA.
+    Best for: LONG-TERM trends.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 202:
+            return 0
+        sma50 = sma(prices, 50)
+        sma200 = sma(prices, 200)
+
+        curr_50, prev_50 = sma50[-1], sma50[-2]
+        curr_200, prev_200 = sma200[-1], sma200[-2]
+        if any(np.isnan(v) for v in [curr_50, prev_50, curr_200, prev_200]):
+            return 0
+
+        last_price = prices[-1]
+
+        # Golden cross: 50 SMA crosses above 200 SMA
+        if prev_50 <= prev_200 and curr_50 > curr_200 and last_price > curr_50:
+            return 1
+        # Death cross: 50 SMA crosses below 200 SMA
+        if prev_50 >= prev_200 and curr_50 < curr_200 and last_price < curr_50:
+            return -1
+
+        # Sustain signal: already in golden/death cross regime with strong ADX
+        adx_line, _, _ = adx(highs, lows, prices, 14)
+        last_adx = adx_line[-1] if adx_line else 0
+        if not np.isnan(last_adx) and last_adx > 25:
+            if curr_50 > curr_200 and last_price > curr_50:
+                return 1
+            if curr_50 < curr_200 and last_price < curr_50:
+                return -1
+
+        return 0
+
+
+class KeltnerChannelSqueezeStrategy(SubStrategy):
+    """
+    Keltner Channel Squeeze — Volatility breakout detection.
+    When Bollinger Bands squeeze inside Keltner Channel, an explosion is imminent.
+    BUY: squeeze releases upward (BB expands + price breaks above Keltner upper).
+    SELL: squeeze releases downward.
+    Best for: VOLATILITY BREAKOUTS.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 30:
+            return 0
+        # Bollinger Bands
+        bb_upper, bb_mid, bb_lower = bollinger_bands(prices, 20, 2.0)
+        # Keltner Channel: EMA(20) +/- 1.5 * ATR(10)
+        ema_vals = ema(prices, 20)
+        atr_vals = atr(highs, lows, prices, 10)
+        if atr_vals is None or len(atr_vals) == 0:
+            return 0
+
+        last_ema = ema_vals[-1]
+        last_atr = atr_vals[-1]
+        if np.isnan(last_ema) or np.isnan(last_atr) or last_atr <= 0:
+            return 0
+
+        kc_upper = last_ema + 1.5 * last_atr
+        kc_lower = last_ema - 1.5 * last_atr
+
+        # Check if BB was squeezed inside KC recently (bars -5 to -2)
+        was_squeezed = False
+        for i in range(-5, -1):
+            if (bb_upper[i] < (ema_vals[i] + 1.5 * atr_vals[i]) and
+                    bb_lower[i] > (ema_vals[i] - 1.5 * atr_vals[i])):
+                was_squeezed = True
+                break
+
+        if not was_squeezed:
+            return 0
+
+        # Squeeze release: BB now wider than KC
+        bb_expanding = bb_upper[-1] > kc_upper or bb_lower[-1] < kc_lower
+        last_price = prices[-1]
+
+        if bb_expanding:
+            if last_price > kc_upper:
+                return 1
+            if last_price < kc_lower:
+                return -1
+        return 0
+
+
+class HeikinAshiTrendStrategy(SubStrategy):
+    """
+    Heikin-Ashi Trend — Smoothed candle trend following.
+    HA candles filter noise; 3+ consecutive same-color candles with no
+    opposing wick signal strong trend conviction.
+    BUY: 3+ green HA candles with no lower wick (strong uptrend).
+    SELL: 3+ red HA candles with no upper wick (strong downtrend).
+    Best for: TRENDING markets, noise filtering.
+    """
+    def generate_signal(self, prices: List[float], highs: List[float],
+                        lows: List[float], volumes: List[float]) -> int:
+        if len(prices) < 10:
+            return 0
+        arr_c = np.asarray(prices, dtype=float)
+        arr_h = np.asarray(highs, dtype=float)
+        arr_l = np.asarray(lows, dtype=float)
+        # Approximate open as previous close
+        arr_o = np.roll(arr_c, 1)
+        arr_o[0] = arr_c[0]
+
+        # Compute Heikin-Ashi candles
+        n = len(arr_c)
+        ha_close = (arr_o + arr_h + arr_l + arr_c) / 4.0
+        ha_open = np.empty(n, dtype=float)
+        ha_open[0] = (arr_o[0] + arr_c[0]) / 2.0
+        for i in range(1, n):
+            ha_open[i] = (ha_open[i - 1] + ha_close[i - 1]) / 2.0
+        ha_high = np.maximum(arr_h, np.maximum(ha_open, ha_close))
+        ha_low = np.minimum(arr_l, np.minimum(ha_open, ha_close))
+
+        # Check last 3 candles for strong trend
+        green_count = 0
+        red_count = 0
+        for i in range(-3, 0):
+            is_green = ha_close[i] > ha_open[i]
+            is_red = ha_close[i] < ha_open[i]
+            # No lower wick on green = strong (open == low)
+            no_lower_wick = abs(ha_open[i] - ha_low[i]) < (ha_high[i] - ha_low[i]) * 0.05
+            # No upper wick on red = strong (open == high)
+            no_upper_wick = abs(ha_open[i] - ha_high[i]) < (ha_high[i] - ha_low[i]) * 0.05
+
+            if is_green and no_lower_wick:
+                green_count += 1
+            elif is_red and no_upper_wick:
+                red_count += 1
+
+        if green_count >= 3:
+            return 1
+        if red_count >= 3:
             return -1
         return 0
 

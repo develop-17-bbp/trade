@@ -51,6 +51,18 @@ except ImportError:
     MARKET_MAKING_AVAILABLE = False
     logger.debug("[MULTI-STRATEGY] MarketMakingStrategy not available")
 
+try:
+    from src.trading.sub_strategies import (
+        ICTStrategy, WyckoffAccumulationStrategy, FibonacciRetracementStrategy,
+        VWAPBounceStrategy, OrderBlockStrategy, DivergenceStrategy,
+        BreakAndRetestStrategy, MovingAverageCrossStrategy,
+        KeltnerChannelSqueezeStrategy, HeikinAshiTrendStrategy,
+    )
+    PRO_STRATEGIES_AVAILABLE = True
+except ImportError:
+    PRO_STRATEGIES_AVAILABLE = False
+    logger.debug("[MULTI-STRATEGY] Professional strategies not available")
+
 
 class StrategySignal:
     """Result from a single strategy."""
@@ -71,21 +83,37 @@ REGIME_WEIGHTS = {
         'ema_trend': 0.05, 'mean_reversion': 0.05,
         'volatility_breakout': 0.05, 'trend_following': 0.05,
         'grid_trading': 0.02, 'market_making': 0.05,
-    },  # All heavily reduced in crisis
+        'ict': 0.08, 'wyckoff': 0.03, 'fibonacci': 0.03,
+        'vwap_bounce': 0.05, 'order_block': 0.08, 'divergence': 0.10,
+        'break_retest': 0.03, 'ma_cross': 0.02, 'keltner_squeeze': 0.05,
+        'heikin_ashi': 0.03,
+    },  # All heavily reduced in crisis; divergence/ICT still useful for reversals
     'BULL': {
-        'ema_trend': 0.35, 'mean_reversion': 0.05,
-        'volatility_breakout': 0.20, 'trend_following': 0.25,
-        'grid_trading': 0.05, 'market_making': 0.15,
+        'ema_trend': 0.25, 'mean_reversion': 0.03,
+        'volatility_breakout': 0.15, 'trend_following': 0.20,
+        'grid_trading': 0.03, 'market_making': 0.10,
+        'ict': 0.15, 'wyckoff': 0.08, 'fibonacci': 0.15,
+        'vwap_bounce': 0.12, 'order_block': 0.15, 'divergence': 0.08,
+        'break_retest': 0.18, 'ma_cross': 0.20, 'keltner_squeeze': 0.12,
+        'heikin_ashi': 0.18,
     },
     'BEAR': {
-        'ema_trend': 0.25, 'mean_reversion': 0.10,
-        'volatility_breakout': 0.20, 'trend_following': 0.25,
-        'grid_trading': 0.05, 'market_making': 0.20,
+        'ema_trend': 0.20, 'mean_reversion': 0.08,
+        'volatility_breakout': 0.15, 'trend_following': 0.20,
+        'grid_trading': 0.03, 'market_making': 0.15,
+        'ict': 0.15, 'wyckoff': 0.05, 'fibonacci': 0.12,
+        'vwap_bounce': 0.12, 'order_block': 0.15, 'divergence': 0.12,
+        'break_retest': 0.15, 'ma_cross': 0.18, 'keltner_squeeze': 0.10,
+        'heikin_ashi': 0.15,
     },
     'SIDEWAYS': {
-        'ema_trend': 0.10, 'mean_reversion': 0.25,
-        'volatility_breakout': 0.10, 'trend_following': 0.15,
-        'grid_trading': 0.30, 'market_making': 0.30,
+        'ema_trend': 0.08, 'mean_reversion': 0.20,
+        'volatility_breakout': 0.08, 'trend_following': 0.10,
+        'grid_trading': 0.25, 'market_making': 0.25,
+        'ict': 0.18, 'wyckoff': 0.15, 'fibonacci': 0.10,
+        'vwap_bounce': 0.20, 'order_block': 0.12, 'divergence': 0.15,
+        'break_retest': 0.08, 'ma_cross': 0.05, 'keltner_squeeze': 0.15,
+        'heikin_ashi': 0.05,
     },
 }
 
@@ -98,6 +126,16 @@ HURST_OVERRIDES = {
         'trend_following': 1.3,
         'grid_trading': 0.2,    # grid struggles in trends
         'market_making': 0.7,   # moderate suppression
+        'ict': 1.2,             # liquidity sweeps happen in trends
+        'wyckoff': 0.5,         # accumulation is pre-trend
+        'fibonacci': 1.5,       # fib pullbacks are trend tools
+        'vwap_bounce': 0.8,     # less mean-reversion in trends
+        'order_block': 1.3,     # institutional blocks work in trends
+        'divergence': 0.6,      # divergence signals exhaustion, suppress in trend
+        'break_retest': 1.4,    # breakouts thrive in trends
+        'ma_cross': 1.5,        # golden/death cross = trend tool
+        'keltner_squeeze': 1.2, # squeeze breakouts align with trend
+        'heikin_ashi': 1.6,     # HA trend following = best in trends
     },
     'MEAN_REVERTING': {  # H < 0.45
         'ema_trend': 0.3,
@@ -106,6 +144,16 @@ HURST_OVERRIDES = {
         'trend_following': 0.5,
         'grid_trading': 2.0,    # grid thrives in mean-reverting
         'market_making': 1.5,   # VWAP reversion works well
+        'ict': 1.3,             # liquidity sweeps = mean reversion play
+        'wyckoff': 1.5,         # accumulation happens in ranges
+        'fibonacci': 0.7,       # less useful without trend
+        'vwap_bounce': 1.8,     # VWAP reversion thrives
+        'order_block': 0.8,     # moderate
+        'divergence': 1.5,      # divergence signals reversals
+        'break_retest': 0.4,    # fewer real breakouts in ranges
+        'ma_cross': 0.3,        # MAs whipsaw in ranges
+        'keltner_squeeze': 1.0, # squeezes still form in ranges
+        'heikin_ashi': 0.4,     # HA trends fail in ranges
     },
     'RANDOM': {  # 0.45 <= H <= 0.55
         'ema_trend': 1.0,
@@ -114,6 +162,16 @@ HURST_OVERRIDES = {
         'trend_following': 1.0,
         'grid_trading': 1.0,
         'market_making': 1.0,
+        'ict': 1.0,
+        'wyckoff': 1.0,
+        'fibonacci': 1.0,
+        'vwap_bounce': 1.0,
+        'order_block': 1.0,
+        'divergence': 1.0,
+        'break_retest': 1.0,
+        'ma_cross': 1.0,
+        'keltner_squeeze': 1.0,
+        'heikin_ashi': 1.0,
     },
 }
 
@@ -149,6 +207,18 @@ class MultiStrategyEngine:
             # Add MarketMakingStrategy if available
             if MARKET_MAKING_AVAILABLE:
                 self._strategies['market_making'] = MarketMakingStrategy()
+            # Add professional strategies if available
+            if PRO_STRATEGIES_AVAILABLE:
+                self._strategies['ict'] = ICTStrategy()
+                self._strategies['wyckoff'] = WyckoffAccumulationStrategy()
+                self._strategies['fibonacci'] = FibonacciRetracementStrategy()
+                self._strategies['vwap_bounce'] = VWAPBounceStrategy()
+                self._strategies['order_block'] = OrderBlockStrategy()
+                self._strategies['divergence'] = DivergenceStrategy()
+                self._strategies['break_retest'] = BreakAndRetestStrategy()
+                self._strategies['ma_cross'] = MovingAverageCrossStrategy()
+                self._strategies['keltner_squeeze'] = KeltnerChannelSqueezeStrategy()
+                self._strategies['heikin_ashi'] = HeikinAshiTrendStrategy()
             strat_count = len(self._strategies)
             logger.info(f"[MULTI-STRATEGY] Engine initialized with {strat_count} strategies")
         else:
@@ -156,7 +226,9 @@ class MultiStrategyEngine:
 
         # Per-strategy performance tracking (for learning)
         for name in ['ema_trend', 'mean_reversion', 'volatility_breakout', 'trend_following',
-                      'grid_trading', 'market_making']:
+                      'grid_trading', 'market_making',
+                      'ict', 'wyckoff', 'fibonacci', 'vwap_bounce', 'order_block',
+                      'divergence', 'break_retest', 'ma_cross', 'keltner_squeeze', 'heikin_ashi']:
             self._performance[name] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
 
         # Config overrides for strategy weights
@@ -229,8 +301,8 @@ class MultiStrategyEngine:
 
             elif strategy_name == 'trend_following':
                 # Confidence based on ADX strength
-                adx_vals = adx(highs, lows, closes, 14)
-                adx_val = adx_vals[-1] if adx_vals else 20
+                adx_line, _, _ = adx(highs, lows, closes, 14)
+                adx_val = adx_line[-1] if adx_line else 20
                 return min(1.0, max(0.3, adx_val / 50))
 
             elif strategy_name == 'grid_trading':
@@ -252,7 +324,6 @@ class MultiStrategyEngine:
 
             elif strategy_name == 'market_making':
                 # Confidence based on price deviation from SMA(20) as VWAP proxy
-                # (actual VWAP needs volumes, which _estimate_confidence doesn't receive)
                 import numpy as _np
                 from src.indicators.indicators import sma as compute_sma
                 sma_vals = compute_sma(closes, 20)
@@ -262,9 +333,97 @@ class MultiStrategyEngine:
                     std_dev = _np.std(recent - recent_sma)
                     if std_dev > 0:
                         z = abs(closes[-1] - sma_vals[-1]) / std_dev
-                        # Larger z-score deviation = higher confidence in mean reversion
                         return min(1.0, max(0.3, 0.3 + z * 0.2))
                 return 0.45
+
+            elif strategy_name == 'ict':
+                # ICT confidence: higher when ATR is large relative to price (volatile sweep)
+                from src.indicators.indicators import atr as compute_atr
+                atr_vals = compute_atr(highs, lows, closes, 14)
+                if atr_vals and not np.isnan(atr_vals[-1]) and closes[-1] > 0:
+                    atr_pct = atr_vals[-1] / closes[-1]
+                    return min(1.0, max(0.4, 0.4 + atr_pct * 20))
+                return 0.5
+
+            elif strategy_name == 'wyckoff':
+                # Wyckoff confidence: volume surge magnitude
+                import numpy as _np
+                if len(closes) >= 40:
+                    avg_vol = _np.mean(_np.asarray(closes[-40:-5], dtype=float))
+                    if avg_vol > 0:
+                        vol_ratio = closes[-1] / avg_vol
+                        return min(1.0, max(0.4, 0.3 + vol_ratio * 0.15))
+                return 0.45
+
+            elif strategy_name == 'fibonacci':
+                # Fibonacci confidence: how close price is to the 0.618 level
+                rsi_vals = rsi(closes, 14)
+                r = rsi_vals[-1] if rsi_vals else 50
+                extremity = abs(r - 50) / 50  # 0..1 how far from neutral
+                return min(1.0, max(0.35, 0.35 + extremity * 0.5))
+
+            elif strategy_name == 'vwap_bounce':
+                # VWAP bounce confidence: ATR-normalized distance from VWAP proxy
+                from src.indicators.indicators import atr as compute_atr
+                atr_vals = compute_atr(highs, lows, closes, 14)
+                from src.indicators.indicators import sma as compute_sma
+                sma_vals = compute_sma(closes, 20)
+                if atr_vals and sma_vals and not np.isnan(atr_vals[-1]) and atr_vals[-1] > 0:
+                    dist = abs(closes[-1] - sma_vals[-1]) / atr_vals[-1]
+                    return min(1.0, max(0.35, 0.3 + dist * 0.2))
+                return 0.45
+
+            elif strategy_name == 'order_block':
+                # Order block confidence: strength of the impulse that created the block
+                from src.indicators.indicators import atr as compute_atr
+                atr_vals = compute_atr(highs, lows, closes, 14)
+                if atr_vals and not np.isnan(atr_vals[-1]) and atr_vals[-1] > 0:
+                    # Recent price movement vs ATR
+                    move = abs(closes[-1] - closes[-3]) / atr_vals[-1]
+                    return min(1.0, max(0.4, 0.35 + move * 0.15))
+                return 0.5
+
+            elif strategy_name == 'divergence':
+                # Divergence confidence: how extreme RSI is
+                rsi_vals = rsi(closes, 14)
+                r = rsi_vals[-1] if rsi_vals else 50
+                if signal == 1:
+                    return min(1.0, max(0.4, (40 - r) / 30)) if r < 40 else 0.4
+                else:
+                    return min(1.0, max(0.4, (r - 60) / 30)) if r > 60 else 0.4
+
+            elif strategy_name == 'break_retest':
+                # Break-retest confidence: ADX strength (strong trend = real breakout)
+                adx_line, _, _ = adx(highs, lows, closes, 14)
+                adx_val = adx_line[-1] if adx_line else 20
+                return min(1.0, max(0.35, adx_val / 45))
+
+            elif strategy_name == 'ma_cross':
+                # MA cross confidence: distance between 50 and 200 SMA (wider gap = stronger)
+                from src.indicators.indicators import sma as compute_sma
+                if len(closes) >= 202:
+                    sma50 = compute_sma(closes, 50)
+                    sma200 = compute_sma(closes, 200)
+                    if sma50 and sma200 and not np.isnan(sma50[-1]) and not np.isnan(sma200[-1]):
+                        gap_pct = abs(sma50[-1] - sma200[-1]) / sma200[-1]
+                        return min(1.0, max(0.4, 0.4 + gap_pct * 10))
+                return 0.5
+
+            elif strategy_name == 'keltner_squeeze':
+                # Keltner squeeze confidence: how compressed the squeeze was
+                from src.indicators.indicators import bollinger_bands as compute_bb, atr as compute_atr
+                bb_u, bb_m, bb_l = compute_bb(closes, 20, 2.0)
+                if bb_m[-1] != 0:
+                    bw = (bb_u[-1] - bb_l[-1]) / bb_m[-1]
+                    # Tighter prior squeeze = more explosive release = higher confidence
+                    return min(1.0, max(0.4, 1.0 - bw * 8))
+                return 0.5
+
+            elif strategy_name == 'heikin_ashi':
+                # HA trend confidence: ADX strength
+                adx_line, _, _ = adx(highs, lows, closes, 14)
+                adx_val = adx_line[-1] if adx_line else 20
+                return min(1.0, max(0.35, adx_val / 40))
 
         except Exception:
             pass

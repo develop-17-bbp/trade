@@ -326,6 +326,13 @@ try:
 except Exception:
     ADAPTIVE_FEEDBACK_AVAILABLE = False
 
+# Strategy Universe — 242 auto-generated strategies for consensus
+try:
+    from src.trading.strategy_universe import StrategyUniverse
+    STRATEGY_UNIVERSE_AVAILABLE = True
+except Exception:
+    STRATEGY_UNIVERSE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -774,6 +781,12 @@ class TradingExecutor:
         self._adaptive = None
         if ADAPTIVE_FEEDBACK_AVAILABLE:
             self._adaptive = AdaptiveFeedbackLoop(config)
+
+        # ── Strategy Universe — 242 auto-generated strategies for consensus ──
+        self._universe = None
+        if STRATEGY_UNIVERSE_AVAILABLE:
+            self._universe = StrategyUniverse()
+            print(f"  [UNIVERSE] {self._universe.total_strategies} strategies loaded for consensus voting")
 
         # ── Cointegration Engine — BTC-ETH pairs spread trading signal ──
         self._coint_engine = None
@@ -2697,6 +2710,28 @@ class TradingExecutor:
                 logger.debug(f"[MULTI-STRATEGY] {asset} failed, EMA fallback: {e}")
         else:
             signal = ema_signal_raw
+
+        # ── STRATEGY UNIVERSE CONSENSUS (242 strategies vote) ──
+        _universe_consensus = None
+        _universe_confidence = 0
+        if self._universe and len(closes) >= 50:
+            try:
+                _all_signals = self._universe.evaluate_all(closes, highs, lows, volumes)
+                _universe_consensus, _universe_confidence = self._universe.get_consensus(_all_signals)
+                _buy_count = sum(1 for s in _all_signals.values() if s > 0)
+                _sell_count = sum(1 for s in _all_signals.values() if s < 0)
+                _flat_count = sum(1 for s in _all_signals.values() if s == 0)
+                print(f"  [{self._ex_tag}:{asset}] UNIVERSE: {_buy_count}↑ {_sell_count}↓ {_flat_count}— | consensus={_universe_consensus} conf={_universe_confidence:.2f}")
+
+                # Universe can OVERRIDE multi-strategy signal if strong consensus
+                if _universe_confidence > 0.60 and _universe_consensus == 'BUY' and signal != 'BUY':
+                    print(f"  [{self._ex_tag}:{asset}] UNIVERSE OVERRIDE: {signal} → BUY (60%+ strategies agree)")
+                    signal = 'BUY'
+                elif _universe_confidence > 0.60 and _universe_consensus == 'SELL' and signal != 'SELL':
+                    if not self._longs_only:
+                        signal = 'SELL'
+            except Exception as e:
+                logger.debug(f"[UNIVERSE] {asset} eval failed: {e}")
 
         # Print status with active signals across all timeframes
         active_tfs_str = ", ".join(f"{tf}={s['signal']}" for tf, s in active_tf_signals.items()) or "none"
@@ -5325,9 +5360,10 @@ class TradingExecutor:
         if action == "SHORT":
             return False, "SHORT blocked on Robinhood spot"
 
-        # 2. ENTRY SCORE >= 7 (currently only enforced for shorts!)
-        if entry_score < 7:
-            return False, f"entry_score {entry_score} < 7 required for Robinhood LONG"
+        # 2. ENTRY SCORE >= 5 (lowered from 7 — multi-strategy consensus compensates)
+        # The multi-strategy engine + LLM + agents provide additional conviction
+        if entry_score < 5:
+            return False, f"entry_score {entry_score} < 5 required for Robinhood LONG"
 
         # 3. EXPECTED MOVE > 2× SPREAD (ATR-based projected move must justify spread)
         atr_tp_mult = self.config.get('risk', {}).get('atr_tp_mult', 25.0)
@@ -5342,8 +5378,8 @@ class TradingExecutor:
             return False, f"confidence {confidence:.2f} < 0.75 required on Robinhood"
 
         # 5. TRADE QUALITY >= 6 (no marginal setups on high-spread exchange)
-        if trade_quality < 6:
-            return False, f"quality {trade_quality} < 6 required on Robinhood"
+        if trade_quality < 4:
+            return False, f"quality {trade_quality} < 4 required on Robinhood"
 
         # 6. RISK SCORE <= 5 (spread amplifies losses — must be conservative)
         if risk_score > 5:

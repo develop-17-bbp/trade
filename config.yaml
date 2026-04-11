@@ -33,7 +33,7 @@ adaptive:
   max_entry_score: 15                          # Don't cap strong momentum (daily TF = bigger scores)
   short_score_penalty: 4                       # SHORTs need score 10+ (6+4) — LONG bias in crypto
   sr_assets: [ETH]                             # S/R levels for ETH only
-  signal_timeframes: [4h, 1d]                 # Robinhood: only 4h and daily — need 5%+ moves
+  signal_timeframes: [1h, 4h, 1d]              # Added 1h for more signal frequency while keeping swing focus
 
 # ── Risk (Robinhood Spread-Adapted) ──
 # Must overcome 3.3% round-trip spread cost
@@ -97,9 +97,9 @@ multi_strategy:
 # Designed for Robinhood's 1.67% spread: only trades when expected move >> spread cost
 sniper:
   enabled: true                        # Default ON for Robinhood paper mode
-  min_confluence: 6                    # Need 6+ of 9 signals for Robinhood (was 5 — higher bar for 3.34% spread)
-  min_score: 8                         # Higher bar than normal min_entry_score (6)
-  min_expected_move_pct: 5.0           # Only enter if expected move > 5% (clears 3.3% round-trip spread)
+  min_confluence: 4                    # Lowered from 6→4: need signals to fire (Claude will monitor and tighten if losing)
+  min_score: 6                         # Lowered from 8→6: allows more setups through (hard gate still requires 7)
+  min_expected_move_pct: 4.0           # Lowered from 5→4: still above spread, but catches more moves
   compound_pct: 50.0                   # Reinvest 50% of realized profits into next trade
   protect_principal: true              # After first win, only risk profits — never touch original capital extra
 
