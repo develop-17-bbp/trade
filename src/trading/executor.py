@@ -319,6 +319,13 @@ try:
 except Exception:
     CIRCUIT_BREAKER_AVAILABLE = False
 
+# Adaptive Feedback Loop — closed-loop learning from every trade
+try:
+    from src.trading.adaptive_feedback import AdaptiveFeedbackLoop, TradeOutcome
+    ADAPTIVE_FEEDBACK_AVAILABLE = True
+except Exception:
+    ADAPTIVE_FEEDBACK_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -762,6 +769,11 @@ class TradingExecutor:
                 alert_fn=alert_fn,
                 name='Robinhood',
             )
+
+        # ── Adaptive Feedback Loop — every trade outcome teaches the system ──
+        self._adaptive = None
+        if ADAPTIVE_FEEDBACK_AVAILABLE:
+            self._adaptive = AdaptiveFeedbackLoop(config)
 
         # ── Cointegration Engine — BTC-ETH pairs spread trading signal ──
         self._coint_engine = None
@@ -6525,6 +6537,35 @@ class TradingExecutor:
                 self._sl_persist.clear_position(asset)
             except Exception:
                 pass
+        # ── Adaptive feedback — teach the system from this outcome ──
+        if self._adaptive:
+            try:
+                self._adaptive.record_outcome(TradeOutcome(
+                    asset=asset,
+                    direction=direction,
+                    entry_price=entry,
+                    exit_price=price,
+                    pnl_pct=pnl_pct,
+                    pnl_usd=pnl_usd,
+                    duration_min=(time.time() - pos.get('entry_time', time.time())) / 60,
+                    entry_score=pos.get('entry_tag', '').count('-') + 5,  # rough score from tag
+                    strategy_used=pos.get('trade_timeframe', 'ema_trend'),
+                    strategy_signals=pos.get('_multi_strategy_details', {}),
+                    agent_votes=pos.get('agent_votes', {}),
+                    llm_confidence=pos.get('confidence', 0),
+                    risk_score=pos.get('risk_score', 0),
+                    trade_quality=pos.get('bear_risk', 0),
+                    regime=pos.get('hurst_regime', 'UNKNOWN'),
+                    hurst=pos.get('hurst', 0.5),
+                    sl_level=len(pos.get('sl_levels', ['L1'])),
+                    exit_reason=reason,
+                    timeframe=pos.get('trade_timeframe', '4h'),
+                    spread_cost_pct=self._round_trip_spread if hasattr(self, '_round_trip_spread') else 0,
+                    multi_strategy_details=pos.get('_multi_strategy_details', {}),
+                ))
+            except Exception as _af_err:
+                logger.debug(f"[ADAPTIVE] Feedback failed: {_af_err}")
+
         now = time.time()
         self.last_close_time[asset] = now
         self.last_trade_time[asset] = now  # Also set trade cooldown to prevent immediate re-entry
