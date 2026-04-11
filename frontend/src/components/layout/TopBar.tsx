@@ -103,7 +103,7 @@ export default function TopBar() {
       {/* Left: brand */}
       <div className="flex items-center gap-4">
         <h1 className="text-sm font-bold tracking-[0.15em]">
-          <span className="gradient-text glitch-text" data-text="NEXUS">NEXUS</span>
+          <span className="gradient-text glitch-text" data-text="ACT's">ACT's</span>
           <span className="text-[#5a6080] ml-2 font-normal text-[10px] tracking-[0.25em]">AI TRADING</span>
         </h1>
       </div>

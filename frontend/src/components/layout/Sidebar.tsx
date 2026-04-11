@@ -52,7 +52,7 @@ export default function Sidebar() {
           className="ml-3 font-bold text-sm tracking-[0.2em] whitespace-nowrap overflow-hidden transition-opacity duration-200 gradient-text"
           style={{ opacity: expanded ? 1 : 0 }}
         >
-          NEXUS
+          ACT's
         </span>
       </div>
 
@@ -106,7 +106,7 @@ export default function Sidebar() {
           className="text-[10px] text-[#5a6080] tracking-[0.3em] uppercase whitespace-nowrap overflow-hidden transition-opacity duration-200 font-mono"
           style={{ opacity: expanded ? 1 : 0 }}
         >
-          NEXUS v1.0
+          ACT's v1.0
         </span>
       </div>
     </aside>
