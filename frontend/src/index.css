@@ -243,6 +243,28 @@ body {
     #05050f;
 }
 
+/* ── 3D Logo Float ── */
+@keyframes logo-float {
+  0%, 100% { transform: perspective(200px) rotateY(-5deg) translateY(0px); }
+  50% { transform: perspective(200px) rotateY(5deg) translateY(-2px); }
+}
+.logo-3d {
+  animation: logo-float 4s ease-in-out infinite;
+}
+
+/* ── Neon Text Flicker ── */
+@keyframes neon-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+    text-shadow: 0 0 7px rgba(0,255,240,0.6), 0 0 20px rgba(0,255,240,0.3), 0 0 40px rgba(191,95,255,0.2);
+  }
+  20%, 24%, 55% {
+    text-shadow: none;
+  }
+}
+.neon-flicker {
+  animation: neon-flicker 6s infinite;
+}
+
 /* ── Status Indicators ── */
 .status-online {
   color: #00ffaa;

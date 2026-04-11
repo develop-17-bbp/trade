@@ -100,8 +100,20 @@ export default function TopBar() {
         boxShadow: '0 2px 20px rgba(0,0,0,0.3)',
       }}
     >
-      {/* Left: brand */}
-      <div className="flex items-center gap-4">
+      {/* Left: brand with 3D holographic logo */}
+      <div className="flex items-center gap-3">
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center relative"
+          style={{
+            background: 'linear-gradient(135deg, #00fff0, #bf5fff, #ff00aa)',
+            backgroundSize: '200% 200%',
+            animation: 'gradient-shift 3s ease infinite',
+            boxShadow: '0 0 12px rgba(0,255,240,0.35), 0 0 25px rgba(191,95,255,0.15)',
+            border: '1px solid rgba(0,255,240,0.25)',
+            transform: 'perspective(200px) rotateY(-5deg)',
+          }}
+        >
+          <span className="text-[#05050f] font-black text-xs" style={{ textShadow: '0 0 3px rgba(0,255,240,0.5)' }}>A</span>
+        </div>
         <h1 className="text-sm font-bold tracking-[0.15em]">
           <span className="gradient-text glitch-text" data-text="ACT's">ACT's</span>
           <span className="text-[#5a6080] ml-2 font-normal text-[10px] tracking-[0.25em]">AI TRADING</span>

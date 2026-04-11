@@ -40,13 +40,16 @@ export default function Sidebar() {
     >
       {/* Brand */}
       <div className="flex items-center h-16 px-4 border-b border-[rgba(100,80,255,0.12)]">
-        <div className="w-[38px] h-[38px] rounded-lg flex items-center justify-center flex-shrink-0 relative"
+        <div className="w-[38px] h-[38px] rounded-lg flex items-center justify-center flex-shrink-0 relative animate-pulse-glow"
           style={{
-            background: 'linear-gradient(135deg, #00fff0, #bf5fff)',
-            boxShadow: '0 0 15px rgba(0,255,240,0.3), 0 0 30px rgba(191,95,255,0.15)',
+            background: 'linear-gradient(135deg, #00fff0, #bf5fff, #ff00aa)',
+            backgroundSize: '200% 200%',
+            animation: 'gradient-shift 3s ease infinite, pulse-glow 4s ease-in-out infinite',
+            boxShadow: '0 0 15px rgba(0,255,240,0.4), 0 0 30px rgba(191,95,255,0.2), 0 0 45px rgba(255,0,170,0.1)',
+            border: '1px solid rgba(0,255,240,0.3)',
           }}
         >
-          <span className="text-[#05050f] font-black text-sm">N</span>
+          <span className="text-[#05050f] font-black text-sm" style={{ textShadow: '0 0 4px rgba(0,255,240,0.5)' }}>A</span>
         </div>
         <span
           className="ml-3 font-bold text-sm tracking-[0.2em] whitespace-nowrap overflow-hidden transition-opacity duration-200 gradient-text"
