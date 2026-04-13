@@ -5948,12 +5948,13 @@ class TradingExecutor:
                         break
 
             # Exit conditions: new opposite line forming
-            # ONLY when in profit — quick profit protection (2 bars reversal)
-            # When losing, let the SL/hard stop handle it — EMA exit is too late
-            # for losses (backtest: 18% WR for loss exits vs 69-78% for SL exits)
+            # ONLY when in MEANINGFUL profit — protects from premature exits on tiny gains
+            # With Robinhood 3.34% round-trip spread, exiting at 0.04% "profit" is a real loss
+            # min_exit_pnl_pct: minimum profit % required before EMA reversal exit triggers
             min_reversal = 2
+            min_exit_pnl_pct = self.config.get('risk', {}).get('min_exit_pnl_pct', 1.5)
 
-            if pnl_pct > 0:
+            if pnl_pct > min_exit_pnl_pct:
                 if direction == 'LONG' and reversal_bars >= min_reversal and confirmed_close < confirmed_ema:
                     trade_tf_label = pos.get('trade_timeframe', '5m')
                     print(f"  [{self._ex_tag}:{asset}] NEW DOWN LINE [{trade_tf_label}]: EMA falling {reversal_bars} bars, price below EMA | P&L: {pnl_pct:+.2f}%")

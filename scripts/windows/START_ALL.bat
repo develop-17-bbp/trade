@@ -32,12 +32,16 @@ echo [3/5] Starting Dashboard (port 5173)...
 start "ACTs - Dashboard" cmd /k "cd /d C:\Users\convo\trade\frontend && set PATH=C:\Program Files\nodejs;%%PATH%% && node node_modules\vite\bin\vite.js --host"
 timeout /t 4 /nobreak >nul
 
-echo [4/5] Starting ML Auto-Retrain (every 4h)...
-start "ACTs - FreqAI Retrain" cmd /k "cd /d C:\Users\convo\trade && python -m src.scripts.freqai_retrain --continuous"
+echo [4/6] Starting Continuous Adaptation (backtest+train+weights every 4h)...
+start "ACTs - Continuous Adapt" cmd /k "cd /d C:\Users\convo\trade && python -m src.scripts.continuous_adapt --continuous --interval 4"
 timeout /t 2 /nobreak >nul
 
-echo [5/5] Starting Monitor (every 30min)...
+echo [5/6] Starting Monitor (every 30min)...
 start "ACTs - Monitor" cmd /k "cd /d C:\Users\convo\trade && scripts\windows\run_monitor.bat"
+timeout /t 2 /nobreak >nul
+
+echo [6/6] Starting Dashboard Frontend (port 5173 already started above)...
+echo   All background processes launched.
 
 echo.
 echo   ==================================================

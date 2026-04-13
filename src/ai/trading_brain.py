@@ -1068,7 +1068,8 @@ class TradingBrainV2:
     Same interface as v2.0 — drop-in replacement.
     """
 
-    def __init__(self, ollama_base_url="http://localhost:11434", journal_path="logs/trading_journal.jsonl", exchange: str = ""):
+    def __init__(self, ollama_base_url="http://localhost:11434", journal_path="logs/trading_journal.jsonl", exchange: str = "", config: dict = None):
+        self.config = config or {}
         self.exchange = exchange  # Exchange tag for filtering (e.g., 'bybit', 'delta')
         self.memory = TradeMemory(journal_path, exchange=exchange)
         self.regime = RegimeSelector()

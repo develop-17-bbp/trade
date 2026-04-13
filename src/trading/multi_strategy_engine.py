@@ -113,9 +113,12 @@ REGIME_WEIGHTS = {
         'pine_aroon': 0.03,
     },  # All heavily reduced in crisis; divergence/ICT still useful for reversals
     'BULL': {
-        'ema_trend': 0.25, 'mean_reversion': 0.03,
-        'volatility_breakout': 0.15, 'trend_following': 0.20,
-        'grid_trading': 0.03, 'market_making': 0.10,
+        # 2026-04-13: Adjusted based on 14-day backtest — STRONG_UP chart but Grid/MarketMaking
+        # won decisively (Grid BTC+6%/ETH+7.3%, 100% WR). EMA -8.6% BTC, TrendFollow -9.4% ETH.
+        # Boosted grid (+7%), market_making (+8%); reduced ema_trend (-5%), trend_following (-4%).
+        'ema_trend': 0.20, 'mean_reversion': 0.03,
+        'volatility_breakout': 0.15, 'trend_following': 0.16,
+        'grid_trading': 0.10, 'market_making': 0.18,
         'ict': 0.15, 'wyckoff': 0.08, 'fibonacci': 0.15,
         'vwap_bounce': 0.12, 'order_block': 0.15, 'divergence': 0.08,
         'break_retest': 0.18, 'ma_cross': 0.20, 'keltner_squeeze': 0.12,

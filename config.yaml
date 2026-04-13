@@ -29,7 +29,7 @@ adaptive:
   ema_crossover_primary: true
   ema_period: 8                                # EMA period (matches chart)
   struct_window: 5                             # Structure points for SL (L1->L4)
-  min_entry_score: 6                           # Only high-quality setups
+  min_entry_score: 4                           # Lowered 6→4: allow marginal setups to reach LLM (72h no trades — 2026-04-13)
   max_entry_score: 15                          # Don't cap strong momentum (daily TF = bigger scores)
   short_score_penalty: 4                       # SHORTs need score 10+ (6+4) — LONG bias in crypto
   sr_assets: [ETH]                             # S/R levels for ETH only
@@ -45,6 +45,7 @@ risk:
   atr_stop_mult: 8.0                           # Wide SL for Robinhood 3.34% spread (8×ATR ≈ 3.5% for BTC, survives noise)
   atr_tp_mult: 25.0                            # TP = 25×ATR — target 10%+ moves, nets ~7% after 3.34% spread
   hard_stop_pct: -12.0                         # Hard stop at -12% (3.34% spread + 8.66% real adverse move room)
+  min_exit_pnl_pct: 1.5                        # Min profit % before EMA reversal exit triggers (Robinhood spread ~1.67% per side)
 
 # ── AI / LLM ──
 # Bybit uses Ollama (mistral 7B), Delta uses Claude API (haiku)
@@ -98,7 +99,7 @@ multi_strategy:
 sniper:
   enabled: true                        # Default ON for Robinhood paper mode
   min_confluence: 4                    # Lowered from 6→4: need signals to fire (Claude will monitor and tighten if losing)
-  min_score: 6                         # Lowered from 8→6: allows more setups through (hard gate still requires 7)
+  min_score: 4                         # Lowered 8→6→4: FOMC pause then allow LLM to decide on marginal setups (2026-04-13)
   min_expected_move_pct: 4.0           # Lowered from 5→4: still above spread, but catches more moves
   compound_pct: 50.0                   # Reinvest 50% of realized profits into next trade
   protect_principal: true              # After first win, only risk profits — never touch original capital extra
