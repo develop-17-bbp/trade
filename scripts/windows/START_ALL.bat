@@ -6,7 +6,14 @@ REM   MUST be run from C:\Users\convo\trade (main repo, NOT worktree)
 REM ============================================================
 
 echo.
-echo   ACT's AI TRADING SYSTEM — Starting All Components
+echo    ___   _____ _   _
+echo   / _ \ / ____^| ^| ^|  ^
+echo  ^| ^(_^) ^| ^|    ^| ^|_^| ^|___
+echo   ^> _ ^<^| ^|    ^| __^|  / __^|
+echo  ^| ^(_^) ^| ^|____^| ^|_^| \__ \
+echo   \___/ \_____^|\__^|_^|___/
+echo.
+echo   AI TRADING SYSTEM - Starting All Components
 echo   ==================================================
 echo.
 
