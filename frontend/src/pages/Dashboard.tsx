@@ -98,7 +98,7 @@ export default function Dashboard() {
                 <h2 className="text-sm font-semibold text-[#e8ecf4]">Live Market — BTC/USD</h2>
                 <span className="text-[10px] text-[#5a6080] font-mono">TradingView Real-Time</span>
               </div>
-              <TradingViewWidget symbol="KRAKEN:BTCUSD" interval="60" height={350} />
+              <TradingViewWidget symbol="KRAKEN:BTCUSD" interval="60" height={600} />
             </GlassCard>
           </motion.div>
 
