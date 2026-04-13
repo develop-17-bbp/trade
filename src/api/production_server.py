@@ -112,6 +112,11 @@ def _load_robinhood_paper_trades() -> list:
 API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 _DEV_MODE = os.environ.get("TRADE_API_DEV_MODE", "").lower() in ("1", "true", "yes")
 
+# Auto-enable dev mode if no API key is configured (local development)
+if not API_KEY and not _DEV_MODE:
+    _DEV_MODE = True
+    logger.info("[API] No DASHBOARD_API_KEY set — auto-enabling dev mode")
+
 def _require_api_key(x_api_key: Optional[str] = Header(default=None)):
     if not API_KEY:
         if _DEV_MODE:
