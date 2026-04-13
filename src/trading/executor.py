@@ -434,6 +434,7 @@ class TradingExecutor:
                     ollama_base_url=self.ollama_base_url,
                     journal_path=journal_path,
                     exchange=self._ex_tag.lower(),
+                    config=config,
                 )
                 print(f"  [AI] Trading Brain v2 ACTIVE — multi-model (mistral+llama3.2), CoT, memory, regime, Kelly, session")
             except Exception as e:
@@ -3104,11 +3105,17 @@ class TradingExecutor:
                     confluence_count += 1
                     confluence_reasons.append("price<EMA")
 
-            # GATE: Must meet minimum confluence
+            # Initialize math_filter_warnings early (before sniper advisory needs it)
+            if 'math_filter_warnings' not in dir():
+                math_filter_warnings = []
+
+            # SNIPER: Advisory, NOT a hard gate — LLM and agents make final decision
+            # This ensures the LLM always sees market data and can learn even from skipped setups
             if confluence_count < self.sniper_min_confluence:
                 self.sniper_stats['filtered'] += 1
-                print(f"  [{self._ex_tag}:{asset}] SNIPER FILTER: confluence {confluence_count}/{self.sniper_min_confluence} — {', '.join(confluence_reasons) or 'none'} — WAIT")
-                return
+                print(f"  [{self._ex_tag}:{asset}] SNIPER ADVISORY: confluence {confluence_count}/{self.sniper_min_confluence} — {', '.join(confluence_reasons) or 'none'} — LOW (LLM will decide)")
+                math_filter_warnings.append(f"SNIPER: only {confluence_count}/{self.sniper_min_confluence} confluence — weak setup")
+                # DON'T return — let LLM + agents see the data and decide
             else:
                 print(f"  [{self._ex_tag}:{asset}] SNIPER PASS: confluence {confluence_count}/{self.sniper_min_confluence} — {', '.join(confluence_reasons)}")
 
@@ -3596,9 +3603,12 @@ class TradingExecutor:
                 hurst_conf = hurst_result['r_squared']
 
                 if hurst_regime == 'mean_reverting' and hurst_conf > 0.7:
-                    # Market is actively mean-reverting — trend signals will fail
-                    print(f"  [{self._ex_tag}:{asset}] HURST BLOCK: H={hurst_value:.2f} ({hurst_regime}) R2={hurst_conf:.2f} — trend signals unreliable")
-                    return
+                    # Market is mean-reverting — TREND signals unreliable, but
+                    # mean-reversion/grid/VWAP strategies SHOULD trade here
+                    # Old behavior: hard return (blocked everything)
+                    # New: add warning for LLM, let multi-strategy handle regime
+                    math_filter_warnings.append(f"HURST: H={hurst_value:.2f} MEAN-REVERTING — trend strategies unreliable, favor grid/mean-reversion/VWAP")
+                    print(f"  [{self._ex_tag}:{asset}] HURST NOTE: H={hurst_value:.2f} ({hurst_regime}) R2={hurst_conf:.2f} — mean-reversion strategies favored")
                 elif hurst_regime == 'random' and hurst_conf > 0.7:
                     # Random walk — add warning but don't block (weaker signal)
                     math_filter_warnings.append(f"HURST: H={hurst_value:.2f} random walk — trend may not persist")
@@ -3636,17 +3646,51 @@ class TradingExecutor:
                 min_len = min(len(log_ret), len(vol_20), len(vol_change))
                 obs = _np.column_stack([log_ret[-min_len:], vol_20[-min_len:], vol_change[-min_len:]])
 
-                regime_result = self._hmm.detect(obs)
+                # Try predict() first (new API), fall back to detect() (old API)
+                if hasattr(self._hmm, 'predict') and self._hmm.is_fitted:
+                    regime_result = self._hmm.predict(log_ret[-min_len:], vol_20[-min_len:], vol_change[-min_len:])
+                elif hasattr(self._hmm, 'detect'):
+                    regime_result = self._hmm.detect(obs)
+                else:
+                    regime_result = None
+
                 if regime_result:
-                    ml_context['hmm_regime'] = regime_result.get('regime', 'UNKNOWN')
-                    ml_context['hmm_confidence'] = round(regime_result.get('confidence', 0), 2)
-                    crisis_prob = regime_result.get('crisis_probability', 0)
+                    ml_context['hmm_regime'] = regime_result.get('regime', 'UNKNOWN').upper()
+                    ml_context['hmm_confidence'] = round(regime_result.get('stability', 0), 2)
+                    crisis_prob = regime_result.get('crisis_prob', 0)
                     ml_context['crisis_probability'] = round(crisis_prob, 3)
 
-                    # HARD BLOCK: Crisis regime with high confidence
+                    # Store for multi-strategy engine
+                    if not hasattr(self, '_last_hmm_regime'):
+                        self._last_hmm_regime = {}
+                    self._last_hmm_regime[asset] = ml_context['hmm_regime']
+
+                    # ── REGIME TRANSITION PREDICTION ──
+                    if hasattr(self._hmm, 'predict_transition') and self._hmm.is_fitted:
+                        try:
+                            transition = self._hmm.predict_transition(
+                                log_ret[-min_len:], vol_20[-min_len:], vol_change[-min_len:],
+                                horizon_bars=6,
+                            )
+                            ml_context['regime_transition'] = transition
+                            ml_context['regime_strategy_bias'] = transition.get('strategy_bias', 'HOLD_CURRENT')
+
+                            # Log transition prediction
+                            if transition.get('is_about_to_change'):
+                                print(f"  [{self._ex_tag}:{asset}] REGIME SHIFT: {transition['current_regime']}→{transition['next_probable_regime']} "
+                                      f"({transition['next_regime_probability']:.0%} in {transition['horizon_bars']} bars) | "
+                                      f"Bias: {transition['strategy_bias']}")
+                            else:
+                                persistence = transition.get('persistence_score', 0)
+                                if persistence < 0.5:
+                                    print(f"  [{self._ex_tag}:{asset}] REGIME WEAK: {transition['current_regime']} persistence={persistence:.2f} | {transition['bias_reason']}")
+                        except Exception:
+                            pass
+
+                    # CRISIS: advisory for LLM (not hard block — let LLM decide)
                     if ml_context['hmm_regime'] == 'CRISIS' and crisis_prob > 0.5:
-                        print(f"  [{self._ex_tag}:{asset}] HMM CRISIS BLOCK: {ml_context['hmm_regime']} (crisis_prob={crisis_prob:.2f})")
-                        return
+                        math_filter_warnings.append(f"HMM CRISIS: prob={crisis_prob:.2f} — extreme caution")
+                        print(f"  [{self._ex_tag}:{asset}] HMM CRISIS WARNING: {ml_context['hmm_regime']} (crisis_prob={crisis_prob:.2f}) — LLM informed")
             except Exception as e:
                 logger.debug(f"HMM regime error: {e}")
 
@@ -4240,24 +4284,22 @@ class TradingExecutor:
         effective_min = min_entry_score
         if signal == "SELL":  # SHORT entry needs higher score
             effective_min += short_score_penalty
+        # SCORE: Advisory only — LLM + agents make final decision
         if entry_score < effective_min:
-            print(f"  [{self._ex_tag}:{asset}] LOW SCORE BLOCK: {entry_score}/{effective_min} ({', '.join(score_reasons)}) — skipping LLM call")
-            return
+            math_filter_warnings.append(f"LOW SCORE: {entry_score}/{effective_min} — weak setup, LLM should be cautious")
+            print(f"  [{self._ex_tag}:{asset}] SCORE ADVISORY: {entry_score}/{effective_min} ({', '.join(score_reasons)}) — LOW but LLM decides")
+            # DON'T return — let LLM see everything
         if entry_score > max_entry_score:
-            print(f"  [{self._ex_tag}:{asset}] HIGH SCORE BLOCK: {entry_score}>{max_entry_score} (momentum trap) — skipping")
-            return
+            math_filter_warnings.append(f"HIGH SCORE: {entry_score}>{max_entry_score} — possible momentum trap")
+            print(f"  [{self._ex_tag}:{asset}] SCORE ADVISORY: {entry_score}>{max_entry_score} (momentum trap warning)")
+            # DON'T return — let LLM see everything
 
-        # Quality gate: ATR ratio (minimum)
-        atr_ratio = current_atr / price if price > 0 else 0
-        if atr_ratio < self.min_atr_ratio:
-            return
-
-        # v13 Volatility block: ATR > 2x recent average = extreme vol, block entry
+        # v13 Volatility: advisory for LLM (not a hard block)
         if len(atr_vals) >= 20:
             avg_atr = sum(atr_vals[-20:]) / 20
             if avg_atr > 0 and current_atr / avg_atr > 2.0:
-                print(f"  [{self._ex_tag}:{asset}] VOL BLOCK: ATR {current_atr/avg_atr:.1f}x average — extreme volatility")
-                return
+                math_filter_warnings.append(f"EXTREME VOL: ATR {current_atr/avg_atr:.1f}x average — high risk")
+                print(f"  [{self._ex_tag}:{asset}] VOL ADVISORY: ATR {current_atr/avg_atr:.1f}x average — LLM informed")
 
         # Build candle data for LLM prompt (last 20 candles)
         n_candles = min(20, len(closes))

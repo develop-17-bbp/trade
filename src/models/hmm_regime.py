@@ -255,6 +255,117 @@ class HMMRegimeDetector:
             'transition_matrix': [[0.25]*4]*4,
         }
 
+    # ══════════════════════════════════════════════════════════════
+    # REGIME TRANSITION PREDICTION (inspired by Markov Engine post)
+    # ══════════════════════════════════════════════════════════════
+
+    def predict_transition(self, returns: np.ndarray, volatility: np.ndarray,
+                           volume_changes: np.ndarray, horizon_bars: int = 6) -> Dict:
+        """
+        Predict WHERE the regime is likely to transition next.
+
+        Instead of just "we're in SIDEWAYS", answers:
+        "SIDEWAYS is 35% likely to transition to BULL in next 6 bars"
+
+        Uses the HMM transition matrix raised to the power of horizon_bars
+        to compute multi-step transition probabilities.
+
+        Args:
+            returns, volatility, volume_changes: Recent observations
+            horizon_bars: How many bars ahead to predict (default 6 = ~24h on 4h TF)
+
+        Returns:
+            Dict with: current_regime, next_probable_regime, transition_probs,
+                       regime_stability, regime_age, is_regime_about_to_change,
+                       recommended_strategy_bias
+        """
+        current = self.predict(returns, volatility, volume_changes)
+        regime = current['regime']
+        regime_id = current['regime_id']
+        stability = current['stability']
+        duration = current['duration']
+        transmat = np.array(current['transition_matrix'])
+
+        # Multi-step transition: P(state at t+h | state at t) = T^h
+        try:
+            multi_step = np.linalg.matrix_power(transmat, horizon_bars)
+            # Probabilities of being in each regime after horizon_bars
+            future_probs = multi_step[regime_id]
+        except Exception:
+            future_probs = [0.25, 0.25, 0.25, 0.25]
+
+        # Most likely next regime (excluding staying in same)
+        future_copy = list(future_probs)
+        stay_prob = future_copy[regime_id]
+        future_copy[regime_id] = 0  # Exclude current
+        next_regime_id = int(np.argmax(future_copy))
+        change_prob = 1.0 - stay_prob
+
+        # Hysteresis: regime is "about to change" if:
+        # 1. Stay probability < 60% (weakening)
+        # 2. OR duration > 20 bars (regime exhaustion — markets don't stay in one state forever)
+        # 3. AND stability < 0.7 (not strongly in current regime)
+        is_about_to_change = (
+            (stay_prob < 0.60) or
+            (duration > 20 and stability < 0.70) or
+            (change_prob > 0.45)
+        )
+
+        # Persistence score: how "sticky" is the current regime?
+        # High persistence = stay in current strategy allocation
+        # Low persistence = prepare to shift
+        persistence = stay_prob * min(1.0, stability * 1.2)
+
+        # Strategy bias recommendation based on transition prediction
+        if regime == 'sideways' and future_probs[BULL] > future_probs[BEAR]:
+            strategy_bias = "PREPARE_LONG"
+            bias_reason = f"SIDEWAYS→BULL transition {future_probs[BULL]:.0%} likely"
+        elif regime == 'sideways' and future_probs[BEAR] > future_probs[BULL]:
+            strategy_bias = "PREPARE_DEFENSIVE"
+            bias_reason = f"SIDEWAYS→BEAR transition {future_probs[BEAR]:.0%} likely"
+        elif regime == 'bull' and future_probs[BEAR] + future_probs[CRISIS] > 0.30:
+            strategy_bias = "TIGHTEN_STOPS"
+            bias_reason = f"BULL→BEAR/CRISIS risk {future_probs[BEAR]+future_probs[CRISIS]:.0%}"
+        elif regime == 'bear' and future_probs[BULL] > 0.25:
+            strategy_bias = "WATCH_REVERSAL"
+            bias_reason = f"BEAR→BULL transition {future_probs[BULL]:.0%} possible"
+        elif regime == 'crisis':
+            strategy_bias = "CAPITAL_PRESERVATION"
+            bias_reason = "CRISIS regime — protect capital"
+        else:
+            strategy_bias = "HOLD_CURRENT"
+            bias_reason = f"Regime stable ({stay_prob:.0%} persistence)"
+
+        return {
+            'current_regime': regime,
+            'current_stability': round(stability, 3),
+            'regime_age_bars': duration,
+            'persistence_score': round(persistence, 3),
+
+            # Transition prediction
+            'stay_probability': round(stay_prob, 3),
+            'change_probability': round(change_prob, 3),
+            'next_probable_regime': REGIME_NAMES[next_regime_id],
+            'next_regime_probability': round(future_copy[next_regime_id], 3),
+            'is_about_to_change': is_about_to_change,
+            'horizon_bars': horizon_bars,
+
+            # Full future probability distribution
+            'future_probs': {
+                'bull': round(future_probs[BULL], 3),
+                'bear': round(future_probs[BEAR], 3),
+                'sideways': round(future_probs[SIDEWAYS], 3),
+                'crisis': round(future_probs[CRISIS], 3),
+            },
+
+            # Strategy recommendation
+            'strategy_bias': strategy_bias,
+            'bias_reason': bias_reason,
+
+            # Raw transition matrix (single step)
+            'transition_matrix': transmat.tolist(),
+        }
+
     def regime_encoded(self, regime_id: int) -> int:
         """Encode regime as integer for ML features (same as regime_id)."""
         return regime_id
