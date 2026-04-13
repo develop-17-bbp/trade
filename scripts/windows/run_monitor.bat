@@ -5,7 +5,7 @@ REM Start this in a separate PowerShell/CMD window
 
 cd /d C:\Users\convo\trade
 echo ============================================================
-echo   ACT's Trading Monitor — Runs Every 30 Minutes
+echo   ACT's Trading Monitor — Runs Every 10 Minutes
 echo   Press Ctrl+C to stop
 echo ============================================================
 
@@ -23,6 +23,6 @@ python -m src.scripts.strategy_backtester --days 14 --asset BTC 2>nul | findstr 
 REM 3. Check paper trading state
 python -c "import json; d=json.load(open('logs/robinhood_paper_state.json')); s=d.get('stats',{}); print(f'PAPER: ${d.get(\"equity\",0):,.2f} | {s.get(\"wins\",0)}W/{s.get(\"losses\",0)}L | PnL: ${s.get(\"total_pnl_usd\",0):+,.2f}')" 2>nul
 
-echo [%date% %time%] Cycle complete. Sleeping 30 minutes...
-timeout /t 1800 /nobreak >nul
+echo [%date% %time%] Cycle complete. Sleeping 10 minutes...
+timeout /t 600 /nobreak >nul
 goto loop
