@@ -1128,6 +1128,17 @@ class TradingExecutor:
             logger.debug(f"PortfolioAllocator init failed: {e}")
 
         # ── Adaptive Engine — regime-based strategy selection with learning ──
+        # ── Self-Evolving Overlay — makes ALL static parts adaptive ──
+        self._evolution_overlay = None
+        try:
+            from src.trading.self_evolving_overlay import SelfEvolvingOverlay
+            self._evolution_overlay = SelfEvolvingOverlay()
+            _ov = self._evolution_overlay.get_overrides()
+            print(f"  [EVOLVE] Self-Evolving Overlay ACTIVE — risk/agents/LLM/indicators all adapting")
+            print(f"  [EVOLVE] Evolved params: EMA={_ov['indicator_params'].get('ema_fast',8)}/{_ov['indicator_params'].get('ema_slow',21)} RSI={_ov['indicator_params'].get('rsi_period',14)}")
+        except Exception as e:
+            logger.debug(f"SelfEvolvingOverlay init failed: {e}")
+
         self._adaptive_engine = None
         try:
             from src.trading.adaptive_engine import AdaptiveEngine
