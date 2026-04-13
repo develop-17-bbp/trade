@@ -63,6 +63,21 @@ except ImportError:
     PRO_STRATEGIES_AVAILABLE = False
     logger.debug("[MULTI-STRATEGY] Professional strategies not available")
 
+try:
+    from src.trading.pine_strategies import (
+        SupertrendStrategy, SqueezeMomentumStrategy, HalfTrendStrategy,
+        UTBotAlertStrategy, SMCStrategy, EMACloudStrategy,
+        VolumeProfileStrategy, RSIDivergenceStrategy, MACDHistogramStrategy,
+        StochRSIStrategy, IchimokuStrategy, ParabolicSARStrategy,
+        ADXDMIStrategy, CMFVolumeStrategy, WilliamsAlligatorStrategy,
+        DonchianBreakoutStrategy, ChandelierExitStrategy,
+        LinearRegressionStrategy, ElderRayStrategy, AroonStrategy,
+    )
+    PINE_STRATEGIES_AVAILABLE = True
+except ImportError:
+    PINE_STRATEGIES_AVAILABLE = False
+    logger.debug("[MULTI-STRATEGY] Pine Script strategies not available")
+
 
 class StrategySignal:
     """Result from a single strategy."""
@@ -87,6 +102,15 @@ REGIME_WEIGHTS = {
         'vwap_bounce': 0.05, 'order_block': 0.08, 'divergence': 0.10,
         'break_retest': 0.03, 'ma_cross': 0.02, 'keltner_squeeze': 0.05,
         'heikin_ashi': 0.03,
+        # Pine Script strategies (crisis = defensive, mostly suppressed)
+        'pine_supertrend': 0.04, 'pine_squeeze': 0.03, 'pine_halftrend': 0.03,
+        'pine_utbot': 0.05, 'pine_smc': 0.08, 'pine_ema_cloud': 0.03,
+        'pine_volume_profile': 0.06, 'pine_rsi_divergence': 0.10,
+        'pine_macd_hist': 0.04, 'pine_stochrsi': 0.05,
+        'pine_ichimoku': 0.04, 'pine_psar': 0.04, 'pine_adx_dmi': 0.03,
+        'pine_cmf_volume': 0.06, 'pine_alligator': 0.03, 'pine_donchian': 0.04,
+        'pine_chandelier': 0.06, 'pine_linreg': 0.08, 'pine_elderray': 0.05,
+        'pine_aroon': 0.03,
     },  # All heavily reduced in crisis; divergence/ICT still useful for reversals
     'BULL': {
         'ema_trend': 0.25, 'mean_reversion': 0.03,
@@ -96,6 +120,15 @@ REGIME_WEIGHTS = {
         'vwap_bounce': 0.12, 'order_block': 0.15, 'divergence': 0.08,
         'break_retest': 0.18, 'ma_cross': 0.20, 'keltner_squeeze': 0.12,
         'heikin_ashi': 0.18,
+        # Pine Script strategies (bull = trend-following boosted)
+        'pine_supertrend': 0.20, 'pine_squeeze': 0.15, 'pine_halftrend': 0.18,
+        'pine_utbot': 0.15, 'pine_smc': 0.12, 'pine_ema_cloud': 0.22,
+        'pine_volume_profile': 0.10, 'pine_rsi_divergence': 0.06,
+        'pine_macd_hist': 0.15, 'pine_stochrsi': 0.08,
+        'pine_ichimoku': 0.18, 'pine_psar': 0.16, 'pine_adx_dmi': 0.18,
+        'pine_cmf_volume': 0.12, 'pine_alligator': 0.15, 'pine_donchian': 0.16,
+        'pine_chandelier': 0.14, 'pine_linreg': 0.08, 'pine_elderray': 0.12,
+        'pine_aroon': 0.14,
     },
     'BEAR': {
         'ema_trend': 0.20, 'mean_reversion': 0.08,
@@ -105,15 +138,35 @@ REGIME_WEIGHTS = {
         'vwap_bounce': 0.12, 'order_block': 0.15, 'divergence': 0.12,
         'break_retest': 0.15, 'ma_cross': 0.18, 'keltner_squeeze': 0.10,
         'heikin_ashi': 0.15,
+        # Pine Script strategies (bear = reversal + trend-following)
+        'pine_supertrend': 0.18, 'pine_squeeze': 0.12, 'pine_halftrend': 0.15,
+        'pine_utbot': 0.16, 'pine_smc': 0.14, 'pine_ema_cloud': 0.18,
+        'pine_volume_profile': 0.10, 'pine_rsi_divergence': 0.12,
+        'pine_macd_hist': 0.14, 'pine_stochrsi': 0.10,
+        'pine_ichimoku': 0.16, 'pine_psar': 0.15, 'pine_adx_dmi': 0.16,
+        'pine_cmf_volume': 0.12, 'pine_alligator': 0.12, 'pine_donchian': 0.14,
+        'pine_chandelier': 0.16, 'pine_linreg': 0.10, 'pine_elderray': 0.12,
+        'pine_aroon': 0.12,
     },
     'SIDEWAYS': {
-        'ema_trend': 0.08, 'mean_reversion': 0.20,
-        'volatility_breakout': 0.08, 'trend_following': 0.10,
-        'grid_trading': 0.25, 'market_making': 0.25,
-        'ict': 0.18, 'wyckoff': 0.15, 'fibonacci': 0.10,
-        'vwap_bounce': 0.20, 'order_block': 0.12, 'divergence': 0.15,
-        'break_retest': 0.08, 'ma_cross': 0.05, 'keltner_squeeze': 0.15,
-        'heikin_ashi': 0.05,
+        # 2026-04-13: Boosted confirmed 14-day backtest winners (grid +6-7%, ict/mktmk/vwap +1.6%)
+        # Dampened consistent losers (vol_breakout -8-11%, heikin -5%, trend_follow -9%, fib -1-3%)
+        'ema_trend': 0.08, 'mean_reversion': 0.18,
+        'volatility_breakout': 0.03, 'trend_following': 0.05,
+        'grid_trading': 0.40, 'market_making': 0.30,
+        'ict': 0.22, 'wyckoff': 0.12, 'fibonacci': 0.05,
+        'vwap_bounce': 0.22, 'order_block': 0.12, 'divergence': 0.10,
+        'break_retest': 0.08, 'ma_cross': 0.05, 'keltner_squeeze': 0.12,
+        'heikin_ashi': 0.02,
+        # Pine Script strategies (sideways = mean-reversion + volume boosted)
+        'pine_supertrend': 0.05, 'pine_squeeze': 0.18, 'pine_halftrend': 0.06,
+        'pine_utbot': 0.08, 'pine_smc': 0.10, 'pine_ema_cloud': 0.05,
+        'pine_volume_profile': 0.20, 'pine_rsi_divergence': 0.15,
+        'pine_macd_hist': 0.10, 'pine_stochrsi': 0.15,
+        'pine_ichimoku': 0.06, 'pine_psar': 0.05, 'pine_adx_dmi': 0.06,
+        'pine_cmf_volume': 0.18, 'pine_alligator': 0.08, 'pine_donchian': 0.06,
+        'pine_chandelier': 0.08, 'pine_linreg': 0.18, 'pine_elderray': 0.10,
+        'pine_aroon': 0.06,
     },
 }
 
@@ -136,6 +189,27 @@ HURST_OVERRIDES = {
         'ma_cross': 1.5,        # golden/death cross = trend tool
         'keltner_squeeze': 1.2, # squeeze breakouts align with trend
         'heikin_ashi': 1.6,     # HA trend following = best in trends
+        # Pine strategies — trending regime
+        'pine_supertrend': 1.6,     # trend-following: boost
+        'pine_squeeze': 1.3,        # momentum: boost on release
+        'pine_halftrend': 1.5,      # trend: boost
+        'pine_utbot': 1.4,          # trend trailing stop: boost
+        'pine_smc': 1.2,            # institutional: moderate boost
+        'pine_ema_cloud': 1.5,      # trend: boost
+        'pine_volume_profile': 0.7, # volume: less useful in trends
+        'pine_rsi_divergence': 0.5, # reversal: suppress in trends
+        'pine_macd_hist': 1.3,      # momentum: boost
+        'pine_stochrsi': 0.6,       # reversal: suppress
+        'pine_ichimoku': 1.5,       # trend: boost
+        'pine_psar': 1.4,           # trend: boost
+        'pine_adx_dmi': 1.5,        # trend strength: boost
+        'pine_cmf_volume': 1.0,     # volume: neutral
+        'pine_alligator': 1.5,      # trend: boost
+        'pine_donchian': 1.4,       # breakout/trend: boost
+        'pine_chandelier': 1.3,     # trend trailing: boost
+        'pine_linreg': 0.6,         # mean reversion: suppress
+        'pine_elderray': 1.3,       # trend: boost
+        'pine_aroon': 1.4,          # trend timing: boost
     },
     'MEAN_REVERTING': {  # H < 0.45
         'ema_trend': 0.3,
@@ -154,6 +228,27 @@ HURST_OVERRIDES = {
         'ma_cross': 0.3,        # MAs whipsaw in ranges
         'keltner_squeeze': 1.0, # squeezes still form in ranges
         'heikin_ashi': 0.4,     # HA trends fail in ranges
+        # Pine strategies — mean-reverting regime
+        'pine_supertrend': 0.4,     # trend: suppress
+        'pine_squeeze': 1.2,        # momentum: moderate (squeezes form in ranges)
+        'pine_halftrend': 0.4,      # trend: suppress
+        'pine_utbot': 0.5,          # trend: suppress
+        'pine_smc': 1.3,            # institutional: boost (liquidity sweeps)
+        'pine_ema_cloud': 0.3,      # trend: suppress
+        'pine_volume_profile': 1.8, # volume: strong boost (POC/VAL/VAH)
+        'pine_rsi_divergence': 1.8, # reversal: strong boost
+        'pine_macd_hist': 0.6,      # momentum: suppress
+        'pine_stochrsi': 1.6,       # reversal: boost
+        'pine_ichimoku': 0.4,       # trend: suppress
+        'pine_psar': 0.4,           # trend: suppress
+        'pine_adx_dmi': 0.4,        # trend: suppress (ADX low in ranges)
+        'pine_cmf_volume': 1.5,     # volume: boost
+        'pine_alligator': 0.4,      # trend: suppress
+        'pine_donchian': 0.5,       # breakout: suppress
+        'pine_chandelier': 0.5,     # trend: suppress
+        'pine_linreg': 1.8,         # mean reversion: strong boost
+        'pine_elderray': 0.6,       # trend: suppress
+        'pine_aroon': 0.5,          # trend: suppress
     },
     'RANDOM': {  # 0.45 <= H <= 0.55
         'ema_trend': 1.0,
@@ -172,6 +267,15 @@ HURST_OVERRIDES = {
         'ma_cross': 1.0,
         'keltner_squeeze': 1.0,
         'heikin_ashi': 1.0,
+        # Pine strategies — random walk (all neutral)
+        'pine_supertrend': 1.0, 'pine_squeeze': 1.0, 'pine_halftrend': 1.0,
+        'pine_utbot': 1.0, 'pine_smc': 1.0, 'pine_ema_cloud': 1.0,
+        'pine_volume_profile': 1.0, 'pine_rsi_divergence': 1.0,
+        'pine_macd_hist': 1.0, 'pine_stochrsi': 1.0,
+        'pine_ichimoku': 1.0, 'pine_psar': 1.0, 'pine_adx_dmi': 1.0,
+        'pine_cmf_volume': 1.0, 'pine_alligator': 1.0, 'pine_donchian': 1.0,
+        'pine_chandelier': 1.0, 'pine_linreg': 1.0, 'pine_elderray': 1.0,
+        'pine_aroon': 1.0,
     },
 }
 
@@ -219,6 +323,28 @@ class MultiStrategyEngine:
                 self._strategies['ma_cross'] = MovingAverageCrossStrategy()
                 self._strategies['keltner_squeeze'] = KeltnerChannelSqueezeStrategy()
                 self._strategies['heikin_ashi'] = HeikinAshiTrendStrategy()
+            # Add Pine Script translated strategies if available
+            if PINE_STRATEGIES_AVAILABLE:
+                self._strategies['pine_supertrend'] = SupertrendStrategy()
+                self._strategies['pine_squeeze'] = SqueezeMomentumStrategy()
+                self._strategies['pine_halftrend'] = HalfTrendStrategy()
+                self._strategies['pine_utbot'] = UTBotAlertStrategy()
+                self._strategies['pine_smc'] = SMCStrategy()
+                self._strategies['pine_ema_cloud'] = EMACloudStrategy()
+                self._strategies['pine_volume_profile'] = VolumeProfileStrategy()
+                self._strategies['pine_rsi_divergence'] = RSIDivergenceStrategy()
+                self._strategies['pine_macd_hist'] = MACDHistogramStrategy()
+                self._strategies['pine_stochrsi'] = StochRSIStrategy()
+                self._strategies['pine_ichimoku'] = IchimokuStrategy()
+                self._strategies['pine_psar'] = ParabolicSARStrategy()
+                self._strategies['pine_adx_dmi'] = ADXDMIStrategy()
+                self._strategies['pine_cmf_volume'] = CMFVolumeStrategy()
+                self._strategies['pine_alligator'] = WilliamsAlligatorStrategy()
+                self._strategies['pine_donchian'] = DonchianBreakoutStrategy()
+                self._strategies['pine_chandelier'] = ChandelierExitStrategy()
+                self._strategies['pine_linreg'] = LinearRegressionStrategy()
+                self._strategies['pine_elderray'] = ElderRayStrategy()
+                self._strategies['pine_aroon'] = AroonStrategy()
             strat_count = len(self._strategies)
             logger.info(f"[MULTI-STRATEGY] Engine initialized with {strat_count} strategies")
         else:
@@ -228,14 +354,20 @@ class MultiStrategyEngine:
         for name in ['ema_trend', 'mean_reversion', 'volatility_breakout', 'trend_following',
                       'grid_trading', 'market_making',
                       'ict', 'wyckoff', 'fibonacci', 'vwap_bounce', 'order_block',
-                      'divergence', 'break_retest', 'ma_cross', 'keltner_squeeze', 'heikin_ashi']:
+                      'divergence', 'break_retest', 'ma_cross', 'keltner_squeeze', 'heikin_ashi',
+                      'pine_supertrend', 'pine_squeeze', 'pine_halftrend', 'pine_utbot',
+                      'pine_smc', 'pine_ema_cloud', 'pine_volume_profile', 'pine_rsi_divergence',
+                      'pine_macd_hist', 'pine_stochrsi', 'pine_ichimoku', 'pine_psar',
+                      'pine_adx_dmi', 'pine_cmf_volume', 'pine_alligator', 'pine_donchian',
+                      'pine_chandelier', 'pine_linreg', 'pine_elderray', 'pine_aroon']:
             self._performance[name] = {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
 
         # Config overrides for strategy weights
         self._custom_weights = self.config.get('multi_strategy', {}).get('weights', {})
 
         strat_count = len(self._strategies) if STRATEGIES_AVAILABLE else 1
-        print(f"  [MULTI-STRATEGY] Engine ACTIVE — {strat_count} strategies, regime-adaptive weighting")
+        pine_count = 20 if PINE_STRATEGIES_AVAILABLE else 0
+        print(f"  [MULTI-STRATEGY] Engine ACTIVE — {strat_count} strategies ({pine_count} Pine Script), regime-adaptive weighting")
 
     def generate_all_signals(
         self,
