@@ -52,6 +52,17 @@ DATA_DIR = PROJECT_ROOT / "data"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
 
+class _UniverseWrapper:
+    """Wraps a StrategyUniverse IndicatorSignal as a backtestable strategy."""
+    def __init__(self, indicator_signal):
+        self._sig = indicator_signal
+    def generate_signal(self, prices, highs, lows, volumes):
+        try:
+            return self._sig.compute(prices, highs, lows, volumes)
+        except Exception:
+            return 0
+
+
 class StrategyBacktester:
     """
     Runs every SubStrategy subclass against historical OHLCV data,
@@ -68,8 +79,57 @@ class StrategyBacktester:
     # Strategy discovery
     # ------------------------------------------------------------------
     def load_strategies(self) -> None:
-        """Dynamically discover and instantiate every SubStrategy subclass."""
+        """Dynamically discover and instantiate ALL strategy classes from all modules."""
+        # Load from sub_strategies.py (original 18)
         import src.trading.sub_strategies as mod
+        for name, cls in inspect.getmembers(mod, inspect.isclass):
+            if cls is SubStrategy:
+                continue
+            if not issubclass(cls, SubStrategy):
+                continue
+            if name == "PairsStrategy":
+                continue
+            try:
+                instance = cls()
+                self.strategies[name] = instance
+            except Exception:
+                pass
+
+        # Load from pine_strategies.py (20 Pine Script strategies)
+        try:
+            import src.trading.pine_strategies as pine_mod
+            for name, cls in inspect.getmembers(pine_mod, inspect.isclass):
+                if not issubclass(cls, SubStrategy) or cls is SubStrategy:
+                    continue
+                if name in self.strategies:
+                    continue
+                try:
+                    instance = cls()
+                    self.strategies[f"Pine_{name}"] = instance
+                except Exception:
+                    pass
+        except ImportError:
+            pass
+
+        # Load 242 universe strategies (IndicatorSignal objects — wrap as backtestable)
+        try:
+            from src.trading.strategy_universe import StrategyUniverse
+            universe = StrategyUniverse()
+            for strat in universe.strategies:
+                wrapper_name = f"U_{strat.name}"
+                if wrapper_name not in self.strategies:
+                    # Create a wrapper that acts like SubStrategy
+                    self.strategies[wrapper_name] = _UniverseWrapper(strat)
+        except ImportError:
+            pass
+
+        # Log count (no logger in this module — use print)
+        # DON'T print individual names — too many
+        named = sum(1 for k in self.strategies if not k.startswith('U_'))
+        universe = sum(1 for k in self.strategies if k.startswith('U_'))
+        print(f"  Strategies loaded: {named} named + {universe} universe = {len(self.strategies)} total")
+
+        return  # Original had pass-through below
 
         for name, cls in inspect.getmembers(mod, inspect.isclass):
             if cls is SubStrategy:

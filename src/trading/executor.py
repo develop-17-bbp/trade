@@ -1021,10 +1021,30 @@ class TradingExecutor:
         self._sentiment = None
         if SENTIMENT_AVAILABLE:
             try:
-                self._sentiment = SentimentPipeline()
-                print(f"  [SENT] SentimentPipeline ACTIVE — rule-based (optional FinBERT transformer)")
+                _sent_model = 'rule-based'
+                _use_transformer = False
+                if config:
+                    _sent_cfg = config.get('sentiment', {})
+                    _sent_model = _sent_cfg.get('model', 'rule-based')
+                    _use_transformer = _sent_cfg.get('use_transformer', False)
+                    if 'finbert' in str(_sent_model).lower():
+                        _use_transformer = True
+                if _use_transformer and _sent_model != 'rule-based':
+                    self._sentiment = SentimentPipeline(
+                        sentiment_model=_sent_model,
+                        use_transformer=True,
+                        device=config.get('sentiment', {}).get('device', 'cpu') if config else 'cpu',
+                    )
+                    print(f"  [SENT] SentimentPipeline ACTIVE — FinBERT transformer ({_sent_model})")
+                else:
+                    self._sentiment = SentimentPipeline()
+                    print(f"  [SENT] SentimentPipeline ACTIVE — rule-based (set sentiment.model=finbert to enable transformer)")
             except Exception as e:
-                print(f"  [SENT] SentimentPipeline init failed ({e})")
+                try:
+                    self._sentiment = SentimentPipeline()
+                    print(f"  [SENT] SentimentPipeline ACTIVE — rule-based fallback (transformer init failed: {e})")
+                except Exception as e2:
+                    print(f"  [SENT] SentimentPipeline init failed ({e2})")
 
         # ── Temporal Transformer (attention-based multi-horizon forecaster) ──
         self._temporal_transformer = None
@@ -1052,6 +1072,48 @@ class TradingExecutor:
                 print(f"  [GUARD] MarketEventGuard ACTIVE — calendar-based high-risk pause")
             except Exception as e:
                 print(f"  [GUARD] MarketEventGuard init failed ({e})")
+
+        # ── Meta Controller — ML model arbitration (LGB + RL + PatchTST) ──
+        self._meta_controller = None
+        try:
+            from src.trading.meta_controller import MetaController
+            self._meta_controller = MetaController(config)
+            print(f"  [META-CTRL] Meta Controller ACTIVE — LGB+RL+PatchTST arbitration")
+        except Exception as e:
+            logger.debug(f"MetaController init failed: {e}")
+
+        # ── Signal Combiner — formal L1+L2+L3 fusion with VETO ──
+        self._signal_combiner = None
+        try:
+            from src.trading.signal_combiner import SignalCombiner
+            self._signal_combiner = SignalCombiner(config)
+            print(f"  [COMBINER] Signal Combiner ACTIVE — L1(50%)+L2(30%)+L3(20%) fusion")
+        except Exception as e:
+            logger.debug(f"SignalCombiner init failed: {e}")
+
+        # ── Portfolio Allocator — cross-asset Kelly sizing ──
+        self._allocator = None
+        try:
+            from src.portfolio.allocator import PortfolioAllocator
+            _alloc_capital = config.get('portfolio', {}).get('total_capital', 100_000.0) if config else 100_000.0
+            _alloc_max = config.get('portfolio', {}).get('max_allocation_pct', 0.05) if config else 0.05
+            self._allocator = PortfolioAllocator(total_capital=_alloc_capital, max_allocation_pct=_alloc_max)
+            print(f"  [ALLOC] Portfolio Allocator ACTIVE — Kelly + risk-parity sizing (${_alloc_capital:,.0f})")
+        except Exception as e:
+            logger.debug(f"PortfolioAllocator init failed: {e}")
+
+        # ── Adaptive Engine — regime-based strategy selection with learning ──
+        self._adaptive_engine = None
+        try:
+            from src.trading.adaptive_engine import AdaptiveEngine
+            self._adaptive_engine = AdaptiveEngine(config.get('adaptive', {}))
+            print(f"  [ADAPT-ENGINE] Adaptive Engine ACTIVE — 5 strategies with performance learning")
+        except Exception as e:
+            logger.debug(f"AdaptiveEngine init failed: {e}")
+
+        # ── Polymarket failure tracking ──
+        self._polymarket_consecutive_failures = 0
+        self._polymarket_disabled = False
 
         # ── Robinhood Paper Trading Tracker ──
         self._paper = None
@@ -4060,6 +4122,85 @@ class TradingExecutor:
         # Store ML context for bear agent and other downstream uses
         self._last_ml_context = ml_context
 
+        # ── META CONTROLLER: arbitrates ML model predictions (LGB + RL + PatchTST) ──
+        if self._meta_controller:
+            try:
+                # Map ml_context values to MetaController.arbitrate() signature
+                _mc_lgb_class = {'LONG': 1, 'SHORT': -1, 'TRADE': 1, 'SKIP': -1}.get(
+                    ml_context.get('lgbm_direction', 'FLAT'), 0)
+                _mc_rl_action = 1 if ml_context.get('rl_enter', False) else -1
+                _mc_rl_prob = ml_context.get('rl_quality', 0.5)
+                _mc_finbert = ml_context.get('sentiment_mean', 0.0)
+                _mc_patch = None
+                if 'patchtst_direction' in ml_context:
+                    _mc_patch = {
+                        'prediction': {'UP': 1, 'DOWN': -1}.get(ml_context['patchtst_direction'], 0),
+                        'prob_up': ml_context.get('patchtst_prob_up', 0.5),
+                        'liquidity_shock_prob': ml_context.get('patchtst_shock_prob', 0),
+                    }
+                # Build features dict from available ml_context
+                _mc_features = {
+                    'hurst': hurst_value,
+                    'kalman_snr': ml_context.get('kalman_snr', 0),
+                    'kalman_slope': ml_context.get('kalman_slope', 0),
+                    'vol_percentile': ml_context.get('vol_percentile', 50),
+                    'entry_score': entry_score,
+                    'ewma_vol': ml_context.get('realized_vol_annual', 0.02),
+                }
+                meta_dir, meta_conf, meta_scale = self._meta_controller.arbitrate(
+                    lgb_class=_mc_lgb_class,
+                    lgb_conf=ml_context.get('lgbm_confidence', 0),
+                    rl_action=_mc_rl_action,
+                    rl_prob=_mc_rl_prob,
+                    features=_mc_features,
+                    finbert_score=_mc_finbert,
+                    patch_result=_mc_patch,
+                    asset_name=asset,
+                    hmm_regime=ml_context.get('hmm_regime', 'SIDEWAYS').lower(),
+                    hmm_crisis_prob=ml_context.get('crisis_probability', 0),
+                    kalman_snr=ml_context.get('kalman_snr', 1.0),
+                    mc_risk_score=ml_context.get('mc_risk_score', 0.5),
+                    mc_position_scale=ml_context.get('mc_position_scale', 1.0),
+                    hawkes_intensity=ml_context.get('hawkes_intensity', 0),
+                    alpha_freshness=ml_context.get('alpha_freshness', 1.0),
+                    evt_risk_score=ml_context.get('evt_var_99', 0.3),
+                    evt_position_scale=1.0,
+                )
+                ml_context['meta_direction'] = meta_dir
+                ml_context['meta_confidence'] = meta_conf
+                ml_context['meta_position_scale'] = meta_scale
+                print(f"  [{self._ex_tag}:{asset}] META-CTRL: dir={meta_dir} conf={meta_conf:.2f} scale={meta_scale:.2f}")
+            except Exception as e:
+                logger.debug(f"MetaController failed: {e}")
+
+        # ── SIGNAL COMBINER: formal L1+L2+L3 fusion ──
+        if self._signal_combiner:
+            try:
+                # L1 = quantitative consensus signal (entry_score normalized to [-1, +1])
+                _sc_l1 = max(-1.0, min(1.0, entry_score / 7.0)) * (1 if signal == 'BUY' else -1)
+                # L2 = sentiment dict (matches SentimentPipeline.aggregate_sentiment() format)
+                _sc_l2 = {
+                    'aggregate_score': ml_context.get('sentiment_mean', 0.0),
+                    'confidence': 0.5 if ml_context.get('sentiment_available') else 0.1,
+                    'freshness': 1.0,
+                }
+                # L3 = risk evaluation dict
+                _sc_l3 = {'action': 'ALLOW'}
+                if ml_context.get('hmm_regime') == 'CRISIS' and ml_context.get('crisis_probability', 0) > 0.7:
+                    _sc_l3 = {'action': 'VETO', 'reason': 'HMM CRISIS regime with high probability'}
+                elif ml_context.get('anomaly_type', 'NONE') not in ('NONE', 'none', ''):
+                    _sc_l3 = {'action': 'REDUCE', 'reason': f"Anomaly: {ml_context.get('anomaly_type')}"}
+
+                combined = self._signal_combiner.combine(_sc_l1, _sc_l2, _sc_l3)
+                ml_context['combined_signal'] = combined.get('final_signal', 0)
+                ml_context['combined_action'] = combined.get('action', 'hold')
+                ml_context['combined_confidence'] = combined.get('confidence', 0)
+                if combined.get('action') == 'hold' and abs(_sc_l1) < 0.3:
+                    math_filter_warnings.append(f"COMBINER: weak signal ({combined.get('final_signal',0):.3f}) — low conviction")
+                print(f"  [{self._ex_tag}:{asset}] COMBINER: signal={combined.get('final_signal',0):.3f} action={combined.get('action','?')} conf={combined.get('confidence',0):.2f}")
+            except Exception as e:
+                logger.debug(f"SignalCombiner failed: {e}")
+
         # ── ADVANCED LEARNING: Anomaly Detection (HARD VETO — flash crash / liquidity sweep) ──
         if self._advanced_learning and len(closes) >= 50:
             try:
@@ -4633,6 +4774,19 @@ class TradingExecutor:
                         ml_disagree += 1
             if ml_agree + ml_disagree > 0:
                 regime_lines.append(f"  ML CONSENSUS: {ml_agree} models AGREE, {ml_disagree} DISAGREE -> {'strong ML confirmation — trailing SL will lock profits' if ml_agree > ml_disagree else 'ML models conflict - HIGH RISK, likely L1 death'}")
+            # Meta Controller summary for LLM
+            if 'meta_direction' in ml_context:
+                _md = ml_context['meta_direction']
+                _mc = ml_context.get('meta_confidence', 0)
+                _ms = ml_context.get('meta_position_scale', 1.0)
+                _md_label = {1: 'LONG', -1: 'SHORT', 0: 'FLAT'}.get(_md, 'FLAT')
+                regime_lines.append(f"  META-CTRL ARBITRATION: {_md_label} (conf={_mc:.0%}, position_scale={_ms:.2f}) -> LGB+RL+PatchTST fused decision")
+            # Signal Combiner summary for LLM
+            if 'combined_signal' in ml_context:
+                _cs = ml_context['combined_signal']
+                _ca = ml_context.get('combined_action', 'hold')
+                _cc = ml_context.get('combined_confidence', 0)
+                regime_lines.append(f"  SIGNAL COMBINER: L1+L2+L3 fusion -> signal={_cs:+.3f} action={_ca.upper()} (conf={_cc:.0%})")
 
         if regime_lines:
             regime_context = chr(10) + "REGIME ANALYSIS:" + chr(10) + chr(10).join(regime_lines)
@@ -4911,6 +5065,35 @@ class TradingExecutor:
                 print(f"  [{self._ex_tag}:{asset}] SNIPER COMPOUND: +${_compound_amount:,.2f} from profit pool (${self.sniper_profit_pool:,.2f} total)")
             else:
                 _sniper_bonus_equity = _compound_amount
+
+        # ── Portfolio Allocator (cross-asset Kelly sizing) ──
+        if self._allocator:
+            try:
+                alloc_result = self._allocator.calculate_allocation(
+                    asset=asset, confidence=confidence,
+                    win_rate=0.5, avg_win=0.05, avg_loss=0.03,
+                )
+                if hasattr(alloc_result, 'position_size_pct') and alloc_result.position_size_pct > 0:
+                    alloc_size = alloc_result.position_size_pct
+                    if alloc_size < size_pct:
+                        print(f"  [{self._ex_tag}:{asset}] ALLOCATOR: reduced size {size_pct:.0f}%→{alloc_size:.1f}% (Kelly constraint)")
+                        size_pct = alloc_size
+            except Exception:
+                pass
+
+        # ── Adaptive Engine feedback (update strategy performance on close) ──
+        if self._adaptive_engine:
+            try:
+                adaptive_signal = self._adaptive_engine.generate_adaptive_signal(
+                    prices=closes, highs=highs, lows=lows, volumes=volumes,
+                    sentiment_score=ml_context.get('sentiment_score', 0),
+                    hmm_regime=ml_context.get('hmm_regime', 'UNKNOWN'),
+                )
+                if adaptive_signal and adaptive_signal.get('strategy_selected'):
+                    ml_context['adaptive_strategy'] = adaptive_signal['strategy_selected']
+                    ml_context['adaptive_signal'] = adaptive_signal.get('signal', 0)
+            except Exception:
+                pass
 
         # Calculate position size — ATR-based dynamic sizing when available, fixed % fallback
         max_size_pct = 20 if self.equity < 500 else 5
