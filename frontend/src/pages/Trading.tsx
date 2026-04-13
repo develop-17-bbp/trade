@@ -612,7 +612,7 @@ export default function Trading() {
             <TradingViewWidget
               symbol={`KRAKEN:${selectedAsset}USD`}
               interval={timeframe === '1d' ? 'D' : timeframe === '4h' ? '240' : '60'}
-              height={650}
+              height={800}
             />
           </div>
         </motion.div>
