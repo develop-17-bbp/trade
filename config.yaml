@@ -8,8 +8,16 @@ exchanges:
     assets: [BTC, ETH]
     spread_pct_per_side: 1.67        # Measured Robinhood spread per side
     round_trip_spread_pct: 3.34      # Total cost to enter + exit
-    min_expected_move_pct: 7.0       # Only enter if expected move > 7% (2x spread)
+    min_expected_move_pct: 5.0       # Lowered 7→5: catch more 5%+ swing moves
     longs_only: true                 # No shorts on Robinhood spot
+    # ── Robinhood-Specific Trading Rules ──
+    min_profit_before_exit_pct: 5.0  # NO exit until 5% profit (spread=3.34%, need buffer)
+    min_hold_minutes: 1440           # Hold minimum 24 HOURS (let multi-day swings develop)
+    trailing_lock_pct: 50            # After 5%+ profit, trail SL at 50% of max profit
+    max_hold_days: 7                 # Hard exit after 7 days
+    trend_only: true                 # Disable mean-reversion/grid strategies (too small for spread)
+    tf_alignment_override: true      # When 1h+4h+1d agree, bypass agent FLAT votes
+    compound_pct: 50                 # Reinvest 50% of realized profits
 
 # Primary exchange
 exchange:

@@ -717,16 +717,41 @@ class TradingExecutor:
         self._spread_per_side = 0.05   # Default: Bybit/Delta ~0.05%
         self._round_trip_spread = 0.10
         self._longs_only = False
+        # ── Robinhood-specific trading rules ──
+        self._rh_min_profit_exit = 0.0       # Minimum profit % before any exit
+        self._rh_min_hold_minutes = 0        # Minimum hold time
+        self._rh_trailing_lock_pct = 50      # Trail SL at X% of max profit after min_profit
+        self._rh_max_hold_days = 7           # Hard exit after N days
+        self._rh_trend_only = False          # Disable mean-reversion strategies
+        self._rh_tf_alignment_override = False  # Bypass agents when timeframes agree
+        self._rh_compound_pct = 0            # Reinvest % of profits
+
         for _ex_cfg in config.get('exchanges', []):
             if _ex_cfg.get('name', '').lower() == self._exchange_name.lower():
                 self._spread_per_side = _ex_cfg.get('spread_pct_per_side', 0.05)
                 self._round_trip_spread = _ex_cfg.get('round_trip_spread_pct', self._spread_per_side * 2)
                 self._longs_only = _ex_cfg.get('longs_only', False)
+                # Robinhood-specific rules
+                self._rh_min_profit_exit = _ex_cfg.get('min_profit_before_exit_pct', 0.0)
+                self._rh_min_hold_minutes = _ex_cfg.get('min_hold_minutes', 0)
+                self._rh_trailing_lock_pct = _ex_cfg.get('trailing_lock_pct', 50)
+                self._rh_max_hold_days = _ex_cfg.get('max_hold_days', 7)
+                self._rh_trend_only = _ex_cfg.get('trend_only', False)
+                self._rh_tf_alignment_override = _ex_cfg.get('tf_alignment_override', False)
+                self._rh_compound_pct = _ex_cfg.get('compound_pct', 0)
                 break
         if self._round_trip_spread > 1.0:
             print(f"  [SPREAD] HIGH-SPREAD EXCHANGE: {self._exchange_name} | per-side={self._spread_per_side:.2f}% | round-trip={self._round_trip_spread:.2f}%")
             if self._longs_only:
                 print(f"  [SPREAD] LONGS-ONLY mode enabled — all SHORT signals will be blocked")
+            if self._rh_trend_only:
+                print(f"  [SPREAD] TREND-ONLY mode — mean-reversion/grid strategies suppressed")
+            if self._rh_min_profit_exit > 0:
+                print(f"  [SPREAD] Minimum {self._rh_min_profit_exit}% profit before ANY exit")
+            if self._rh_min_hold_minutes > 0:
+                print(f"  [SPREAD] Minimum hold: {self._rh_min_hold_minutes} min ({self._rh_min_hold_minutes/60:.0f}h)")
+            if self._rh_tf_alignment_override:
+                print(f"  [SPREAD] Timeframe alignment override: ENABLED (bypass agents when 1h+4h+1d agree)")
 
         # ── SNIPER MODE: Patient, high-conviction, capital-protecting trading ──
         # Only enters on multi-confluence setups, compounds profits into bigger positions
@@ -2837,8 +2862,21 @@ class TradingExecutor:
             if self._longs_only and signal == 'SELL' and not active_tf_signals:
                 return  # 5m is SELL and no higher TF has a BUY — skip
 
+            # ── TIMEFRAME ALIGNMENT OVERRIDE (Fix 3 — Robinhood) ──
+            # When 1h+4h+1d ALL agree on direction, force entry evaluation
+            # even if individual strategy signals are weak. This catches
+            # the START of big multi-day moves before momentum builds.
+            _tf_override = False
+            if self._rh_tf_alignment_override and htf_alignment >= 2:
+                # 2+ timeframes agree on direction
+                _all_buy = htf_1h_direction == 'RISING' and htf_4h_direction in ('RISING', 'FLAT')
+                if _all_buy:
+                    _tf_override = True
+                    signal = 'BUY'  # Force BUY signal from TF alignment
+                    print(f"  [{self._ex_tag}:{asset}] TF ALIGNMENT OVERRIDE: 1h={htf_1h_direction} 4h={htf_4h_direction} → forcing BUY evaluation")
+
             # Need at least ONE active signal on any timeframe to evaluate entry
-            if not active_tf_signals:
+            if not active_tf_signals and not _tf_override:
                 return  # No crossover on any TF — nothing to evaluate
 
             self._evaluate_entry(asset, tick_price, ohlcv, ema_vals, atr_vals,
@@ -5648,6 +5686,49 @@ class TradingExecutor:
 
         # OB imbalance — tracked for display
         ob_imbalance = ob_levels.get('imbalance', 0)
+
+        # ══════════════════════════════════════════════════════════════
+        # ROBINHOOD EXIT RULES (Fixes 2, 5, 6)
+        # On high-spread exchanges, DIFFERENT exit logic applies:
+        # - NO exit before minimum profit (Fix 2)
+        # - NO exit before minimum hold time (Fix 5)
+        # - Trail at 50% of max profit after clearing spread (Fix 6)
+        # ══════════════════════════════════════════════════════════════
+        position_age_min = (time.time() - pos.get('entry_time', time.time())) / 60.0
+
+        if self._rh_min_profit_exit > 0 or self._rh_min_hold_minutes > 0:
+            _rh_net_pnl = pnl_pct - self._round_trip_spread  # True P&L after spread
+
+            # Fix 5: Minimum hold time (24h on Robinhood)
+            if position_age_min < self._rh_min_hold_minutes:
+                # Only allow hard stop exit, block everything else
+                if pnl_pct > hard_stop_pct:
+                    # Not at hard stop — keep holding
+                    if int(position_age_min) % 60 == 0:  # Log every hour
+                        print(f"  [{self._ex_tag}:{asset}] HOLD: {position_age_min:.0f}/{self._rh_min_hold_minutes}min | P&L={pnl_pct:+.2f}% (net={_rh_net_pnl:+.2f}%) | min hold not reached")
+                    # Skip ALL other exit logic — only hard stop can fire
+                    # (fall through to hard stop check below)
+
+            # Fix 2: Minimum profit before exit
+            if _rh_net_pnl < self._rh_min_profit_exit and _rh_net_pnl > -abs(hard_stop_pct):
+                # Not yet at minimum profit AND not at hard stop — keep holding
+                pass  # Let it fall through to hard stop only
+
+            # Fix 6: Robinhood trailing after clearing spread
+            if _rh_net_pnl >= self._rh_min_profit_exit:
+                # We've cleared the spread + minimum profit — now trail
+                _peak_net = ((peak - entry) / entry * 100) - self._round_trip_spread if direction == 'LONG' else ((entry - peak) / entry * 100) - self._round_trip_spread
+                _trail_level = _peak_net * (self._rh_trailing_lock_pct / 100.0)
+                if _rh_net_pnl < _trail_level and _trail_level > 0:
+                    print(f"  [{self._ex_tag}:{asset}] RH TRAILING EXIT: net P&L {_rh_net_pnl:+.2f}% < trail {_trail_level:+.2f}% (50% of peak {_peak_net:+.2f}%)")
+                    self._close_position(asset, price, f"RH trailing exit (net={_rh_net_pnl:+.2f}% < trail={_trail_level:+.2f}%)")
+                    return
+
+            # Fix 6: Max hold time exit (7 days)
+            if position_age_min > self._rh_max_hold_days * 1440:
+                print(f"  [{self._ex_tag}:{asset}] RH MAX HOLD EXIT: held {position_age_min/1440:.1f} days > {self._rh_max_hold_days}d max | P&L={pnl_pct:+.2f}% (net={_rh_net_pnl:+.2f}%)")
+                self._close_position(asset, price, f"RH max hold {self._rh_max_hold_days}d (net={_rh_net_pnl:+.2f}%)")
+                return
 
         # ── 2. HARD STOP: max loss — non-negotiable ──
         # Robinhood: spread alone is ~1.67%, so -1.8% hard stop kills every trade.
