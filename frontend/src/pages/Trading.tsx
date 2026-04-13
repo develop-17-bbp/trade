@@ -11,6 +11,7 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import CandlestickChart from '../components/charts/CandlestickChart'
+import TradingViewWidget from '../components/charts/TradingViewWidget'
 import EquityCurve from '../components/charts/EquityCurve'
 import { useSystemState } from '../hooks/useSystemState'
 import { fetchPrices, type PriceData } from '../api/client'
@@ -607,8 +608,12 @@ export default function Trading() {
               </div>
             </div>
 
-            {/* Candlestick Chart */}
-            <CandlestickChart asset={selectedAsset} height={450} timeframe={timeframe} />
+            {/* TradingView Real-Time Chart */}
+            <TradingViewWidget
+              symbol={`KRAKEN:${selectedAsset}USD`}
+              interval={timeframe === '1d' ? 'D' : timeframe === '4h' ? '240' : '60'}
+              height={450}
+            />
           </div>
         </motion.div>
 

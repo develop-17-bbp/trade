@@ -6,6 +6,7 @@ import GlassCard from '../components/cards/GlassCard'
 import PositionCard from '../components/cards/PositionCard'
 import TradeRow from '../components/cards/TradeRow'
 import EquityCurve from '../components/charts/EquityCurve'
+import TradingViewWidget from '../components/charts/TradingViewWidget'
 import AIBrainOrb from '../components/three/AIBrainOrb'
 import AgentVotePanel from '../components/ai/AgentVotePanel'
 import { useSystemState } from '../hooks/useSystemState'
@@ -90,6 +91,17 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Left 60% */}
         <div className="lg:col-span-3 space-y-6">
+          {/* TradingView Live Chart */}
+          <motion.div variants={childV}>
+            <GlassCard>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-sm font-semibold text-[#e8ecf4]">Live Market — BTC/USD</h2>
+                <span className="text-[10px] text-[#5a6080] font-mono">TradingView Real-Time</span>
+              </div>
+              <TradingViewWidget symbol="KRAKEN:BTCUSD" interval="60" height={350} />
+            </GlassCard>
+          </motion.div>
+
           <motion.div variants={childV}>
             <GlassCard>
               <div className="flex items-center justify-between mb-4">
