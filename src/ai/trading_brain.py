@@ -797,8 +797,8 @@ class MultiModelConsensus:
     # Deployed via Ollama custom Modelfiles on GPU server
     MODEL_SCANNER = "act-scanner"        # QLoRA fine-tuned Mistral: pattern recognition (falls back to nexus-scanner)
     MODEL_ANALYST = "act-analyst"        # QLoRA fine-tuned Llama: trade decision (falls back to nexus-analyst)
-    MODEL_SCANNER_FALLBACK = "nexus-scanner"   # Pre-fine-tune scanner model
-    MODEL_ANALYST_FALLBACK = "mistral:latest"  # Base Mistral fallback
+    MODEL_SCANNER_FALLBACKS = ["nexus-scanner", "mistral:latest"]   # Fallback chain for scanner
+    MODEL_ANALYST_FALLBACKS = ["nexus-analyst", "mistral:latest"]   # Fallback chain for analyst
 
     def __init__(self, ollama_base_url: str = "http://localhost:11434"):
         self.ollama_base_url = ollama_base_url.rstrip("/")
@@ -809,17 +809,19 @@ class MultiModelConsensus:
         1. Mistral scans patterns (Pass 1)
         2. Llama analyzes risk + decides using Mistral's findings (Pass 2)
         """
-        # PASS 1: Pattern scan with Mistral (try fine-tuned, fall back to base)
+        # PASS 1: Pattern scan with Mistral (try fine-tuned, fall back through chain)
         print(f"  [BRAIN:PASS1] Mistral scanning patterns...")
-        try:
-            pattern_result = self._call_ollama(self.MODEL_SCANNER, scanner_prompt)
-        except Exception as e:
+        pattern_result = None
+        for _model in [self.MODEL_SCANNER] + self.MODEL_SCANNER_FALLBACKS:
             try:
-                print(f"  [BRAIN:PASS1] {self.MODEL_SCANNER} failed, trying {self.MODEL_SCANNER_FALLBACK}...")
-                pattern_result = self._call_ollama(self.MODEL_SCANNER_FALLBACK, scanner_prompt)
-            except Exception as e2:
-                print(f"  [BRAIN:PASS1] All scanner models failed: {e2} — using empty patterns")
-                pattern_result = self._empty_pattern_result()
+                pattern_result = self._call_ollama(_model, scanner_prompt)
+                break
+            except Exception as _e:
+                print(f"  [BRAIN:PASS1] {_model} failed: {str(_e)[:60]}")
+                continue
+        if pattern_result is None:
+            print(f"  [BRAIN:PASS1] All scanner models failed — using empty patterns")
+            pattern_result = self._empty_pattern_result()
 
         # Validate pattern result
         pattern_result = self._validate_patterns(pattern_result)
@@ -828,23 +830,25 @@ class MultiModelConsensus:
         strongest = pattern_result.get("strongest_signal", "None")
         print(f"  [BRAIN:PASS1] Patterns: bias={pat_bias} strength={pat_strength}/10 key={strongest}")
 
-        # PASS 2: Risk analysis + decision with Llama, using Mistral's findings (try fine-tuned, fall back)
+        # PASS 2: Risk analysis + decision with Llama (try fine-tuned, fall back through chain)
         print(f"  [BRAIN:PASS2] Llama analyzing risk + deciding...")
         analyst_prompt = analyst_prompt_builder(pattern_scan_result=pattern_result, **analyst_kwargs)
-        try:
-            decision_result = self._call_ollama(self.MODEL_ANALYST, analyst_prompt)
-        except Exception as e:
+        decision_result = None
+        for _model in [self.MODEL_ANALYST] + self.MODEL_ANALYST_FALLBACKS:
             try:
-                print(f"  [BRAIN:PASS2] {self.MODEL_ANALYST} failed, trying {self.MODEL_ANALYST_FALLBACK}...")
-                decision_result = self._call_ollama(self.MODEL_ANALYST_FALLBACK, analyst_prompt)
-            except Exception as e2:
-                print(f"  [BRAIN:PASS2] All analyst models failed: {e2} — rejecting trade (safe default)")
-                decision_result = {
-                    "proceed": False, "confidence": 0.2, "risk_score": 8,
-                    "trade_quality": 2, "predicted_l_level": "L1",
-                    "bull_case": "Analyst unavailable", "bear_case": str(e2),
-                    "facilitator_verdict": "REJECTED — analyst error",
-                }
+                decision_result = self._call_ollama(_model, analyst_prompt)
+                break
+            except Exception as _e:
+                print(f"  [BRAIN:PASS2] {_model} failed: {str(_e)[:60]}")
+                continue
+        if decision_result is None:
+            print(f"  [BRAIN:PASS2] All analyst models failed — rejecting trade (safe default)")
+            decision_result = {
+                "proceed": False, "confidence": 0.2, "risk_score": 8,
+                "trade_quality": 2, "predicted_l_level": "L1",
+                "bull_case": "Analyst unavailable", "bear_case": "all models failed",
+                "facilitator_verdict": "REJECTED — analyst error",
+            }
 
         # PASS 3 (optional): If Llama says YES, quick Mistral verification
         # "Does the pattern data actually support this decision?"
