@@ -1,280 +1,86 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════
-   NEXUS AI — CYBERPUNK NEON BLADE RUNNER THEME
-   Deep purples, glowing neon cyan+magenta+violet,
-   holographic cards, scan lines, glitch animations
+   ACT's TRADING — MONOCHROME TERMINAL THEME
+   Pure black/white, red/green candles only
+   Clean, professional, information-dense
    ═══════════════════════════════════════════════════════════ */
 
 @theme {
-  --color-bg-primary: #05050f;
-  --color-bg-secondary: #0a0a1a;
-  --color-bg-card: rgba(10, 8, 25, 0.75);
-  --color-accent-green: #00ffaa;
-  --color-accent-red: #ff2266;
-  --color-accent-blue: #00ccff;
-  --color-accent-purple: #bf5fff;
-  --color-accent-cyan: #00fff0;
-  --color-accent-magenta: #ff00aa;
-  --color-accent-violet: #8844ff;
-  --color-text-primary: #e0e6ff;
-  --color-text-muted: #5a6080;
-  --color-border-glass: rgba(100, 80, 255, 0.12);
-  --color-neon-glow: rgba(0, 255, 240, 0.08);
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #0a0a0a;
+  --color-bg-card: #111111;
+  --color-bg-elevated: #181818;
+  --color-profit: #22c55e;
+  --color-loss: #ef4444;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #a0a0a0;
+  --color-text-muted: #666666;
+  --color-border: #222222;
+  --color-border-hover: #333333;
 }
 
 /* ── Base ── */
 body {
-  background: #05050f;
-  color: #e0e6ff;
-  font-family: 'Inter', sans-serif;
+  background: #000000;
+  color: #ffffff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ── Cyberpunk Glass Card ── */
-.glass-card {
-  background: linear-gradient(135deg, rgba(10, 8, 30, 0.8), rgba(15, 10, 40, 0.6));
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(100, 80, 255, 0.15);
-  border-radius: 12px;
-  box-shadow:
-    0 0 1px rgba(0, 255, 240, 0.3),
-    0 4px 30px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
+/* ── Card ── */
+.card {
+  background: #111111;
+  border: 1px solid #222222;
+  border-radius: 8px;
+  transition: border-color 0.2s ease;
 }
-.glass-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(0, 255, 240, 0.4), rgba(191, 95, 255, 0.4), transparent);
-}
-.glass-card:hover {
-  border-color: rgba(0, 255, 240, 0.25);
-  box-shadow:
-    0 0 2px rgba(0, 255, 240, 0.4),
-    0 0 20px rgba(0, 255, 240, 0.06),
-    0 8px 40px rgba(0, 0, 0, 0.6),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+.card:hover {
+  border-color: #333333;
 }
 
-/* ── Neon Glow Variants ── */
-.glow-green {
-  box-shadow: 0 0 8px rgba(0, 255, 170, 0.2), 0 0 30px rgba(0, 255, 170, 0.06);
-  border-color: rgba(0, 255, 170, 0.25);
-}
-.glow-red {
-  box-shadow: 0 0 8px rgba(255, 34, 102, 0.2), 0 0 30px rgba(255, 34, 102, 0.06);
-  border-color: rgba(255, 34, 102, 0.25);
-}
-.glow-blue {
-  box-shadow: 0 0 8px rgba(0, 204, 255, 0.2), 0 0 30px rgba(0, 204, 255, 0.06);
-  border-color: rgba(0, 204, 255, 0.25);
-}
-.glow-purple {
-  box-shadow: 0 0 8px rgba(191, 95, 255, 0.2), 0 0 30px rgba(191, 95, 255, 0.06);
-  border-color: rgba(191, 95, 255, 0.25);
-}
-.glow-cyan {
-  box-shadow: 0 0 8px rgba(0, 255, 240, 0.25), 0 0 30px rgba(0, 255, 240, 0.08);
-  border-color: rgba(0, 255, 240, 0.3);
-}
-
-/* ── Neon Gradient Text ── */
-.gradient-text {
-  background: linear-gradient(135deg, #00fff0, #00ccff, #bf5fff, #ff00aa);
-  background-size: 200% 200%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: gradient-shift 4s ease infinite;
-}
-@keyframes gradient-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-}
-
-/* ── Glitch Text Animation ── */
-.glitch-text {
-  position: relative;
-  animation: glitch-skew 4s infinite linear alternate-reverse;
-}
-.glitch-text::before,
-.glitch-text::after {
-  content: attr(data-text);
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-}
-.glitch-text::before {
-  animation: glitch-shift 3s infinite linear alternate-reverse;
-  clip-path: polygon(0 0, 100% 0, 100% 35%, 0 35%);
-  -webkit-text-fill-color: #ff00aa;
-  opacity: 0.5;
-}
-.glitch-text::after {
-  animation: glitch-shift 2s infinite linear alternate-reverse;
-  clip-path: polygon(0 65%, 100% 65%, 100% 100%, 0 100%);
-  -webkit-text-fill-color: #00fff0;
-  opacity: 0.5;
-}
-@keyframes glitch-shift {
-  0%, 90%, 100% { transform: translate(0); }
-  92% { transform: translate(-2px, 1px); }
-  94% { transform: translate(2px, -1px); }
-  96% { transform: translate(-1px, -1px); }
-  98% { transform: translate(1px, 1px); }
-}
-@keyframes glitch-skew {
-  0%, 90%, 100% { transform: skew(0deg); }
-  95% { transform: skew(0.5deg); }
-}
-
-/* ── Scan Line Overlay ── */
-.scan-lines {
-  position: relative;
-}
-.scan-lines::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 255, 240, 0.015) 2px,
-    rgba(0, 255, 240, 0.015) 4px
-  );
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* ── Holographic Shimmer ── */
-.holo-shimmer {
-  position: relative;
-  overflow: hidden;
-}
-.holo-shimmer::after {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: linear-gradient(
-    45deg,
-    transparent 30%,
-    rgba(0, 255, 240, 0.03) 40%,
-    rgba(191, 95, 255, 0.03) 50%,
-    transparent 60%
-  );
-  animation: holo-sweep 6s ease-in-out infinite;
-  pointer-events: none;
-}
-@keyframes holo-sweep {
-  0% { transform: translateX(-100%) rotate(45deg); }
-  100% { transform: translateX(100%) rotate(45deg); }
-}
-
-/* ── Neon Border Pulse ── */
-.neon-border-pulse {
-  animation: border-pulse 3s ease-in-out infinite;
-}
-@keyframes border-pulse {
-  0%, 100% { border-color: rgba(0, 255, 240, 0.15); }
-  50% { border-color: rgba(0, 255, 240, 0.35); }
-}
-
-/* ── Cyberpunk Scrollbar ── */
+/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: #05050f; }
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #bf5fff, #00fff0);
-  border-radius: 2px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #ff00aa, #00ccff);
-}
+::-webkit-scrollbar-track { background: #000000; }
+::-webkit-scrollbar-thumb { background: #333333; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #444444; }
 
-/* ── Pulse Glow ── */
-@keyframes pulse-glow {
-  0%, 100% { opacity: 1; box-shadow: 0 0 10px rgba(0, 255, 240, 0.2); }
-  50% { opacity: 0.7; box-shadow: 0 0 20px rgba(0, 255, 240, 0.4); }
-}
-.animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+/* ── Table Grid ── */
+.data-grid tr { border-bottom: 1px solid #1a1a1a; }
+.data-grid tr:hover { background: #0a0a0a; }
 
-/* ── Neon Underline ── */
-.neon-underline {
-  position: relative;
+/* ── Profit/Loss Colors ── */
+.text-profit { color: #22c55e; }
+.text-loss { color: #ef4444; }
+.bg-profit { background: rgba(34, 197, 94, 0.1); }
+.bg-loss { background: rgba(239, 68, 68, 0.1); }
+
+/* ── Status ── */
+.status-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.neon-underline::after {
+.status-live::before {
   content: '';
-  position: absolute;
-  bottom: -2px;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, #00fff0, #bf5fff);
-  box-shadow: 0 0 8px rgba(0, 255, 240, 0.4);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
-/* ── Data Grid Lines (for tables) ── */
-.cyber-grid tr {
-  border-bottom: 1px solid rgba(100, 80, 255, 0.08);
-}
-.cyber-grid tr:hover {
-  background: rgba(0, 255, 240, 0.03);
+/* ── Metric highlight ── */
+.metric-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
-/* ── Floating Particles Background ── */
-.cyber-bg {
-  background:
-    radial-gradient(ellipse at 20% 50%, rgba(191, 95, 255, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 20%, rgba(0, 255, 240, 0.04) 0%, transparent 40%),
-    radial-gradient(ellipse at 50% 80%, rgba(255, 0, 170, 0.03) 0%, transparent 50%),
-    #05050f;
-}
-
-/* ── 3D Logo Float ── */
-@keyframes logo-float {
-  0%, 100% { transform: perspective(200px) rotateY(-5deg) translateY(0px); }
-  50% { transform: perspective(200px) rotateY(5deg) translateY(-2px); }
-}
-.logo-3d {
-  animation: logo-float 4s ease-in-out infinite;
-}
-
-/* ── Neon Text Flicker ── */
-@keyframes neon-flicker {
-  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
-    text-shadow: 0 0 7px rgba(0,255,240,0.6), 0 0 20px rgba(0,255,240,0.3), 0 0 40px rgba(191,95,255,0.2);
-  }
-  20%, 24%, 55% {
-    text-shadow: none;
-  }
-}
-.neon-flicker {
-  animation: neon-flicker 6s infinite;
-}
-
-/* ── Status Indicators ── */
-.status-online {
-  color: #00ffaa;
-  text-shadow: 0 0 8px rgba(0, 255, 170, 0.5);
-}
-.status-offline {
-  color: #ff2266;
-  text-shadow: 0 0 8px rgba(255, 34, 102, 0.5);
-}
-.status-warning {
-  color: #ffaa00;
-  text-shadow: 0 0 8px rgba(255, 170, 0, 0.5);
-}
+/* ── Trade marker on chart ── */
+.trade-marker-buy { border-left: 2px solid #22c55e; }
+.trade-marker-sell { border-left: 2px solid #ef4444; }

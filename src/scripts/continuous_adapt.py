@@ -108,6 +108,99 @@ def step2_backtest_strategies():
         return {}, {}
 
 
+def step2b_evolve_strategies(backtest_results, winners):
+    """Run a short genetic evolution seeded from backtest winners."""
+    print("\n" + "="*60)
+    print("  STEP 2b: EVOLVING STRATEGIES (Genetic Engine)")
+    print("="*60)
+    try:
+        import pandas as pd
+        from src.trading.genetic_strategy_engine import GeneticStrategyEngine
+
+        # Load market data for the genetic engine
+        best_asset = 'BTC'
+        if winners:
+            # Pick asset with most winners
+            asset_counts = {}
+            for w in winners.values():
+                for a in w.get('assets', []):
+                    asset_counts[a] = asset_counts.get(a, 0) + 1
+            if asset_counts:
+                best_asset = max(asset_counts, key=asset_counts.get)
+
+        data_path = os.path.join(PROJECT_ROOT, f'data/{best_asset}USDT-4h.parquet')
+        if not os.path.exists(data_path):
+            print(f"  No data file for {best_asset} — skipping evolution")
+            return {}
+
+        df = pd.read_parquet(data_path)
+        df.columns = [c.lower() for c in df.columns]
+        if len(df) < 100:
+            print(f"  Only {len(df)} bars — need 100+ for evolution")
+            return {}
+
+        closes = df['close'].values.astype(float).tolist()
+        highs = df['high'].values.astype(float).tolist()
+        lows = df['low'].values.astype(float).tolist()
+        volumes = df['volume'].values.astype(float).tolist()
+
+        # Build seed DNA from backtest winners
+        seed_dna = []
+        if winners:
+            for name, w in sorted(winners.items(), key=lambda x: -x[1]['avg_pnl'])[:10]:
+                seed_dna.append({
+                    'name': name,
+                    'genes': {},  # Will get random genes + mutation
+                    'entry_rule': 'rsi_oversold',
+                    'exit_rule': 'rsi_overbought',
+                })
+
+        engine = GeneticStrategyEngine()
+        market_data = {
+            'closes': closes,
+            'highs': highs,
+            'lows': lows,
+            'volumes': volumes,
+        }
+
+        print(f"  Evolving on {best_asset} ({len(closes)} bars)")
+        print(f"  Seed strategies from backtest: {len(seed_dna)}")
+        result = engine.run_quick_evolution(
+            market_data=market_data,
+            generations=5,
+            population_size=30,
+            seed_dna=seed_dna,
+        )
+
+        hof_count = len(result.get('hall_of_fame', []))
+        best = result.get('best_fitness', 0)
+        gens = result.get('generations_run', 0)
+        print(f"  Evolution complete: {gens} generations")
+        print(f"  Hall of fame: {hof_count} strategies")
+        print(f"  Best fitness: {best:.4f}")
+
+        # Feed results to adaptive feedback if available
+        try:
+            from src.trading.adaptive_feedback import AdaptiveFeedbackLoop
+            feedback = AdaptiveFeedbackLoop()
+            if hasattr(feedback, 'record_evolution_results'):
+                diversity = engine.compute_diversity_metrics() if hasattr(engine, 'compute_diversity_metrics') else {}
+                feedback.record_evolution_results(
+                    hall_of_fame=result.get('hall_of_fame', []),
+                    diversity_metrics=diversity,
+                )
+                print("  Fed evolution results into adaptive feedback loop")
+        except Exception as e:
+            logger.debug(f"Feedback integration skipped: {e}")
+
+        return result
+    except Exception as e:
+        logger.error(f"Genetic evolution failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
 def step3_update_weights(winners):
     """Auto-update strategy weights based on backtest winners."""
     print("\n" + "="*60)
@@ -354,6 +447,33 @@ def step5_save_for_llm():
         return False
 
 
+def step6_performance_report():
+    """Generate multi-metric performance report from trade journal."""
+    print("\n--- Step 6: Performance Report (MultiMetricFitness) ---")
+    try:
+        from src.trading.optimizer import PerformanceAnalyzer
+        journal_path = os.path.join(PROJECT_ROOT, 'logs/trading_journal.jsonl')
+        if not os.path.exists(journal_path):
+            print("  No journal file yet — skipping performance report")
+            return
+        analyzer = PerformanceAnalyzer(journal_path)
+        trades = analyzer.load_trades()
+        if not trades:
+            print("  No closed trades in journal — skipping")
+            return
+        metrics = analyzer.fitness.compute(trades)
+        print(f"  Trades: {metrics['trade_count']} | P&L: {metrics['total_profit_pct']:.2f}% "
+              f"| WR: {metrics['win_rate']:.0%} | Sharpe: {metrics['sharpe_ratio']:.2f} "
+              f"| Sortino: {metrics['sortino_ratio']:.2f} | Grade: {metrics['grade']}")
+        # Save metrics for LLM context
+        report_path = os.path.join(PROJECT_ROOT, 'logs/performance_metrics.json')
+        with open(report_path, 'w') as f:
+            json.dump(metrics, f, indent=2, default=str)
+        print(f"  Metrics saved to {report_path}")
+    except Exception as e:
+        logger.warning(f"Performance report failed: {e}")
+
+
 def run_cycle():
     """Run one full adaptation cycle."""
     start = time.time()
@@ -363,9 +483,11 @@ def run_cycle():
 
     step1_refresh_data()
     results, winners = step2_backtest_strategies()
+    step2b_evolve_strategies(results, winners)
     step3_update_weights(winners)
     step4_retrain_models()
     step5_save_for_llm()
+    step6_performance_report()
 
     elapsed = time.time() - start
     print("\n" + "="*60)

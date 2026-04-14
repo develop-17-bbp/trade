@@ -71,8 +71,8 @@ ai:
   fallback_on_quota_error: true
   use_local_on_failure: true
   bear_agent_enabled: true        # Second LLM call to argue AGAINST the trade
-  bear_veto_threshold: 6          # More conservative for Robinhood spread (was 8)
-  bear_reduce_threshold: 4        # Reduce earlier — spread makes moderate risk costly (was 6)
+  bear_veto_threshold: 8          # Restored to 8 — threshold 6 vetoed every trade in ranging market
+  bear_reduce_threshold: 5        # Reduce at 5 — still cautious but allows risk=6 trades through
   facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
   risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
   edge_positioning_enabled: true  # Dynamic sizing based on historical win rate

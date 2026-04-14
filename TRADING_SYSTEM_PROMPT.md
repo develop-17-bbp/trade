@@ -24,17 +24,14 @@ Build a Python trading system that:
 ## EXCHANGE CONFIGURATION
 
 ```
-Exchange: Bybit Testnet
-API: ccxt.bybit with sandbox=True
-Market type: linear (USDT-margined perpetual futures)
-recvWindow: 60000 (60s time sync tolerance)
-enableRateLimit: True
-Symbols: BTC/USDT:USDT, ETH/USDT:USDT
-Auth: BYBIT_TESTNET_KEY and BYBIT_TESTNET_SECRET from environment variables
-Time sync: Call exchange.load_time_difference() before any authenticated request
+Exchange: Robinhood Crypto (real account, read-only API)
+API: ED25519 signed REST API (https://trading.robinhood.com)
+Market data: CCXT (Kraken) for OHLCV candles, Robinhood for real-time bid/ask
+Symbols: BTC-USD, ETH-USD
+Auth: ROBINHOOD_API_KEY and ROBINHOOD_PRIVATE_KEY from environment variables
 ```
 
-**Why Bybit:** Alpaca does not support crypto short-selling. Bybit futures support both LONG and SHORT positions from USD balance, enabling the full CALL+PUT strategy.
+**Why Robinhood:** Real account with real market data. Read-only API for price verification and paper trading against live spreads.
 
 ---
 

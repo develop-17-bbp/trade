@@ -12931,5 +12931,59 @@
       "flat_acc": 0.0,
       "long_acc": 1.0
     }
+  },
+  {
+    "timestamp": "2026-04-12T03:00:24.733825",
+    "asset": "BTC",
+    "bars_used": 1000,
+    "new_accuracy": 0.3368421052631579,
+    "new_high_conf_accuracy": 0.34615384615384615,
+    "old_accuracy": null,
+    "improvement": null,
+    "best_params": {
+      "num_leaves": 65,
+      "learning_rate": 0.14670495650129958,
+      "max_depth": 15,
+      "min_child_samples": 40,
+      "subsample": 0.8437025239959315,
+      "colsample_bytree": 0.8114547464984353,
+      "reg_alpha": 8.02021985269928,
+      "reg_lambda": 0.5104042679560961,
+      "feature_fraction": 0.9768379347848717,
+      "bagging_fraction": 0.5018575522550945,
+      "bagging_freq": 7
+    },
+    "per_class": {
+      "short_acc": 0.38095238095238093,
+      "flat_acc": 0.06896551724137931,
+      "long_acc": 0.4888888888888889
+    }
+  },
+  {
+    "timestamp": "2026-04-12T03:00:35.208125",
+    "asset": "ETH",
+    "bars_used": 1000,
+    "new_accuracy": 0.45263157894736844,
+    "new_high_conf_accuracy": 0.43478260869565216,
+    "old_accuracy": null,
+    "improvement": null,
+    "best_params": {
+      "num_leaves": 113,
+      "learning_rate": 0.10189559345413517,
+      "max_depth": 9,
+      "min_child_samples": 85,
+      "subsample": 0.5578581978044129,
+      "colsample_bytree": 0.7834776304113007,
+      "reg_alpha": 0.12485395789850737,
+      "reg_lambda": 2.247981267996794,
+      "feature_fraction": 0.7142451931872625,
+      "bagging_fraction": 0.823077875015746,
+      "bagging_freq": 5
+    },
+    "per_class": {
+      "short_acc": 0.44,
+      "flat_acc": 0.0,
+      "long_acc": 0.7619047619047619
+    }
   }
 ]

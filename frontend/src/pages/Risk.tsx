@@ -1,34 +1,18 @@
 import { useMemo } from 'react'
-import { motion } from 'framer-motion'
 import { Shield, AlertTriangle, Gauge, Layers, Activity } from 'lucide-react'
 import MetricCard from '../components/cards/MetricCard'
 import GlassCard from '../components/cards/GlassCard'
 import { useSystemState } from '../hooks/useSystemState'
 
-// -- Animation --
-
-const pageVariants = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.06, delayChildren: 0.1 },
-  },
-}
-
-const child = {
-  hidden: { opacity: 0, y: 16 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
-}
-
 // -- Skeleton --
 
 function Skeleton({ className = '' }: { className?: string }) {
-  return <div className={`animate-pulse rounded-xl bg-white/[0.04] ${className}`} />
+  return <div className={`animate-pulse rounded bg-[#111] ${className}`} />
 }
 
 function SkeletonRisk() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-[#000] min-h-screen p-6">
       <div className="grid grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
       </div>
@@ -40,13 +24,13 @@ function SkeletonRisk() {
 // -- Helpers --
 
 function computeRiskLevel(score: number): { label: string; color: string } {
-  if (score <= 3) return { label: 'LOW', color: 'text-accent-green' }
-  if (score <= 5) return { label: 'MEDIUM', color: 'text-yellow-500' }
-  if (score <= 7) return { label: 'HIGH', color: 'text-accent-red' }
-  return { label: 'CRITICAL', color: 'text-accent-red' }
+  if (score <= 3) return { label: 'LOW', color: 'text-[#22c55e]' }
+  if (score <= 5) return { label: 'MEDIUM', color: 'text-[#eab308]' }
+  if (score <= 7) return { label: 'HIGH', color: 'text-[#ef4444]' }
+  return { label: 'CRITICAL', color: 'text-[#ef4444]' }
 }
 
-// Pipeline layer names for display
+// Pipeline layer names
 const LAYER_NAMES: Record<string, string> = {
   L1: 'Data Ingestion',
   L2: 'Feature Engineering',
@@ -59,14 +43,21 @@ const LAYER_NAMES: Record<string, string> = {
   L9: 'Post-Trade Analytics',
 }
 
-const LEVEL_CONFIG: Record<string, { color: string; bg: string; border: string; dot: string }> = {
-  info: { color: 'text-accent-green', bg: 'bg-accent-green/5', border: 'border-accent-green/20', dot: 'bg-accent-green' },
-  warning: { color: 'text-yellow-500', bg: 'bg-yellow-500/5', border: 'border-yellow-500/20', dot: 'bg-yellow-500' },
-  error: { color: 'text-accent-red', bg: 'bg-accent-red/5', border: 'border-accent-red/20', dot: 'bg-accent-red' },
-  debug: { color: 'text-text-muted', bg: 'bg-white/[0.02]', border: 'border-border-glass', dot: 'bg-text-muted' },
+// Status dot colors
+const STATUS_DOT: Record<string, string> = {
+  info: 'bg-[#22c55e]',
+  warning: 'bg-[#eab308]',
+  error: 'bg-[#ef4444]',
+  debug: 'bg-[#666]',
 }
 
-const DEFAULT_LEVEL_CFG = { color: 'text-accent-green', bg: 'bg-accent-green/5', border: 'border-accent-green/20', dot: 'bg-accent-green' }
+// Status badge styles
+const STATUS_BADGE: Record<string, string> = {
+  info: 'text-[#22c55e] border-[#22c55e]/30',
+  warning: 'text-[#eab308] border-[#eab308]/30',
+  error: 'text-[#ef4444] border-[#ef4444]/30',
+  debug: 'text-[#666] border-[#666]/30',
+}
 
 // -- Component --
 
@@ -76,12 +67,6 @@ export default function Risk() {
   const riskScore = risk?.risk_score ?? 0
   const riskLevel = useMemo(() => computeRiskLevel(riskScore), [riskScore])
   const vpin = risk?.vpin ?? 0
-
-  const riskScoreGlow = useMemo((): 'green' | 'red' | 'none' => {
-    if (riskScore <= 3) return 'green'
-    if (riskScore <= 5) return 'none'
-    return 'red'
-  }, [riskScore])
 
   // Build ordered pipeline layers from layerLogs
   const pipelineLayers = useMemo(() => {
@@ -107,28 +92,22 @@ export default function Risk() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-accent-red text-sm">{error}</p>
+      <div className="flex items-center justify-center h-64 bg-[#000]">
+        <p className="text-[#ef4444] text-sm font-mono">{error}</p>
       </div>
     )
   }
 
   return (
-    <motion.div
-      className="space-y-6"
-      variants={pageVariants}
-      initial="hidden"
-      animate="show"
-    >
+    <div className="space-y-6">
       {/* Top risk metrics */}
-      <motion.div className="grid grid-cols-4 gap-4" variants={child}>
+      <div className="grid grid-cols-4 gap-4">
         <MetricCard
           label="Current Drawdown"
           value={`${(risk?.current_drawdown ?? 0).toFixed(1)}%`}
           subValue="From equity peak"
           icon={<AlertTriangle size={16} />}
           trend={(risk?.current_drawdown ?? 0) > 5 ? 'down' : 'up'}
-          accentColor="text-accent-red"
         />
         <MetricCard
           label="Max Drawdown"
@@ -136,7 +115,6 @@ export default function Risk() {
           subValue={`Risk: ${riskLevel.label}`}
           icon={<Shield size={16} />}
           trend={(risk?.max_drawdown ?? 0) > 10 ? 'down' : 'up'}
-          accentColor="text-accent-purple"
         />
         <MetricCard
           label="Risk Score"
@@ -144,7 +122,6 @@ export default function Risk() {
           subValue={riskLevel.label}
           icon={<Gauge size={16} />}
           trend={riskScore <= 5 ? 'up' : 'down'}
-          accentColor={riskLevel.color}
         />
         <MetricCard
           label="VPIN"
@@ -152,118 +129,110 @@ export default function Risk() {
           subValue="Volume-weighted price impact"
           icon={<Activity size={16} />}
           trend={vpin < 0.5 ? 'up' : 'down'}
-          accentColor="text-accent-cyan"
         />
-      </motion.div>
+      </div>
 
       {/* Pipeline visualization */}
-      <motion.div variants={child}>
-        <GlassCard>
-          <div className="flex items-center gap-2 mb-5">
-            <Layers size={18} className="text-accent-blue" />
-            <h2 className="text-sm font-semibold text-text-primary">Trading Pipeline</h2>
-            <span className="ml-auto text-xs text-text-muted">
-              {pipelineLayers.filter((l) => l.logCount > 0).length}/{pipelineLayers.length} layers reporting
-            </span>
-          </div>
+      <GlassCard>
+        <div className="flex items-center gap-2 mb-5">
+          <Layers size={18} className="text-[#a0a0a0]" />
+          <h2 className="text-sm font-semibold text-white font-mono">Trading Pipeline</h2>
+          <span className="ml-auto text-xs text-[#666] font-mono">
+            {pipelineLayers.filter((l) => l.logCount > 0).length}/{pipelineLayers.length} layers reporting
+          </span>
+        </div>
 
-          <div className="space-y-2">
-            {pipelineLayers.map((layer, idx) => {
-              const cfg = LEVEL_CONFIG[layer.status] ?? DEFAULT_LEVEL_CFG
+        <div className="space-y-1">
+          {pipelineLayers.map((layer, idx) => {
+            const dotColor = STATUS_DOT[layer.status] ?? STATUS_DOT.info
+            const badgeStyle = STATUS_BADGE[layer.status] ?? STATUS_BADGE.info
+            const statusLabel = layer.status === 'info' ? 'ACTIVE' : layer.status.toUpperCase()
 
-              return (
-                <motion.div
-                  key={layer.id}
-                  className={`relative flex items-center gap-4 p-3 rounded-xl border ${cfg.border} ${cfg.bg} transition-all`}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.05, duration: 0.3 }}
-                >
+            return (
+              <div key={layer.id} className="relative">
+                <div className="flex items-center gap-4 p-3 rounded border border-[#222] bg-[#111] hover:bg-[#161616] transition-colors">
                   {/* Layer number */}
-                  <div className="w-9 h-9 rounded-lg bg-white/[0.05] flex items-center justify-center flex-shrink-0">
-                    <span className="text-xs font-bold text-text-muted">{layer.id}</span>
+                  <div className="w-9 h-9 rounded bg-[#1a1a1a] border border-[#222] flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs font-bold text-[#a0a0a0] font-mono">{layer.id}</span>
                   </div>
 
                   {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-text-primary">{layer.name}</span>
-                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${cfg.color} ${cfg.bg} border ${cfg.border}`}>
-                        {layer.status === 'info' ? 'ACTIVE' : layer.status.toUpperCase()}
+                      <span className="text-sm font-medium text-white font-mono">{layer.name}</span>
+                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border font-mono ${badgeStyle}`}>
+                        {statusLabel}
                       </span>
                       {layer.logCount > 0 && (
-                        <span className="text-[10px] text-text-muted">{layer.logCount} logs</span>
+                        <span className="text-[10px] text-[#666] font-mono">{layer.logCount} logs</span>
                       )}
                     </div>
                   </div>
 
                   {/* Last log */}
                   <div className="flex items-center gap-2 flex-shrink-0 max-w-xs">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot} ${
-                      layer.status === 'info' ? 'animate-pulse-glow' : ''
-                    }`} />
-                    <span className="text-[10px] text-text-muted truncate">{layer.lastMessage}</span>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`} />
+                    <span className="text-[10px] text-[#666] truncate font-mono">{layer.lastMessage}</span>
                   </div>
+                </div>
 
-                  {/* Connector line */}
-                  {idx < pipelineLayers.length - 1 && (
-                    <div className="absolute -bottom-2 left-[30px] w-px h-2 bg-border-glass" />
-                  )}
-                </motion.div>
-              )
-            })}
-          </div>
-        </GlassCard>
-      </motion.div>
+                {/* Connector line */}
+                {idx < pipelineLayers.length - 1 && (
+                  <div className="ml-[30px] w-px h-1 bg-[#222]" />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </GlassCard>
 
       {/* Risk score visual */}
-      <motion.div variants={child}>
-        <GlassCard glow={riskScoreGlow}>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-text-primary">Risk Assessment</h2>
-            <span className={`text-sm font-bold ${riskLevel.color}`}>{riskLevel.label}</span>
-          </div>
+      <GlassCard>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-white font-mono">Risk Assessment</h2>
+          <span className={`text-sm font-bold font-mono ${riskLevel.color}`}>{riskLevel.label}</span>
+        </div>
 
+        <div className="space-y-3">
           {/* Risk score bar */}
-          <div className="space-y-3">
-            <div>
-              <div className="flex items-center justify-between text-[10px] text-text-muted mb-1">
-                <span>Risk Score</span>
-                <span>{riskScore.toFixed(1)} / 10</span>
-              </div>
-              <div className="flex h-3 rounded-full overflow-hidden bg-white/5">
-                <div
-                  className={`rounded-full transition-all duration-500 ${
-                    riskScore <= 3 ? 'bg-accent-green' :
-                    riskScore <= 5 ? 'bg-yellow-500' :
-                    riskScore <= 7 ? 'bg-accent-red/80' : 'bg-accent-red'
-                  }`}
-                  style={{ width: `${Math.min(riskScore * 10, 100)}%` }}
-                />
-              </div>
+          <div>
+            <div className="flex items-center justify-between text-[10px] text-[#666] mb-1 font-mono">
+              <span>Risk Score</span>
+              <span>{riskScore.toFixed(1)} / 10</span>
             </div>
-
-            <div className="grid grid-cols-4 gap-4 mt-4">
-              <div className="text-center">
-                <p className="text-2xl font-bold text-accent-green tabular-nums">0-3</p>
-                <p className="text-[10px] text-text-muted mt-1">Low</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-yellow-500 tabular-nums">3-5</p>
-                <p className="text-[10px] text-text-muted mt-1">Medium</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-accent-red/80 tabular-nums">5-7</p>
-                <p className="text-[10px] text-text-muted mt-1">High</p>
-              </div>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-accent-red tabular-nums">7+</p>
-                <p className="text-[10px] text-text-muted mt-1">Critical</p>
-              </div>
+            <div className="flex h-3 rounded overflow-hidden bg-[#1a1a1a] border border-[#222]">
+              <div
+                className={`rounded transition-all duration-500 ${
+                  riskScore <= 3 ? 'bg-[#22c55e]' :
+                  riskScore <= 5 ? 'bg-[#eab308]' :
+                  riskScore <= 7 ? 'bg-[#ef4444]/80' : 'bg-[#ef4444]'
+                }`}
+                style={{ width: `${Math.min(riskScore * 10, 100)}%` }}
+              />
             </div>
           </div>
-        </GlassCard>
-      </motion.div>
-    </motion.div>
+
+          {/* Risk scale legend */}
+          <div className="grid grid-cols-4 gap-4 mt-4">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-[#22c55e] tabular-nums font-mono">0-3</p>
+              <p className="text-[10px] text-[#666] mt-1 font-mono">Low</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-[#eab308] tabular-nums font-mono">3-5</p>
+              <p className="text-[10px] text-[#666] mt-1 font-mono">Medium</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-[#ef4444]/80 tabular-nums font-mono">5-7</p>
+              <p className="text-[10px] text-[#666] mt-1 font-mono">High</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-[#ef4444] tabular-nums font-mono">7+</p>
+              <p className="text-[10px] text-[#666] mt-1 font-mono">Critical</p>
+            </div>
+          </div>
+        </div>
+      </GlassCard>
+    </div>
   )
 }

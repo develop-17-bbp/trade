@@ -1,7 +1,7 @@
 import numpy as np
 import logging
 from typing import List, Dict, Any, Optional
-from scipy.stats import norm
+# Note: scipy.stats removed — norm was unused and hangs on Python 3.14
 
 logger = logging.getLogger(__name__)
 

@@ -1,39 +1,25 @@
 import { useMemo } from 'react'
-import { motion } from 'framer-motion'
 import { Brain, Zap, Clock } from 'lucide-react'
-import GlassCard from '../components/cards/GlassCard'
-import AIBrainOrb from '../components/three/AIBrainOrb'
 import AgentVotePanel from '../components/ai/AgentVotePanel'
-import ConsensusGauge from '../components/ai/ConsensusGauge'
 import { useSystemState } from '../hooks/useSystemState'
-
-// -- Animation --
-
-const pageVariants = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.08, delayChildren: 0.1 },
-  },
-}
-
-const child = {
-  hidden: { opacity: 0, y: 16 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
-}
 
 // -- Skeleton --
 
 function Skeleton({ className = '' }: { className?: string }) {
-  return <div className={`animate-pulse rounded-xl bg-white/[0.04] ${className}`} />
+  return (
+    <div
+      className={`animate-pulse rounded-xl ${className}`}
+      style={{ backgroundColor: '#111111' }}
+    />
+  )
 }
 
 function SkeletonAI() {
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-6">
-        <Skeleton className="col-span-2 h-96" />
-        <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
+        <Skeleton className="h-96" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           <Skeleton className="h-48" />
           <Skeleton className="h-44" />
         </div>
@@ -45,11 +31,30 @@ function SkeletonAI() {
 
 // -- Helpers --
 
-/** Map numeric direction (-1/0/1) to a signal string */
 function dirToSignal(dir: number): 'long' | 'short' | 'neutral' {
   if (dir > 0) return 'long'
   if (dir < 0) return 'short'
   return 'neutral'
+}
+
+// -- Consensus Bar --
+
+function ConsensusBar({ percentage, sentiment }: { percentage: number; sentiment: string }) {
+  const barColor = sentiment === 'bullish' ? '#22c55e' : sentiment === 'bearish' ? '#ef4444' : '#666666'
+
+  return (
+    <div style={{ width: '100%', height: 8, backgroundColor: '#222222', borderRadius: 4, overflow: 'hidden' }}>
+      <div
+        style={{
+          width: `${percentage}%`,
+          height: '100%',
+          backgroundColor: barColor,
+          borderRadius: 4,
+          transition: 'width 0.3s ease',
+        }}
+      />
+    </div>
+  )
 }
 
 // -- Component --
@@ -79,7 +84,6 @@ export default function AIAgents() {
 
   const consensusLabel = agents?.consensus ?? 'N/A'
 
-  // Build vote map as Record<string, {direction, confidence, reasoning}> for AgentVotePanel
   const agentVotesMap = useMemo(() => {
     const map: Record<string, { id: string; name: string; direction: number; confidence: number; reasoning: string; weight: number }> = {}
     agentList.forEach((a) => { map[a.id] = a })
@@ -90,151 +94,202 @@ export default function AIAgents() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-accent-red text-sm">{error}</p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
+        <p style={{ color: '#ef4444', fontSize: 14 }}>{error}</p>
       </div>
     )
   }
 
+  const pctColor = sentiment === 'bullish' ? '#22c55e' : sentiment === 'bearish' ? '#ef4444' : '#a0a0a0'
+
   return (
-    <motion.div
-      className="space-y-6"
-      variants={pageVariants}
-      initial="hidden"
-      animate="show"
-    >
-      {/* Orb + Consensus row */}
-      <div className="grid grid-cols-3 gap-6">
-        {/* AI Brain Orb - large */}
-        <motion.div className="col-span-2" variants={child}>
-          <GlassCard className="relative overflow-hidden">
-            <div className="flex items-center gap-2 mb-3">
-              <Brain size={18} className="text-accent-purple" />
-              <h2 className="text-sm font-semibold text-text-primary">AI Neural Core</h2>
-              <span className="ml-auto text-xs text-text-muted">
-                {agentList.length} agents
-                {agents?.enabled ? ' -- ENABLED' : ' -- DISABLED'}
-              </span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24, backgroundColor: '#000000', minHeight: '100%' }}>
+
+      {/* Consensus Gauge + Breakdown row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
+
+        {/* Consensus Gauge - large */}
+        <div
+          className="card"
+          style={{
+            backgroundColor: '#111111',
+            border: '1px solid #222222',
+            borderRadius: 12,
+            padding: 24,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <Brain size={18} style={{ color: '#a0a0a0' }} />
+            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#ffffff', margin: 0 }}>AI Consensus</h2>
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: '#666666' }}>
+              {agentList.length} agents
+              {agents?.enabled ? ' -- ENABLED' : ' -- DISABLED'}
+            </span>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '48px 0',
+          }}>
+            <div
+              style={{
+                fontSize: 80,
+                fontWeight: 700,
+                color: pctColor,
+                lineHeight: 1,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {consensusPct}%
+            </div>
+            <p style={{ fontSize: 14, color: '#666666', marginTop: 8 }}>
+              {consensusLabel}
+            </p>
+
+            <div style={{ width: '80%', maxWidth: 400, marginTop: 24 }}>
+              <ConsensusBar percentage={consensusPct} sentiment={sentiment} />
             </div>
 
-            <div className="relative h-80">
-              <AIBrainOrb
-                consensus={consensusPct / 100}
-                sentiment={sentiment}
-                size={3.5}
-              />
+            <div style={{ display: 'flex', gap: 24, marginTop: 16 }}>
+              <span style={{ fontSize: 12, color: '#22c55e' }}>{bullCount} Bullish</span>
+              <span style={{ fontSize: 12, color: '#a0a0a0' }}>{neutralCount} Neutral</span>
+              <span style={{ fontSize: 12, color: '#ef4444' }}>{bearCount} Bearish</span>
+            </div>
+          </div>
+        </div>
 
-              {/* Consensus overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="text-center">
-                  <motion.div
-                    className={`text-6xl font-bold tabular-nums ${
-                      sentiment === 'bullish' ? 'text-accent-green' :
-                      sentiment === 'bearish' ? 'text-accent-red' : 'text-accent-blue'
-                    }`}
-                    key={consensusPct}
-                    initial={{ scale: 0.8, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 0.9 }}
-                    transition={{ type: 'spring', stiffness: 200 }}
-                    style={{ textShadow: '0 0 30px rgba(0,0,0,0.8)' }}
+        {/* Side: Agent Reasoning */}
+        <div
+          className="card"
+          style={{
+            backgroundColor: '#111111',
+            border: '1px solid #222222',
+            borderRadius: 12,
+            padding: 24,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Clock size={14} style={{ color: '#a0a0a0' }} />
+            <h3 style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: '#ffffff',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              margin: 0,
+            }}>
+              Agent Reasoning
+            </h3>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 380, overflowY: 'auto' }}>
+            {agentList.length > 0 ? (
+              agentList.map((agent) => {
+                const signal = dirToSignal(agent.direction)
+                const signalColor =
+                  signal === 'long' ? '#22c55e' :
+                  signal === 'short' ? '#ef4444' : '#a0a0a0'
+
+                return (
+                  <div
+                    key={agent.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                      padding: 8,
+                      borderRadius: 8,
+                      backgroundColor: '#0a0a0a',
+                      border: '1px solid #222222',
+                    }}
                   >
-                    {consensusPct}%
-                  </motion.div>
-                  <p className="text-xs text-text-muted mt-1" style={{ textShadow: '0 0 10px rgba(0,0,0,0.8)' }}>
-                    {consensusLabel}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-        </motion.div>
-
-        {/* Side: Consensus gauge + Info */}
-        <motion.div variants={child} className="space-y-6">
-          <ConsensusGauge
-            level={consensusLabel}
-            percentage={consensusPct}
-            bullish={bullCount}
-            bearish={bearCount}
-            neutral={neutralCount}
-          />
-
-          <GlassCard>
-            <div className="flex items-center gap-2 mb-3">
-              <Clock size={14} className="text-accent-cyan" />
-              <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider">
-                Agent Reasoning
-              </h3>
-            </div>
-
-            <div className="space-y-2 max-h-52 overflow-y-auto">
-              {agentList.length > 0 ? (
-                agentList.map((agent) => {
-                  const signal = dirToSignal(agent.direction)
-                  const signalColor =
-                    signal === 'long' ? 'text-accent-green' :
-                    signal === 'short' ? 'text-accent-red' : 'text-accent-blue'
-
-                  return (
-                    <div
-                      key={agent.id}
-                      className="flex items-start gap-2 p-2 rounded-lg bg-white/[0.02] border border-border-glass"
-                    >
-                      <Zap size={12} className={`${signalColor} mt-0.5 flex-shrink-0`} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-text-primary truncate">
-                            {agent.name}
-                          </span>
-                          <span className="text-[10px] text-text-muted tabular-nums flex-shrink-0 ml-2">
-                            w={agent.weight.toFixed(1)}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-text-muted mt-0.5 line-clamp-2">
-                          <span className={signalColor}>
-                            {signal.toUpperCase()}
-                          </span>{' '}
-                          ({Math.round(agent.confidence * 100)}%) -- {agent.reasoning || 'No reasoning'}
-                        </p>
+                    <Zap size={12} style={{ color: signalColor, marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{
+                          fontSize: 12,
+                          fontWeight: 500,
+                          color: '#ffffff',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {agent.name}
+                        </span>
+                        <span style={{
+                          fontSize: 10,
+                          color: '#666666',
+                          fontVariantNumeric: 'tabular-nums',
+                          flexShrink: 0,
+                          marginLeft: 8,
+                        }}>
+                          w={agent.weight.toFixed(1)}
+                        </span>
                       </div>
+                      <p style={{
+                        fontSize: 10,
+                        color: '#666666',
+                        marginTop: 2,
+                        margin: 0,
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}>
+                        <span style={{ color: signalColor }}>
+                          {signal.toUpperCase()}
+                        </span>{' '}
+                        ({Math.round(agent.confidence * 100)}%) -- {agent.reasoning || 'No reasoning'}
+                      </p>
                     </div>
-                  )
-                })
-              ) : (
-                <p className="text-text-muted text-xs text-center py-4">
-                  No agent data available
-                </p>
-              )}
-            </div>
-          </GlassCard>
-        </motion.div>
+                  </div>
+                )
+              })
+            ) : (
+              <p style={{ color: '#666666', fontSize: 12, textAlign: 'center', padding: '16px 0' }}>
+                No agent data available
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* All agents vote panel */}
-      <motion.div variants={child}>
-        <GlassCard>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-text-primary">All Agents ({agentList.length})</h2>
-            <div className="flex items-center gap-3 text-xs text-text-muted">
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-accent-green" /> {bullCount} bullish
+      <div
+        className="card"
+        style={{
+          backgroundColor: '#111111',
+          border: '1px solid #222222',
+          borderRadius: 12,
+          padding: 24,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 600, color: '#ffffff', margin: 0 }}>
+            All Agents ({agentList.length})
+          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: '#666666' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#22c55e', display: 'inline-block' }} /> {bullCount} bullish
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#a0a0a0', display: 'inline-block' }} /> {neutralCount} neutral
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ef4444', display: 'inline-block' }} /> {bearCount} bearish
+            </span>
+            {agents?.data_quality != null && (
+              <span style={{ color: '#666666' }}>
+                Data quality: {Math.round(agents.data_quality * 100)}%
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-accent-blue" /> {neutralCount} neutral
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-accent-red" /> {bearCount} bearish
-              </span>
-              {agents?.data_quality != null && (
-                <span className="text-text-muted">
-                  Data quality: {Math.round(agents.data_quality * 100)}%
-                </span>
-              )}
-            </div>
+            )}
           </div>
-          <AgentVotePanel agents={agentVotesMap} />
-        </GlassCard>
-      </motion.div>
-    </motion.div>
+        </div>
+        <AgentVotePanel agents={agentVotesMap} />
+      </div>
+    </div>
   )
 }

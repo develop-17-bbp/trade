@@ -5,7 +5,6 @@ interface Props {
   interval?: string
   theme?: 'dark' | 'light'
   height?: number
-  showToolbar?: boolean
 }
 
 /**
@@ -18,7 +17,6 @@ function TradingViewWidget({
   interval = '60',
   theme = 'dark',
   height = 500,
-  showToolbar = true,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -40,8 +38,8 @@ function TradingViewWidget({
       theme: theme,
       style: '1', // Candlestick
       locale: 'en',
-      backgroundColor: 'rgba(5, 5, 15, 1)',
-      gridColor: 'rgba(100, 80, 255, 0.06)',
+      backgroundColor: 'rgba(0, 0, 0, 1)',
+      gridColor: 'rgba(255, 255, 255, 0.04)',
       allow_symbol_change: true,
       calendar: false,
       support_host: 'https://www.tradingview.com',
@@ -61,17 +59,17 @@ function TradingViewWidget({
         'STD;Average_True_Range',     // ATR
       ],
       overrides: {
-        'mainSeriesProperties.candleStyle.upColor': '#00ffaa',
-        'mainSeriesProperties.candleStyle.downColor': '#ff2266',
-        'mainSeriesProperties.candleStyle.borderUpColor': '#00ffaa',
-        'mainSeriesProperties.candleStyle.borderDownColor': '#ff2266',
-        'mainSeriesProperties.candleStyle.wickUpColor': '#00ffaa88',
-        'mainSeriesProperties.candleStyle.wickDownColor': '#ff226688',
-        'paneProperties.background': '#05050f',
-        'paneProperties.vertGridProperties.color': 'rgba(100, 80, 255, 0.04)',
-        'paneProperties.horzGridProperties.color': 'rgba(100, 80, 255, 0.04)',
-        'scalesProperties.textColor': '#5a6080',
-        'scalesProperties.lineColor': 'rgba(100, 80, 255, 0.1)',
+        'mainSeriesProperties.candleStyle.upColor': '#22c55e',
+        'mainSeriesProperties.candleStyle.downColor': '#ef4444',
+        'mainSeriesProperties.candleStyle.borderUpColor': '#22c55e',
+        'mainSeriesProperties.candleStyle.borderDownColor': '#ef4444',
+        'mainSeriesProperties.candleStyle.wickUpColor': '#22c55e88',
+        'mainSeriesProperties.candleStyle.wickDownColor': '#ef444488',
+        'paneProperties.background': '#000000',
+        'paneProperties.vertGridProperties.color': 'rgba(255, 255, 255, 0.03)',
+        'paneProperties.horzGridProperties.color': 'rgba(255, 255, 255, 0.03)',
+        'scalesProperties.textColor': '#666666',
+        'scalesProperties.lineColor': 'rgba(255, 255, 255, 0.06)',
       },
       enabled_features: [
         'header_symbol_search',
@@ -84,10 +82,10 @@ function TradingViewWidget({
       disabled_features: [
         'header_saveload',
       ],
-      toolbar_bg: '#05050f',
+      toolbar_bg: '#000000',
       loading_screen: {
-        backgroundColor: '#05050f',
-        foregroundColor: '#00fff0',
+        backgroundColor: '#000000',
+        foregroundColor: '#666666',
       },
     })
 
@@ -107,7 +105,7 @@ function TradingViewWidget({
       style={{ height, width: '100%' }}
     >
       <div className="flex items-center justify-center h-full">
-        <div className="w-8 h-8 border-2 border-[#00fff0] border-t-transparent rounded-full animate-spin" />
+        <div className="w-8 h-8 border-2 border-[#333] border-t-transparent rounded-full animate-spin" />
       </div>
     </div>
   )

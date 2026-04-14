@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchDashboard, type DashboardData } from '../api/client'
 
-const POLL_INTERVAL_MS = 3000
+const POLL_INTERVAL_MS = 5000
 
 /**
  * Main state hook — fetches aggregated dashboard data from backend.
@@ -22,7 +22,7 @@ export function useSystemState() {
         setData(result)
         setError(null)
       } else {
-        setError('API returned null — is the backend running on port 11000?')
+        setError('API returned null — is the backend running on port 11007?')
       }
       setLoading(false)
     } catch (err) {

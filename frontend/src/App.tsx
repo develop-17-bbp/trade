@@ -11,10 +11,7 @@ const Risk = lazy(() => import('./pages/Risk'))
 function LoadingFallback() {
   return (
     <div className="flex items-center justify-center h-full w-full min-h-[60vh]">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-10 h-10 border-2 border-accent-blue border-t-transparent rounded-full animate-spin" />
-        <span className="text-text-muted text-sm tracking-wider uppercase">Loading</span>
-      </div>
+      <span className="text-[#666] text-sm">Loading...</span>
     </div>
   )
 }

@@ -317,7 +317,7 @@ def main():
         print(f"  Active strategies: {analysis['active_named_strategies'] or 'none firing'}")
         if analysis['universe_242']:
             u = analysis['universe_242']
-            print(f"  Universe 242: {u['buy']}↑ {u['sell']}↓ {u['flat']}— | {u['consensus']} (conf={u['confidence']})")
+            print(f"  Universe 242: {u['buy']}^ {u['sell']}v {u['flat']}= | {u['consensus']} (conf={u['confidence']})")
         print(f"  >>> RECOMMENDATION: {analysis['recommendation']}")
 
     # Save output

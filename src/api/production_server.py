@@ -459,7 +459,7 @@ async def dashboard_aggregate(_=Depends(_require_api_key)):
 
     return {
         "portfolio": {
-            "equity": rh_equity if rh_equity > 0 else portfolio_data.get("current_total_value", 0),
+            "equity": rh_equity if rh_equity > 0 else 0,
             "initial_capital": rh_initial,
             "today_pnl": rh_pnl,
             "total_pnl": rh_pnl,

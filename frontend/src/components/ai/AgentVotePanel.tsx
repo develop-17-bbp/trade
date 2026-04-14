@@ -1,13 +1,8 @@
-import { motion } from 'framer-motion'
-import GlassCard from '../cards/GlassCard'
-
 interface AgentEntry {
-  id: string
-  name: string
   direction: number
   confidence: number
-  reasoning: string
-  weight: number
+  reasoning?: string
+  [key: string]: unknown
 }
 
 interface AgentVotePanelProps {
@@ -21,94 +16,42 @@ function dirToSignal(dir: number): 'long' | 'short' | 'neutral' {
   return 'neutral'
 }
 
-const SIGNAL_LABEL: Record<string, { text: string; color: string; bg: string }> = {
-  long: { text: 'LONG', color: 'text-accent-green', bg: 'bg-accent-green/10' },
-  short: { text: 'SHORT', color: 'text-accent-red', bg: 'bg-accent-red/10' },
-  neutral: { text: 'NEUTRAL', color: 'text-accent-blue', bg: 'bg-accent-blue/10' },
-}
-
-const container = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.04 },
-  },
-}
-
-const item = {
-  hidden: { opacity: 0, y: 10 },
-  show: { opacity: 1, y: 0 },
+const SIGNAL_CFG = {
+  long: { text: 'LONG', color: 'text-[#22c55e]', bg: 'bg-[#22c55e]/10', dot: 'bg-[#22c55e]', bar: 'bg-[#22c55e]' },
+  short: { text: 'SHORT', color: 'text-[#ef4444]', bg: 'bg-[#ef4444]/10', dot: 'bg-[#ef4444]', bar: 'bg-[#ef4444]' },
+  neutral: { text: 'FLAT', color: 'text-[#666]', bg: 'bg-[#666]/10', dot: 'bg-[#666]', bar: 'bg-[#666]' },
 }
 
 export default function AgentVotePanel({ agents, compact = false }: AgentVotePanelProps) {
-  const entries = Object.values(agents)
+  const entries = Object.entries(agents)
 
   if (entries.length === 0) {
-    return (
-      <GlassCard>
-        <p className="text-text-muted text-sm text-center py-6">No agent data available</p>
-      </GlassCard>
-    )
+    return <p className="text-[#666] text-sm text-center py-6">No agent data available</p>
   }
 
   return (
-    <motion.div
-      className={`grid gap-2 ${compact ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'}`}
-      variants={container}
-      initial="hidden"
-      animate="show"
-    >
-      {entries.map((agent) => {
+    <div className={`space-y-1.5 max-h-64 overflow-y-auto ${compact ? '' : ''}`}>
+      {entries.map(([name, agent]) => {
         const signal = dirToSignal(agent.direction)
-        const cfg = SIGNAL_LABEL[signal]
+        const cfg = SIGNAL_CFG[signal]
         const confidence = Math.round(agent.confidence * 100)
 
         return (
-          <motion.div key={agent.id} variants={item}>
-            <GlassCard className="!p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    signal === 'long' ? 'bg-accent-green' :
-                    signal === 'short' ? 'bg-accent-red' : 'bg-accent-blue'
-                  }`} />
-                  <span className="text-xs font-medium text-text-primary truncate">
-                    {agent.name}
-                  </span>
-                </div>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cfg.color} ${cfg.bg}`}>
-                  {cfg.text}
-                </span>
-              </div>
-
-              {/* Confidence bar */}
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-1 rounded-full bg-white/5 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      signal === 'long'
-                        ? 'bg-accent-green'
-                        : signal === 'short'
-                          ? 'bg-accent-red'
-                          : 'bg-accent-blue'
-                    }`}
-                    style={{ width: `${confidence}%` }}
-                  />
-                </div>
-                <span className="text-[10px] text-text-muted tabular-nums w-8 text-right">
-                  {confidence}%
-                </span>
-              </div>
-
-              {!compact && agent.reasoning && (
-                <div className="mt-2 text-[10px] text-text-muted truncate">
-                  {agent.reasoning}
-                </div>
-              )}
-            </GlassCard>
-          </motion.div>
+          <div key={name} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-[#0a0a0a] transition-colors">
+            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+            <span className="text-xs text-white truncate flex-1 min-w-0">{name}</span>
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono ${cfg.color} ${cfg.bg}`}>
+              {cfg.text}
+            </span>
+            <div className="w-16 h-1 rounded-full bg-[#1a1a1a] overflow-hidden flex-shrink-0">
+              <div className={`h-full rounded-full ${cfg.bar}`} style={{ width: `${confidence}%` }} />
+            </div>
+            <span className="text-[10px] text-[#666] tabular-nums font-mono w-7 text-right flex-shrink-0">
+              {confidence}%
+            </span>
+          </div>
         )
       })}
-    </motion.div>
+    </div>
   )
 }

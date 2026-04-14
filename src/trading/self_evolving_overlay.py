@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EVOLUTION_STATE_FILE = os.path.join(PROJECT_ROOT, 'data', 'evolution_state.json')
 GENETIC_RESULTS_FILE = os.path.join(PROJECT_ROOT, 'logs', 'genetic_evolution_results.json')
+EVOLUTION_FEEDBACK_FILE = os.path.join(PROJECT_ROOT, 'data', 'evolution_feedback.json')
 BACKTEST_RESULTS_FILE = os.path.join(PROJECT_ROOT, 'logs', 'strategy_backtest_results.json')
 ADAPTIVE_STATE_FILE = os.path.join(PROJECT_ROOT, 'data', 'adaptive_state.json')
 
@@ -603,7 +604,26 @@ class IndicatorEvolver:
                     continue
                 params = individual.get('params', individual.get('genes', {}))
                 if params:
-                    candidates.append((params, fitness))
+                    # Validated entries (cross-referenced with live trades) get 2x weight
+                    weight = fitness
+                    if individual.get('validated', False):
+                        weight *= 2.0
+                    candidates.append((params, weight))
+
+        # --- Evolution feedback (validated entries from adaptive feedback loop) ---
+        evo_feedback = _safe_load_json(EVOLUTION_FEEDBACK_FILE)
+        if evo_feedback:
+            fb_hof = evo_feedback.get('hall_of_fame', [])
+            for individual in fb_hof:
+                fitness = individual.get('fitness', 0)
+                if fitness <= 0:
+                    continue
+                params = individual.get('params', individual.get('genes', {}))
+                if params:
+                    weight = fitness
+                    if individual.get('validated', False):
+                        weight *= 3.0  # Validated entries from feedback get 3x weight
+                    candidates.append((params, weight))
 
         # --- Backtest rankings ---
         bt = backtest_results

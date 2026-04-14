@@ -429,6 +429,73 @@ class AdaptiveFeedbackLoop:
 
         return f"{label}: {', '.join(parts)}"
 
+    def record_evolution_results(self, hall_of_fame: List[Dict], diversity_metrics: Optional[Dict] = None):
+        """
+        Absorb genetic evolution results into the feedback loop.
+
+        Cross-references evolved parameter sets with live trade outcomes
+        and marks hall-of-fame entries as 'validated' if they match
+        strategies that have been profitable in live trading.
+
+        Args:
+            hall_of_fame: List of dicts from genetic engine (each has genes, fitness, etc.)
+            diversity_metrics: Optional diversity metrics from the evolution run
+        """
+        with self._lock:
+            if not hall_of_fame:
+                return
+
+            # Cross-reference evolved strategies with live trade outcomes
+            validated_count = 0
+            for entry in hall_of_fame:
+                entry_rule = entry.get('entry_rule', '')
+                exit_rule = entry.get('exit_rule', '')
+                fitness = entry.get('fitness', 0)
+
+                # Check if any live strategy performance matches the evolved entry/exit rules
+                matched_live = False
+                for strat_name, sp in self.strategy_performance.items():
+                    strat_lower = strat_name.lower()
+                    # Match by rule similarity (entry_rule substring in strategy name)
+                    if entry_rule and entry_rule.replace('_', '') in strat_lower.replace('_', ''):
+                        if sp['trades'] >= 3:
+                            live_wr = sp['wins'] / sp['trades']
+                            live_pnl = sp['total_pnl'] / sp['trades']
+                            # Validated = live performance corroborates evolved fitness
+                            if live_wr > 0.4 and live_pnl > 0:
+                                entry['validated'] = True
+                                entry['live_wr'] = live_wr
+                                entry['live_avg_pnl'] = live_pnl
+                                validated_count += 1
+                                matched_live = True
+                                break
+
+                if not matched_live:
+                    entry['validated'] = False
+
+            # Store evolution results in adaptive state
+            self._evolution_results = {
+                'hall_of_fame': hall_of_fame,
+                'diversity_metrics': diversity_metrics or {},
+                'validated_count': validated_count,
+                'total_count': len(hall_of_fame),
+                'timestamp': time.time(),
+            }
+
+            # Save to disk
+            evo_path = os.path.join(PROJECT_ROOT, 'data', 'evolution_feedback.json')
+            try:
+                os.makedirs(os.path.dirname(evo_path), exist_ok=True)
+                with open(evo_path, 'w') as f:
+                    json.dump(self._evolution_results, f, indent=2, default=str)
+            except Exception as e:
+                logger.debug(f"[ADAPTIVE] Evolution feedback save failed: {e}")
+
+            logger.info(
+                f"[ADAPTIVE] Evolution results absorbed: "
+                f"{len(hall_of_fame)} strategies, {validated_count} validated by live data"
+            )
+
     def get_strategy_weight_adjustments(self) -> Dict[str, float]:
         """
         Return weight multipliers for multi-strategy engine.
@@ -496,6 +563,25 @@ class AdaptiveFeedbackLoop:
             lines.append("  ACTION: Recent performance GOOD — maintain current approach")
 
         return "\n".join(lines)
+
+    def get_fitness_report(self) -> Dict[str, Any]:
+        """Compute multi-metric fitness for recent trades (Sortino, Calmar, expectancy, grade)."""
+        try:
+            from src.trading.optimizer import MultiMetricFitness
+            fitness = MultiMetricFitness()
+            recent = list(self._recent_trades)
+            if len(recent) < 3:
+                return {'grade': 'N/A', 'fitness_score': 0, 'trade_count': 0}
+            trade_dicts = [{
+                'pnl_usd': t.get('pnl_usd', 0),
+                'pnl_pct': t.get('pnl_pct', 0),
+                'duration_min': t.get('duration_min', 60),
+                'asset': t.get('asset', '?'),
+            } for t in recent[-50:]]
+            return fitness.compute(trade_dicts)
+        except Exception as e:
+            logger.debug(f"Fitness report failed: {e}")
+            return {'grade': 'N/A', 'fitness_score': 0, 'trade_count': len(list(self._recent_trades))}
 
     def _save_state(self):
         """Persist adaptive state to disk."""

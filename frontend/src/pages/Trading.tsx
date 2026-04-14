@@ -1,5 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react'
-import { motion } from 'framer-motion'
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import {
   TrendingUp,
   TrendingDown,
@@ -7,31 +6,11 @@ import {
   BarChart3,
   Target,
   Zap,
-  ChevronUp,
-  ChevronDown,
 } from 'lucide-react'
-import CandlestickChart from '../components/charts/CandlestickChart'
 import TradingViewWidget from '../components/charts/TradingViewWidget'
 import EquityCurve from '../components/charts/EquityCurve'
 import { useSystemState } from '../hooks/useSystemState'
 import { fetchPrices, type PriceData } from '../api/client'
-
-// ---------------------------------------------------------------------------
-// Animation variants
-// ---------------------------------------------------------------------------
-
-const pageVariants = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.06, delayChildren: 0.08 },
-  },
-}
-
-const child = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' as const } },
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,13 +30,7 @@ function formatCompact(n: number): string {
 }
 
 function pctColor(v: number): string {
-  return v >= 0 ? 'text-[#00ffaa]' : 'text-[#ff2266]'
-}
-
-function pctShadow(v: number): React.CSSProperties {
-  return {
-    textShadow: v >= 0 ? '0 0 8px rgba(0,255,170,0.4)' : '0 0 8px rgba(255,34,102,0.4)',
-  }
+  return v >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
 }
 
 type RatingInfo = { label: string; color: string; bg: string; border: string }
@@ -66,46 +39,40 @@ function getRating(score: number): RatingInfo {
   if (score >= 8)
     return {
       label: 'Strong Bullish',
-      color: '#00ffaa',
-      bg: 'rgba(0,255,170,0.1)',
-      border: 'rgba(0,255,170,0.3)',
+      color: '#22c55e',
+      bg: 'rgba(34,197,94,0.08)',
+      border: 'rgba(34,197,94,0.25)',
     }
   if (score >= 6)
     return {
       label: 'Bullish',
-      color: '#00ffaa',
-      bg: 'rgba(0,255,170,0.07)',
-      border: 'rgba(0,255,170,0.2)',
+      color: '#22c55e',
+      bg: 'rgba(34,197,94,0.06)',
+      border: 'rgba(34,197,94,0.18)',
     }
   if (score >= 4)
     return {
       label: 'Neutral',
-      color: '#bf5fff',
-      bg: 'rgba(191,95,255,0.1)',
-      border: 'rgba(191,95,255,0.3)',
+      color: '#a0a0a0',
+      bg: 'rgba(160,160,160,0.08)',
+      border: 'rgba(160,160,160,0.25)',
     }
   return {
     label: 'Bearish',
-    color: '#ff2266',
-    bg: 'rgba(255,34,102,0.1)',
-    border: 'rgba(255,34,102,0.3)',
+    color: '#ef4444',
+    bg: 'rgba(239,68,68,0.08)',
+    border: 'rgba(239,68,68,0.25)',
   }
 }
 
-function getSignal(score: number): { label: string; icon: React.ReactNode; color: string } {
-  if (score >= 6)
-    return { label: 'Bullish', icon: <ChevronUp size={12} />, color: '#00ffaa' }
-  if (score >= 4)
-    return { label: 'Neutral', icon: <Activity size={12} />, color: '#bf5fff' }
-  return { label: 'Bearish', icon: <ChevronDown size={12} />, color: '#ff2266' }
-}
+// getSignal removed — was only used in old ScreenerTable
 
 // ---------------------------------------------------------------------------
 // Skeleton
 // ---------------------------------------------------------------------------
 
 function Skeleton({ className = '' }: { className?: string }) {
-  return <div className={`animate-pulse rounded-xl bg-white/[0.04] ${className}`} />
+  return <div className={`animate-pulse rounded bg-[#222222] ${className}`} />
 }
 
 function SkeletonTrading() {
@@ -134,120 +101,7 @@ interface ScreenerRow {
   squeeze: number
 }
 
-function ScreenerTable({
-  rows,
-  selectedAsset,
-  onSelect,
-}: {
-  rows: ScreenerRow[]
-  selectedAsset: string
-  onSelect: (ticker: string) => void
-}) {
-  return (
-    <div className="glass-card holo-shimmer overflow-hidden">
-      <div className="flex items-center gap-2 px-5 pt-4 pb-3">
-        <BarChart3 size={15} className="text-[#00fff0]" />
-        <h2 className="text-xs font-semibold tracking-wider uppercase text-[#e8ecf4]">
-          Multi-Asset Screener
-        </h2>
-        <span className="ml-auto text-[10px] text-[#5a6080] font-mono">LIVE</span>
-        <span className="w-1.5 h-1.5 rounded-full bg-[#00ffaa] animate-pulse" />
-      </div>
-
-      <div className="cyber-grid">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-[10px] uppercase tracking-wider font-mono text-[#5a6080] border-b border-white/[0.06]">
-              <th className="text-left px-5 pb-2 font-medium">Ticker</th>
-              <th className="text-right px-3 pb-2 font-medium">Price</th>
-              <th className="text-right px-3 pb-2 font-medium">% Change</th>
-              <th className="text-center px-3 pb-2 font-medium">Rating</th>
-              <th className="text-center px-3 pb-2 font-medium">Signal</th>
-              <th className="text-right px-3 pb-2 font-medium">Trend Str</th>
-              <th className="text-right px-5 pb-2 font-medium">Squeeze</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const rating = getRating(r.score)
-              const signal = getSignal(r.score)
-              const isSelected = r.ticker === selectedAsset
-              return (
-                <tr
-                  key={r.ticker}
-                  onClick={() => onSelect(r.ticker)}
-                  className={`cursor-pointer border-b border-white/[0.04] transition-all duration-200 ${
-                    isSelected
-                      ? 'bg-[#00fff0]/[0.04] shadow-[inset_0_0_20px_rgba(0,255,240,0.03)]'
-                      : 'hover:bg-white/[0.02] hover:shadow-[inset_0_0_30px_rgba(0,255,240,0.02)]'
-                  }`}
-                >
-                  <td className="px-5 py-3 font-semibold text-[#e8ecf4]">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: r.changePct >= 0 ? '#00ffaa' : '#ff2266' }}
-                      />
-                      {r.ticker}
-                      <span className="text-[#5a6080] font-normal">/ USD</span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-[#e8ecf4]">
-                    ${formatUSD(r.price)}
-                  </td>
-                  <td
-                    className={`px-3 py-3 text-right font-mono tabular-nums ${pctColor(r.changePct)}`}
-                    style={pctShadow(r.changePct)}
-                  >
-                    {r.changePct >= 0 ? '+' : ''}
-                    {r.changePct.toFixed(2)}%
-                  </td>
-                  <td className="px-3 py-3 text-center">
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border"
-                      style={{
-                        color: rating.color,
-                        backgroundColor: rating.bg,
-                        borderColor: rating.border,
-                      }}
-                    >
-                      {r.score >= 6 ? (
-                        <TrendingUp size={10} />
-                      ) : r.score >= 4 ? (
-                        <Activity size={10} />
-                      ) : (
-                        <TrendingDown size={10} />
-                      )}
-                      {rating.label}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3 text-center">
-                    <span
-                      className="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                      style={{ color: signal.color }}
-                    >
-                      {signal.icon}
-                      {signal.label}
-                    </span>
-                  </td>
-                  <td
-                    className={`px-3 py-3 text-right font-mono tabular-nums ${pctColor(r.trendStrength)}`}
-                    style={pctShadow(r.trendStrength)}
-                  >
-                    {r.trendStrength.toFixed(2)}%
-                  </td>
-                  <td className="px-5 py-3 text-right font-mono tabular-nums text-[#bf5fff]">
-                    {r.squeeze.toFixed(2)}%
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
+// ScreenerTable removed — replaced by compact screener bar inline
 
 // ---------------------------------------------------------------------------
 // Optimization Panel
@@ -266,7 +120,6 @@ function OptimizationPanel({ models }: { models: Record<string, { correct: numbe
   const rows: OptRow[] = useMemo(() => {
     const entries = Object.entries(models)
     if (entries.length === 0) {
-      // Fallback demo rows
       return [
         { sensitivity: 10, trades: 189, netProfit: 98420, winRate: 41.2, pf: 1.87, maxDD: 12300 },
         { sensitivity: 12, trades: 211, netProfit: 112300, winRate: 39.3, pf: 2.01, maxDD: 14200 },
@@ -301,10 +154,10 @@ function OptimizationPanel({ models }: { models: Record<string, { correct: numbe
   }, [rows])
 
   return (
-    <div className="glass-card holo-shimmer glow-cyan h-full flex flex-col">
+    <div className="card h-full flex flex-col">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-        <Target size={14} className="text-[#00fff0]" />
-        <h2 className="text-[11px] font-semibold tracking-wider uppercase text-[#e8ecf4]">
+        <Target size={14} className="text-[#ffffff]" />
+        <h2 className="text-[11px] font-semibold tracking-wider uppercase text-[#ffffff]">
           Advanced Optimization
         </h2>
       </div>
@@ -312,7 +165,7 @@ function OptimizationPanel({ models }: { models: Record<string, { correct: numbe
       <div className="flex-1 overflow-y-auto px-2">
         <table className="w-full text-[10px]">
           <thead>
-            <tr className="text-[9px] uppercase tracking-wider font-mono text-[#5a6080]">
+            <tr className="text-[9px] uppercase tracking-wider font-mono text-[#666666]">
               <th className="text-left px-2 pb-1.5 font-medium">Sens</th>
               <th className="text-right px-1 pb-1.5 font-medium">Trd</th>
               <th className="text-right px-1 pb-1.5 font-medium">Net $</th>
@@ -327,34 +180,31 @@ function OptimizationPanel({ models }: { models: Record<string, { correct: numbe
               return (
                 <tr
                   key={r.sensitivity}
-                  className={`border-b border-white/[0.04] ${
-                    isOptimal ? 'bg-[#00fff0]/[0.06]' : ''
+                  className={`border-b border-[#222222] ${
+                    isOptimal ? 'bg-[#1a1a1a]' : ''
                   }`}
                 >
-                  <td className="px-2 py-1.5 font-mono text-[#e8ecf4]">
-                    {isOptimal && <Zap size={8} className="inline mr-0.5 text-[#00fff0]" />}
+                  <td className="px-2 py-1.5 font-mono text-[#ffffff]">
+                    {isOptimal && <Zap size={8} className="inline mr-0.5 text-[#22c55e]" />}
                     {r.sensitivity}
                   </td>
-                  <td className="px-1 py-1.5 text-right font-mono tabular-nums text-[#8a94b0]">
+                  <td className="px-1 py-1.5 text-right font-mono tabular-nums text-[#a0a0a0]">
                     {r.trades}
                   </td>
-                  <td
-                    className={`px-1 py-1.5 text-right font-mono tabular-nums ${pctColor(r.netProfit)}`}
-                    style={pctShadow(r.netProfit)}
-                  >
+                  <td className={`px-1 py-1.5 text-right font-mono tabular-nums ${pctColor(r.netProfit)}`}>
                     {formatCompact(r.netProfit)}
                   </td>
-                  <td className="px-1 py-1.5 text-right font-mono tabular-nums text-[#e8ecf4]">
+                  <td className="px-1 py-1.5 text-right font-mono tabular-nums text-[#ffffff]">
                     {r.winRate.toFixed(1)}%
                   </td>
                   <td
                     className={`px-1 py-1.5 text-right font-mono tabular-nums ${
-                      r.pf >= 1.5 ? 'text-[#00ffaa]' : r.pf >= 1.0 ? 'text-[#e8ecf4]' : 'text-[#ff2266]'
+                      r.pf >= 1.5 ? 'text-[#22c55e]' : r.pf >= 1.0 ? 'text-[#ffffff]' : 'text-[#ef4444]'
                     }`}
                   >
                     {r.pf.toFixed(2)}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono tabular-nums text-[#ff2266]">
+                  <td className="px-2 py-1.5 text-right font-mono tabular-nums text-[#ef4444]">
                     {formatCompact(r.maxDD)}
                   </td>
                 </tr>
@@ -365,22 +215,22 @@ function OptimizationPanel({ models }: { models: Record<string, { correct: numbe
       </div>
 
       {/* Bottom badges */}
-      <div className="px-4 pb-4 pt-3 space-y-2 border-t border-white/[0.06]">
+      <div className="px-4 pb-4 pt-3 space-y-2 border-t border-[#222222]">
         {optimal && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-[#5a6080] font-mono">
+            <span className="text-[10px] uppercase tracking-wider text-[#666666] font-mono">
               Optimal
             </span>
-            <span className="rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold bg-[#00fff0]/10 text-[#00fff0] border border-[#00fff0]/30">
+            <span className="rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/25">
               Sensitivity: {optimal.sensitivity}
             </span>
           </div>
         )}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-wider text-[#5a6080] font-mono">
+          <span className="text-[10px] uppercase tracking-wider text-[#666666] font-mono">
             Trend
           </span>
-          <span className="rounded-full px-2 py-0.5 text-[10px] font-mono bg-[#bf5fff]/10 text-[#bf5fff] border border-[#bf5fff]/30">
+          <span className="rounded-full px-2 py-0.5 text-[10px] font-mono bg-[#a0a0a0]/10 text-[#a0a0a0] border border-[#a0a0a0]/25">
             Ranging
           </span>
         </div>
@@ -396,7 +246,7 @@ function OptimizationPanel({ models }: { models: Record<string, { correct: numbe
 function MetricBox({
   label,
   value,
-  color = '#e8ecf4',
+  color = '#ffffff',
   sub,
 }: {
   label: string
@@ -406,16 +256,16 @@ function MetricBox({
 }) {
   return (
     <div className="flex flex-col items-center gap-1 px-3 py-3">
-      <span className="text-[9px] uppercase tracking-wider font-mono text-[#5a6080]">
+      <span className="text-[9px] uppercase tracking-wider font-mono text-[#666666]">
         {label}
       </span>
       <span
         className="text-sm font-bold font-mono tabular-nums"
-        style={{ color, textShadow: `0 0 8px ${color}40` }}
+        style={{ color }}
       >
         {value}
       </span>
-      {sub && <span className="text-[9px] text-[#5a6080] font-mono">{sub}</span>}
+      {sub && <span className="text-[9px] text-[#666666] font-mono">{sub}</span>}
     </div>
   )
 }
@@ -449,7 +299,6 @@ export default function Trading() {
     const fallbackPrices: Record<string, number> = { BTC: 72904, ETH: 2237 }
     const fallbackChanges: Record<string, number> = { BTC: -0.01, ETH: -0.24 }
 
-    // Compute entry score from agents/positions
     const posMap = new Map(positions.map((p) => [p.asset, p]))
 
     return assets.map((ticker) => {
@@ -461,7 +310,6 @@ export default function Trading() {
       const confidence = pos?.confidence ?? 7
       const score = Math.min(10, Math.max(0, confidence))
 
-      // Derive trend strength & squeeze from position data or defaults
       const trendStrength = pos
         ? Math.abs(((pos.current_price - pos.entry_price) / pos.entry_price) * 100)
         : ticker === 'BTC'
@@ -477,7 +325,6 @@ export default function Trading() {
     })
   }, [prices, positions])
 
-  // Current asset price for header
   const currentRow = screenerRows.find((r) => r.ticker === selectedAsset)
 
   // Equity curve data from portfolio
@@ -513,160 +360,182 @@ export default function Trading() {
     return { netProfit, totalTrades, pctProfitable, profitFactor, maxDrawdown, avgTrade }
   }, [tradeStats, portfolio])
 
+  // Dynamic chart height
+  const chartRef = useRef<HTMLDivElement>(null)
+  const [chartHeight, setChartHeight] = useState(600)
+
+  useEffect(() => {
+    function calc() {
+      // 48px topbar + 44px screener header + approx screener rows + chart header
+      setChartHeight(Math.max(400, window.innerHeight - 48 - 120))
+    }
+    calc()
+    window.addEventListener('resize', calc)
+    return () => window.removeEventListener('resize', calc)
+  }, [])
+
   if (loading) return <SkeletonTrading />
 
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-[#ff2266] text-sm font-mono">{error}</p>
+        <p className="text-[#ef4444] text-sm font-mono">{error}</p>
       </div>
     )
   }
 
   return (
-    <motion.div
-      className="space-y-4"
-      variants={pageVariants}
-      initial="hidden"
-      animate="show"
-    >
-      {/* ── SCREENER TABLE ── */}
-      <motion.div variants={child}>
-        <ScreenerTable
-          rows={screenerRows}
-          selectedAsset={selectedAsset}
-          onSelect={setSelectedAsset}
-        />
-      </motion.div>
-
-      {/* ── CHART + OPTIMIZATION ── */}
-      <div className="flex gap-4">
-        {/* Chart area — 70% */}
-        <motion.div variants={child} className="flex-[7] min-w-0">
-          <div className="glass-card holo-shimmer overflow-hidden">
-            {/* Chart header */}
-            <div className="flex items-center justify-between px-5 pt-4 pb-2">
-              <div className="flex items-center gap-3">
-                <Activity size={15} className="text-[#00fff0]" />
-                <h2 className="text-sm font-semibold text-[#e8ecf4]">
-                  {selectedAsset}
-                  <span className="text-[#5a6080] font-normal"> / USD</span>
-                </h2>
-                {currentRow && (
-                  <>
-                    <span className="text-lg font-bold font-mono tabular-nums text-[#e8ecf4] ml-2">
-                      ${formatUSD(currentRow.price)}
-                    </span>
-                    <span
-                      className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold ${
-                        currentRow.changePct >= 0
-                          ? 'bg-[#00ffaa]/10 text-[#00ffaa] border border-[#00ffaa]/30'
-                          : 'bg-[#ff2266]/10 text-[#ff2266] border border-[#ff2266]/30'
-                      }`}
-                    >
-                      {currentRow.changePct >= 0 ? (
-                        <TrendingUp size={10} />
-                      ) : (
-                        <TrendingDown size={10} />
-                      )}
-                      {currentRow.changePct >= 0 ? '+' : ''}
-                      {currentRow.changePct.toFixed(2)}%
-                    </span>
-                  </>
-                )}
-              </div>
-
-              {/* Asset + Timeframe selectors */}
-              <div className="flex items-center gap-2">
-                {['BTC', 'ETH'].map((a) => (
-                  <button
-                    key={a}
-                    onClick={() => setSelectedAsset(a)}
-                    className={`text-[10px] px-2.5 py-1 rounded font-medium transition-colors ${
-                      a === selectedAsset
-                        ? 'bg-[#00fff0]/10 text-[#00fff0] border border-[#00fff0]/30'
-                        : 'text-[#5a6080] hover:text-[#e8ecf4]'
-                    }`}
-                  >
-                    {a}
-                  </button>
-                ))}
-                <span className="w-px h-4 bg-white/10 mx-1" />
-                {['1h', '4h', '1d'].map((tf) => (
-                  <button
-                    key={tf}
-                    onClick={() => setTimeframe(tf)}
-                    className={`text-[10px] px-2 py-1 rounded font-mono uppercase transition-colors ${
-                      tf === timeframe
-                        ? 'bg-[#bf5fff]/10 text-[#bf5fff] border border-[#bf5fff]/30'
-                        : 'text-[#5a6080] hover:text-[#e8ecf4]'
-                    }`}
-                  >
-                    {tf}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* TradingView Real-Time Chart */}
-            <TradingViewWidget
-              symbol={`KRAKEN:${selectedAsset}USD`}
-              interval={timeframe === '1d' ? 'D' : timeframe === '4h' ? '240' : '60'}
-              height={800}
-            />
-          </div>
-        </motion.div>
-
-        {/* Optimization panel — 30% */}
-        <motion.div variants={child} className="flex-[3] min-w-0">
-          <OptimizationPanel models={models} />
-        </motion.div>
+    <div className="space-y-3">
+      {/* ── Compact Screener Bar ── */}
+      <div className="card overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-2">
+          <BarChart3 size={13} className="text-[#ffffff]" />
+          <span className="text-[10px] font-semibold tracking-wider uppercase text-[#666666]">Screener</span>
+          <span className="ml-auto flex items-center gap-1">
+            <span className="text-[10px] text-[#666666] font-mono">LIVE</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e]" />
+          </span>
+        </div>
+        <div className="flex divide-x divide-[#222222]">
+          {screenerRows.map((r) => {
+            const rating = getRating(r.score)
+            const isSelected = r.ticker === selectedAsset
+            return (
+              <button
+                key={r.ticker}
+                onClick={() => setSelectedAsset(r.ticker)}
+                className={`flex-1 flex items-center justify-between px-4 py-2 text-xs font-mono transition-colors ${
+                  isSelected ? 'bg-[#1a1a1a]' : 'hover:bg-[#0a0a0a]'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: r.changePct >= 0 ? '#22c55e' : '#ef4444' }} />
+                  <span className="text-white font-bold">{r.ticker}</span>
+                  <span className="text-[#666666]">/ USD</span>
+                </div>
+                <span className="text-white tabular-nums">${formatUSD(r.price)}</span>
+                <span className={pctColor(r.changePct) + ' tabular-nums'}>
+                  {r.changePct >= 0 ? '+' : ''}{r.changePct.toFixed(2)}%
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full border" style={{ color: rating.color, borderColor: rating.border }}>
+                  {rating.label}
+                </span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
-      {/* ── STRATEGY BACKTESTER ── */}
-      <motion.div variants={child}>
-        <div className="glass-card holo-shimmer overflow-hidden border-t-2 border-[#00fff0]/30">
+      {/* ── Full-width Chart ── */}
+      <div ref={chartRef} className="card overflow-hidden">
+        {/* Chart header */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-2">
+          <div className="flex items-center gap-3">
+            <Activity size={14} className="text-[#ffffff]" />
+            <h2 className="text-sm font-semibold text-[#ffffff]">
+              {selectedAsset}
+              <span className="text-[#666666] font-normal"> / USD</span>
+            </h2>
+            {currentRow && (
+              <>
+                <span className="text-lg font-bold font-mono tabular-nums text-[#ffffff] ml-2">
+                  ${formatUSD(currentRow.price)}
+                </span>
+                <span
+                  className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold ${
+                    currentRow.changePct >= 0
+                      ? 'bg-[#22c55e]/10 text-[#22c55e] border border-[#22c55e]/25'
+                      : 'bg-[#ef4444]/10 text-[#ef4444] border border-[#ef4444]/25'
+                  }`}
+                >
+                  {currentRow.changePct >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                  {currentRow.changePct >= 0 ? '+' : ''}{currentRow.changePct.toFixed(2)}%
+                </span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {['BTC', 'ETH'].map((a) => (
+              <button
+                key={a}
+                onClick={() => setSelectedAsset(a)}
+                className={`text-[10px] px-2.5 py-1 rounded font-medium transition-colors ${
+                  a === selectedAsset
+                    ? 'bg-[#ffffff]/10 text-[#ffffff] border border-[#ffffff]/20'
+                    : 'text-[#666666] hover:text-[#ffffff]'
+                }`}
+              >
+                {a}
+              </button>
+            ))}
+            <span className="w-px h-4 bg-[#222222] mx-1" />
+            {['1h', '4h', '1d'].map((tf) => (
+              <button
+                key={tf}
+                onClick={() => setTimeframe(tf)}
+                className={`text-[10px] px-2 py-1 rounded font-mono uppercase transition-colors ${
+                  tf === timeframe
+                    ? 'bg-[#ffffff]/10 text-[#ffffff] border border-[#ffffff]/20'
+                    : 'text-[#666666] hover:text-[#ffffff]'
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+        </div>
+        <TradingViewWidget
+          symbol={`KRAKEN:${selectedAsset}USD`}
+          interval={timeframe === '1d' ? 'D' : timeframe === '4h' ? '240' : '60'}
+          height={chartHeight}
+        />
+      </div>
+
+      {/* ── Bottom: Optimization + Backtester side-by-side ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <OptimizationPanel models={models} />
+        <div className="card overflow-hidden">
           <div className="flex items-center gap-2 px-5 pt-4 pb-3">
-            <Zap size={14} className="text-[#00fff0]" />
-            <h2 className="text-xs font-semibold tracking-wider uppercase text-[#e8ecf4]">
+            <Zap size={14} className="text-[#ffffff]" />
+            <h2 className="text-xs font-semibold tracking-wider uppercase text-[#ffffff]">
               Strategy Backtester
             </h2>
-            <span className="ml-auto text-[10px] font-mono text-[#5a6080]">
+            <span className="ml-auto text-[10px] font-mono text-[#666666]">
               {stats.totalTrades} trades analyzed
             </span>
           </div>
 
           {/* 6 metric boxes */}
-          <div className="grid grid-cols-6 gap-px mx-4 mb-4 rounded-lg overflow-hidden bg-white/[0.03]">
+          <div className="grid grid-cols-3 gap-px mx-4 mb-4 rounded-lg overflow-hidden bg-[#0a0a0a]">
             <MetricBox
               label="Net Profit"
               value={formatCompact(stats.netProfit)}
-              color={stats.netProfit >= 0 ? '#00ffaa' : '#ff2266'}
+              color={stats.netProfit >= 0 ? '#22c55e' : '#ef4444'}
             />
             <MetricBox
               label="Total Trades"
               value={stats.totalTrades.toString()}
-              color="#e8ecf4"
+              color="#ffffff"
             />
             <MetricBox
               label="% Profitable"
               value={`${stats.pctProfitable.toFixed(1)}%`}
-              color={stats.pctProfitable >= 50 ? '#00ffaa' : '#e8ecf4'}
+              color={stats.pctProfitable >= 50 ? '#22c55e' : '#ffffff'}
             />
             <MetricBox
               label="Profit Factor"
               value={stats.profitFactor.toFixed(3)}
-              color={stats.profitFactor >= 1.5 ? '#00ffaa' : stats.profitFactor >= 1 ? '#e8ecf4' : '#ff2266'}
+              color={stats.profitFactor >= 1.5 ? '#22c55e' : stats.profitFactor >= 1 ? '#ffffff' : '#ef4444'}
             />
             <MetricBox
               label="Max Drawdown"
               value={formatCompact(stats.maxDrawdown)}
-              color="#ff2266"
+              color="#ef4444"
             />
             <MetricBox
               label="Avg Trade"
               value={formatCompact(stats.avgTrade)}
-              color={stats.avgTrade >= 0 ? '#00ffaa' : '#ff2266'}
+              color={stats.avgTrade >= 0 ? '#22c55e' : '#ef4444'}
             />
           </div>
 
@@ -677,7 +546,7 @@ export default function Trading() {
             </div>
           )}
         </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   )
 }

@@ -572,7 +572,13 @@ class LightGBMClassifier:
             with open(self.trade_log_path, 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    data.append({k: float(v) for k, v in row.items()})
+                    parsed = {}
+                    for k, v in row.items():
+                        try:
+                            parsed[k] = float(v)
+                        except (TypeError, ValueError):
+                            pass  # skip non-numeric fields
+                    data.append(parsed)
         if not data:
             return
 
@@ -602,6 +608,11 @@ class LightGBMClassifier:
 
         X_arr = X_arr.values
         y_arr = np.array(y)
+
+        # Need at least 10 samples for meaningful cross-validated tuning
+        if len(X_arr) < 10:
+            _logger.info(f"[LGB-TRAIN] Only {len(X_arr)} samples — skipping retrain (need 10+)")
+            return
 
         tuner = ModelTuner(n_trials=20) # Low trials for quick fine-tuning
         best_params = tuner.tune_lightgbm(X_arr, y_arr)

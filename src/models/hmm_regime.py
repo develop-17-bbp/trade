@@ -31,12 +31,18 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# hmmlearn imports scipy.stats internally which hangs on Python 3.14
+# Use lazy import inside methods instead of module-level
+HAS_HMM = False
 try:
-    from hmmlearn.hmm import GaussianHMM
-    HAS_HMM = True
-except ImportError:
-    HAS_HMM = False
-    logger.warning("hmmlearn not installed. Run: pip install hmmlearn")
+    import importlib
+    _spec = importlib.util.find_spec('hmmlearn')
+    if _spec is not None:
+        HAS_HMM = True  # Available but not imported yet (lazy)
+except Exception:
+    pass
+if not HAS_HMM:
+    logger.warning("hmmlearn not available or skipped (Python 3.14 scipy hang)")
 
 
 # Regime labels
@@ -66,7 +72,7 @@ class HMMRegimeDetector:
         self.covariance_type = covariance_type
         self.random_state = random_state
 
-        self.model: Optional[GaussianHMM] = None
+        self.model = None  # GaussianHMM instance (lazy-imported)
         self.state_map: Dict[int, int] = {}  # HMM state → regime label
         self.is_fitted = False
 
@@ -151,6 +157,7 @@ class HMMRegimeDetector:
             return False
 
         try:
+            from hmmlearn.hmm import GaussianHMM  # Lazy import (scipy.stats hangs at module level on Py3.14)
             self.model = GaussianHMM(
                 n_components=self.n_states,
                 covariance_type=self.covariance_type,
