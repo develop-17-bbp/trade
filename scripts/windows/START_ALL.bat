@@ -108,9 +108,13 @@ echo     Initializing components...
 echo.
 timeout /t 2 /nobreak >nul
 
-REM Force correct directory (main repo, NOT worktree)
-cd /d C:\Users\convo\trade
-echo   Working directory: %CD%
+REM Resolve repo root from scripts\windows\ (works on ANY machine)
+set "REPO_ROOT=%~dp0..\.."
+pushd "%REPO_ROOT%"
+set "REPO_ROOT=%CD%"
+popd
+cd /d "%REPO_ROOT%"
+echo   Working directory: %REPO_ROOT%
 echo.
 
 REM Set environment variables BEFORE launching anything
@@ -119,31 +123,31 @@ set PYTHONUNBUFFERED=1
 set PATH=C:\Program Files\nodejs;%PATH%
 
 echo [1/7] Starting Trading Bot...
-start "ACTs - Trading Bot" cmd /k "cd /d C:\Users\convo\trade && set PYTHONUNBUFFERED=1 && python -m src.main"
+start "ACTs - Trading Bot" cmd /k "cd /d "%REPO_ROOT%" && set PYTHONUNBUFFERED=1 && python -m src.main"
 timeout /t 8 /nobreak >nul
 
 echo [2/7] Starting API Server (port 11007)...
-start "ACTs - API Server" cmd /k "cd /d C:\Users\convo\trade && set TRADE_API_DEV_MODE=1 && python -m uvicorn src.api.production_server:app --host 0.0.0.0 --port 11007"
+start "ACTs - API Server" cmd /k "cd /d "%REPO_ROOT%" && set TRADE_API_DEV_MODE=1 && python -m uvicorn src.api.production_server:app --host 0.0.0.0 --port 11007"
 timeout /t 4 /nobreak >nul
 
 echo [3/7] Starting Dashboard (port 5173)...
-start "ACTs - Dashboard" cmd /k "cd /d C:\Users\convo\trade\frontend && set PATH=C:\Program Files\nodejs;%%PATH%% && node node_modules\vite\bin\vite.js --host"
+start "ACTs - Dashboard" cmd /k "cd /d "%REPO_ROOT%\frontend" && set PATH=C:\Program Files\nodejs;%%PATH%% && node node_modules\vite\bin\vite.js --host"
 timeout /t 4 /nobreak >nul
 
 echo [4/7] Starting Continuous Adaptation...
-start "ACTs - Continuous Adapt" cmd /k "cd /d C:\Users\convo\trade && python -m src.scripts.continuous_adapt --continuous --interval 0.5"
+start "ACTs - Continuous Adapt" cmd /k "cd /d "%REPO_ROOT%" && python -m src.scripts.continuous_adapt --continuous --interval 0.5"
 timeout /t 2 /nobreak >nul
 
 echo [5/7] Starting Monitor...
-start "ACTs - Monitor" cmd /k "cd /d C:\Users\convo\trade && scripts\windows\run_monitor.bat"
+start "ACTs - Monitor" cmd /k "cd /d "%REPO_ROOT%" && scripts\windows\run_monitor.bat"
 timeout /t 2 /nobreak >nul
 
 echo [6/7] Starting Autonomous Self-Learning Loop...
-start "ACTs - Autonomous Loop" cmd /k "cd /d C:\Users\convo\trade && python -m src.scripts.autonomous_loop --interval 2"
+start "ACTs - Autonomous Loop" cmd /k "cd /d "%REPO_ROOT%" && python -m src.scripts.autonomous_loop --interval 2"
 timeout /t 2 /nobreak >nul
 
 echo [7/7] Starting Daily Ops (health + maintenance)...
-start "ACTs - Daily Ops" cmd /k "cd /d C:\Users\convo\trade && python -m src.scripts.daily_ops --continuous"
+start "ACTs - Daily Ops" cmd /k "cd /d "%REPO_ROOT%" && python -m src.scripts.daily_ops --continuous"
 timeout /t 2 /nobreak >nul
 
 REM == Final: All systems online ==

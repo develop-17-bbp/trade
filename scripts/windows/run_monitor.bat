@@ -3,7 +3,7 @@ REM ACT's Trading System — 24/7 Monitor Loop
 REM Runs independently of Claude Code session
 REM Start this in a separate PowerShell/CMD window
 
-cd /d C:\Users\convo\trade
+cd /d "%~dp0..\.."
 echo ============================================================
 echo   ACT's Trading Monitor — Runs Every 10 Minutes
 echo   Press Ctrl+C to stop
