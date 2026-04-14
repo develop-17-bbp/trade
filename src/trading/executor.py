@@ -451,6 +451,16 @@ class TradingExecutor:
                     exchange=self._ex_tag.lower(),
                     config=config,
                 )
+                # Wire fine-tuning data collector into brain
+                try:
+                    from src.ai.training_data_collector import TrainingDataCollector
+                    self._training_collector = TrainingDataCollector(
+                        spread_cost_pct=self._round_trip_spread,
+                    )
+                    self._brain._training_collector = self._training_collector
+                    print(f"  [AI] Fine-tuning data collector ACTIVE")
+                except Exception:
+                    self._training_collector = None
                 print(f"  [AI] Trading Brain v2 ACTIVE — multi-model (mistral+llama3.2), CoT, memory, regime, Kelly, session")
             except Exception as e:
                 print(f"  [AI] Trading Brain v2 init failed ({e}) — using legacy LLM")
@@ -5081,6 +5091,37 @@ class TradingExecutor:
                 ind_lines.append(f"  {key}: {val}")
             candle_text = candle_text + chr(10) + chr(10).join(ind_lines)
 
+        # ── Adaptive Feedback Context: feed learned patterns into LLM ──
+        _adaptive_ctx = {}
+        if self._adaptive:
+            try:
+                _regime_hint = ml_context.get('hmm_regime', 'UNKNOWN') if 'ml_context' in dir() else 'UNKNOWN'
+                _adaptive_ctx = self._adaptive.get_adaptive_context(asset, _regime_hint)
+                # Inject winner/loser DNA into LLM prompt
+                _dna_lines = []
+                if _adaptive_ctx.get('winner_dna'):
+                    _dna_lines.append(f"WINNING PATTERNS (from {_adaptive_ctx['total_trades']} trades):")
+                    _dna_lines.append(f"  {_adaptive_ctx['winner_dna']}")
+                if _adaptive_ctx.get('loser_dna'):
+                    _dna_lines.append(f"LOSING PATTERNS (avoid these):")
+                    _dna_lines.append(f"  {_adaptive_ctx['loser_dna']}")
+                if _adaptive_ctx.get('rolling_win_rate', 0.5) != 0.5:
+                    _dna_lines.append(f"ADAPTIVE STATS: WR={_adaptive_ctx['rolling_win_rate']:.0%} "
+                                      f"asset_WR={_adaptive_ctx['asset_win_rate']:.0%} "
+                                      f"regime_WR={_adaptive_ctx['regime_win_rate']:.0%}")
+                if _dna_lines:
+                    candle_text = candle_text + chr(10) + chr(10).join(_dna_lines)
+            except Exception:
+                pass
+
+        # ── Self-Evolving Overlay: apply adaptive risk/sizing multipliers ──
+        _evo_overrides = {}
+        if self._evolution_overlay:
+            try:
+                _evo_overrides = self._evolution_overlay.get_overrides()
+            except Exception:
+                pass
+
         if self._brain:
             # ── BRAIN v2: full 7-layer evaluation ──
             print(f"  [{self._ex_tag}:{asset}] >>> BRAIN v2 evaluating (2 models + CoT + regime + memory)...")
@@ -5176,6 +5217,23 @@ class TradingExecutor:
         size_pct = unified.get('position_size_pct', 3)
         reasoning = str(unified.get('facilitator_verdict', ''))[:120]
         risk_score = unified.get('risk_score', 5)
+
+        # ── Apply Adaptive Feedback Multipliers ──
+        if _adaptive_ctx:
+            _conf_mult = _adaptive_ctx.get('confidence_multiplier', 1.0)
+            _size_mult = _adaptive_ctx.get('size_multiplier', 1.0)
+            if _conf_mult != 1.0:
+                confidence = max(0.1, min(1.0, confidence * _conf_mult))
+            if _size_mult != 1.0:
+                size_pct = max(1.0, size_pct * _size_mult)
+                print(f"  [{self._ex_tag}:{asset}] ADAPTIVE: size *{_size_mult:.2f} conf *{_conf_mult:.2f} (WR={_adaptive_ctx.get('rolling_win_rate', 0.5):.0%})")
+
+        # ── Apply Self-Evolving Overlay Risk Adjustments ──
+        if _evo_overrides:
+            _evo_size_mult = _evo_overrides.get('risk_params', {}).get('size_mult', 1.0)
+            if _evo_size_mult != 1.0:
+                size_pct = max(1.0, size_pct * _evo_size_mult)
+                print(f"  [{self._ex_tag}:{asset}] EVOLVE: size *{_evo_size_mult:.2f}")
 
         # ── EVENT GUARD: calendar-based risk advisory (warns during known high-risk events) ──
         # NOTE: Changed from hard-block to advisory — recurring events use midnight as
@@ -7151,6 +7209,20 @@ class TradingExecutor:
             except Exception as _pe:
                 logger.warning(f"[PAPER] Exit record failed: {_pe}")
 
+        # ── Fine-tuning: label this trade outcome for LLM training ──
+        if hasattr(self, '_training_collector') and self._training_collector:
+            try:
+                self._training_collector.label_outcome(
+                    asset=asset,
+                    entry_time=pos.get('entry_time', 0),
+                    pnl_pct=pnl_pct,
+                    exit_reason=reason,
+                    sl_level=pos.get('sl_levels', ['L1'])[-1] if pos.get('sl_levels') else 'L1',
+                    duration_min=(time.time() - pos.get('entry_time', time.time())) / 60,
+                )
+            except Exception:
+                pass
+
         # Remove from positions
         del self.positions[asset]
         self._closing_in_progress.discard(asset)
@@ -7189,6 +7261,30 @@ class TradingExecutor:
                 ))
             except Exception as _af_err:
                 logger.debug(f"[ADAPTIVE] Feedback failed: {_af_err}")
+
+        # ── Self-Evolving Overlay — learn from this trade ──
+        if self._evolution_overlay:
+            try:
+                _evo_trade = {
+                    'won': pnl_pct > 0,
+                    'pnl_pct': pnl_pct,
+                    'pnl_usd': pnl_usd,
+                    'asset': asset,
+                    'strategy': pos.get('trade_timeframe', 'ema_trend'),
+                    'llm_confidence': pos.get('confidence', 0),
+                    'entry_score': pos.get('entry_tag', '').count('-') + 5,
+                    'exit_reason': reason,
+                    'direction': 1 if direction == 'LONG' else -1,
+                }
+                _evo_votes = pos.get('agent_votes', {})
+                _evo_regime = pos.get('hurst_regime', 'UNKNOWN')
+                self._evolution_overlay.update_all(
+                    trade_outcome=_evo_trade,
+                    agent_votes=_evo_votes,
+                    regime=_evo_regime,
+                )
+            except Exception as _evo_err:
+                logger.debug(f"[EVOLVE] Feedback failed: {_evo_err}")
 
         now = time.time()
         self.last_close_time[asset] = now

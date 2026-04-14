@@ -398,6 +398,89 @@ def step4_retrain_models():
         return False
 
 
+def step4b_finetune_llm():
+    """Fine-tune LLM models on collected trade outcome data."""
+    print("\n" + "="*60)
+    print("  STEP 4b: FINE-TUNING LLM MODELS ON TRADE OUTCOMES")
+    print("="*60)
+    try:
+        from src.ai.training_data_collector import TrainingDataCollector
+        from src.ai.lora_trainer import LoRATrainer
+
+        collector = TrainingDataCollector(spread_cost_pct=SPREAD_PCT)
+        stats = collector.get_stats()
+        print(f"  Training data: {stats['total_decisions']} decisions, "
+              f"{stats['labeled']} labeled, {stats['pending_label']} pending")
+        print(f"  Scanner examples: {stats['scanner_examples']}, "
+              f"Analyst examples: {stats['analyst_examples']}")
+
+        # Need minimum examples before fine-tuning is worthwhile
+        MIN_EXAMPLES = 20
+        scanner_ready = stats['scanner_examples'] >= MIN_EXAMPLES
+        analyst_ready = stats['analyst_examples'] >= MIN_EXAMPLES
+
+        if not scanner_ready and not analyst_ready:
+            print(f"  Not enough training data yet (need {MIN_EXAMPLES}+ labeled examples)")
+            print(f"  Generating synthetic seed data to bootstrap training...")
+            # Export will auto-generate synthetic data if below threshold
+            collector.export_training_data(min_examples=MIN_EXAMPLES)
+            stats = collector.get_stats()
+            scanner_ready = stats['scanner_examples'] >= MIN_EXAMPLES
+            analyst_ready = stats['analyst_examples'] >= MIN_EXAMPLES
+
+        models_trained = []
+
+        if scanner_ready:
+            print(f"\n  Training SCANNER model ({stats['scanner_examples']} examples)...")
+            try:
+                trainer = LoRATrainer(model_type='scanner')
+                result = trainer.full_pipeline(epochs=3, quantization='q4_k_m')
+                if result.get('status') == 'success':
+                    models_trained.append('scanner')
+                    print(f"  Scanner: TRAINED + DEPLOYED to Ollama as 'act-scanner'")
+                else:
+                    print(f"  Scanner training failed: {result.get('status', 'unknown')}")
+            except Exception as e:
+                logger.warning(f"Scanner fine-tune failed: {e}")
+                print(f"  Scanner fine-tune error: {e}")
+
+        if analyst_ready:
+            print(f"\n  Training ANALYST model ({stats['analyst_examples']} examples)...")
+            try:
+                trainer = LoRATrainer(model_type='analyst')
+                result = trainer.full_pipeline(epochs=3, quantization='q4_k_m')
+                if result.get('status') == 'success':
+                    models_trained.append('analyst')
+                    print(f"  Analyst: TRAINED + DEPLOYED to Ollama as 'act-analyst'")
+                else:
+                    print(f"  Analyst training failed: {result.get('status', 'unknown')}")
+            except Exception as e:
+                logger.warning(f"Analyst fine-tune failed: {e}")
+                print(f"  Analyst fine-tune error: {e}")
+
+        # Save fine-tuning metrics for adaptation context
+        finetune_log = {
+            'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+            'models_trained': models_trained,
+            'training_stats': stats,
+        }
+        log_path = os.path.join(PROJECT_ROOT, 'logs/finetune_history.jsonl')
+        with open(log_path, 'a') as f:
+            f.write(json.dumps(finetune_log, default=str) + '\n')
+
+        if models_trained:
+            print(f"\n  Fine-tuned models: {', '.join(models_trained)}")
+        else:
+            print(f"  No models trained this cycle (collecting more data)")
+
+        return True
+    except Exception as e:
+        logger.error(f"LLM fine-tuning step failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def step5_save_for_llm():
     """Save adaptation results for LLM context."""
     print("\n" + "="*60)
@@ -410,6 +493,7 @@ def step5_save_for_llm():
             'data_refreshed': True,
             'strategies_backtested': True,
             'models_retrained': True,
+            'llm_finetuned': True,
         }
 
         # Load backtest results
@@ -424,6 +508,25 @@ def step5_save_for_llm():
         if os.path.exists(w_path):
             with open(w_path) as f:
                 summary['recommended_weights'] = json.load(f)
+
+        # Load fine-tuning history (last entry)
+        ft_path = os.path.join(PROJECT_ROOT, 'logs/finetune_history.jsonl')
+        if os.path.exists(ft_path):
+            try:
+                with open(ft_path) as f:
+                    lines = f.readlines()
+                    if lines:
+                        summary['last_finetune'] = json.loads(lines[-1].strip())
+            except Exception:
+                pass
+
+        # Load training data stats
+        try:
+            from src.ai.training_data_collector import TrainingDataCollector
+            collector = TrainingDataCollector()
+            summary['training_data_stats'] = collector.get_stats()
+        except Exception:
+            pass
 
         # Save
         out_path = os.path.join(PROJECT_ROOT, 'data/adaptation_context.json')
@@ -486,6 +589,7 @@ def run_cycle():
     step2b_evolve_strategies(results, winners)
     step3_update_weights(winners)
     step4_retrain_models()
+    step4b_finetune_llm()
     step5_save_for_llm()
     step6_performance_report()
 

@@ -60,8 +60,8 @@ risk:
 # llm_provider: 'auto' = Delta→Claude, Bybit→Ollama | 'claude' | 'ollama'
 ai:
   reasoning_provider: "auto"
-  reasoning_model: "nexus-scanner"         # Fine-tuned Mistral for pattern scanning (was mistral:latest)
-  ollama_base_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
+  reasoning_model: "act-scanner"            # QLoRA fine-tuned Mistral for pattern scanning (falls back to nexus-scanner → mistral:latest)
+  ollama_base_url: "http://localhost:11434"
   llm_provider: "auto"            # auto: Delta=Claude, Bybit=Ollama
   claude_model: "claude-haiku-4-5" # Cost-effective for trade decisions (~$0.001/call)
   use_llm_trade_decider: true
@@ -83,7 +83,7 @@ ai:
 # Ollama can only hold 1 model in VRAM — switching causes 5-10s delays + failures
 monitor:
   enabled: true
-  ollama_url: "https://spas-inclusive-breaking-frontier.trycloudflare.com"
+  ollama_url: "http://localhost:11434"
   ollama_model: "mistral:latest"
   scan_interval: 120              # Check logs every 2min (less frequent = less contention)
   auto_fix: true                  # Apply safe fixes (null guards, type casts, defaults)

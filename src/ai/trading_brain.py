@@ -795,8 +795,10 @@ class MultiModelConsensus:
 
     # Fine-tuned models with trading-specific system prompts, temperature, and output format
     # Deployed via Ollama custom Modelfiles on GPU server
-    MODEL_SCANNER = "nexus-scanner"     # Fine-tuned Mistral: pattern recognition + multi-strategy awareness
-    MODEL_ANALYST = "nexus-analyst"     # Fine-tuned Llama3.2: strategy allocator + risk analyst + spread-aware
+    MODEL_SCANNER = "act-scanner"        # QLoRA fine-tuned Mistral: pattern recognition (falls back to nexus-scanner)
+    MODEL_ANALYST = "act-analyst"        # QLoRA fine-tuned Llama: trade decision (falls back to nexus-analyst)
+    MODEL_SCANNER_FALLBACK = "nexus-scanner"   # Pre-fine-tune scanner model
+    MODEL_ANALYST_FALLBACK = "mistral:latest"  # Base Mistral fallback
 
     def __init__(self, ollama_base_url: str = "http://localhost:11434"):
         self.ollama_base_url = ollama_base_url.rstrip("/")
@@ -807,13 +809,17 @@ class MultiModelConsensus:
         1. Mistral scans patterns (Pass 1)
         2. Llama analyzes risk + decides using Mistral's findings (Pass 2)
         """
-        # PASS 1: Pattern scan with Mistral
+        # PASS 1: Pattern scan with Mistral (try fine-tuned, fall back to base)
         print(f"  [BRAIN:PASS1] Mistral scanning patterns...")
         try:
             pattern_result = self._call_ollama(self.MODEL_SCANNER, scanner_prompt)
         except Exception as e:
-            print(f"  [BRAIN:PASS1] Mistral error: {e} — using empty patterns")
-            pattern_result = self._empty_pattern_result()
+            try:
+                print(f"  [BRAIN:PASS1] {self.MODEL_SCANNER} failed, trying {self.MODEL_SCANNER_FALLBACK}...")
+                pattern_result = self._call_ollama(self.MODEL_SCANNER_FALLBACK, scanner_prompt)
+            except Exception as e2:
+                print(f"  [BRAIN:PASS1] All scanner models failed: {e2} — using empty patterns")
+                pattern_result = self._empty_pattern_result()
 
         # Validate pattern result
         pattern_result = self._validate_patterns(pattern_result)
@@ -822,19 +828,23 @@ class MultiModelConsensus:
         strongest = pattern_result.get("strongest_signal", "None")
         print(f"  [BRAIN:PASS1] Patterns: bias={pat_bias} strength={pat_strength}/10 key={strongest}")
 
-        # PASS 2: Risk analysis + decision with Llama, using Mistral's findings
+        # PASS 2: Risk analysis + decision with Llama, using Mistral's findings (try fine-tuned, fall back)
         print(f"  [BRAIN:PASS2] Llama analyzing risk + deciding...")
         analyst_prompt = analyst_prompt_builder(pattern_scan_result=pattern_result, **analyst_kwargs)
         try:
             decision_result = self._call_ollama(self.MODEL_ANALYST, analyst_prompt)
         except Exception as e:
-            print(f"  [BRAIN:PASS2] Llama error: {e} — rejecting trade (safe default)")
-            decision_result = {
-                "proceed": False, "confidence": 0.2, "risk_score": 8,
-                "trade_quality": 2, "predicted_l_level": "L1",
-                "bull_case": "Analyst unavailable", "bear_case": str(e),
-                "facilitator_verdict": "REJECTED — analyst error",
-            }
+            try:
+                print(f"  [BRAIN:PASS2] {self.MODEL_ANALYST} failed, trying {self.MODEL_ANALYST_FALLBACK}...")
+                decision_result = self._call_ollama(self.MODEL_ANALYST_FALLBACK, analyst_prompt)
+            except Exception as e2:
+                print(f"  [BRAIN:PASS2] All analyst models failed: {e2} — rejecting trade (safe default)")
+                decision_result = {
+                    "proceed": False, "confidence": 0.2, "risk_score": 8,
+                    "trade_quality": 2, "predicted_l_level": "L1",
+                    "bull_case": "Analyst unavailable", "bear_case": str(e2),
+                    "facilitator_verdict": "REJECTED — analyst error",
+                }
 
         # PASS 3 (optional): If Llama says YES, quick Mistral verification
         # "Does the pattern data actually support this decision?"
@@ -846,6 +856,12 @@ class MultiModelConsensus:
                 if decision_result["confidence"] < 0.45:
                     decision_result["proceed"] = False
                     decision_result["facilitator_verdict"] = f"REJECTED — pattern contradiction: {verification['reason']}"
+
+        # ── Capture for fine-tuning data collection ──
+        self._last_scanner_prompt = scanner_prompt
+        self._last_scanner_output = pattern_result
+        self._last_analyst_prompt = analyst_prompt
+        self._last_analyst_output = decision_result
 
         # Merge pattern + decision results
         return self._merge_results(pattern_result, decision_result)
@@ -1275,6 +1291,27 @@ class TradingBrainV2:
         kelly_size = self.kelly.compute_from_history(pnl_values, position_size_pct, equity)
         kelly_size = kelly_size * session_mult * regime_info.get("size_multiplier", 1.0)
         kelly_size = round(max(1.0, min(100.0, kelly_size)), 2)
+
+        # ── Record decision for fine-tuning data collection ──
+        try:
+            if hasattr(self, '_training_collector') and self._training_collector:
+                self._training_collector.record_decision(
+                    asset=asset, price=price,
+                    scanner_prompt=getattr(self.consensus, '_last_scanner_prompt', ''),
+                    scanner_output=getattr(self.consensus, '_last_scanner_output', {}),
+                    analyst_prompt=getattr(self.consensus, '_last_analyst_prompt', ''),
+                    analyst_output=getattr(self.consensus, '_last_analyst_output', {}),
+                    market_context={
+                        'regime': regime_name,
+                        'hurst': regime_info.get('hurst', 0),
+                        'entry_score': entry_score,
+                        'htf_alignment': htf_alignment,
+                        'ema_direction': ema_direction,
+                        'signal': signal,
+                    },
+                )
+        except Exception:
+            pass  # Never block trading for data collection
 
         return self._build_result(
             proceed=proceed, confidence=confidence, position_size_pct=kelly_size,
