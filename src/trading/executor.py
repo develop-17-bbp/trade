@@ -6877,6 +6877,64 @@ class TradingExecutor:
             pnl_pct -= _spread_cost_pct
             pnl_usd -= _spread_cost_usd
 
+        # ── Genetic DNA live-outcome feedback ──
+        try:
+            _dna_ids = pos.get('genetic_dna_ids') or []
+            if _dna_ids:
+                _genetic_engine = getattr(self, '_genetic_engine', None)
+                _fn = getattr(_genetic_engine, 'record_live_outcome', None) if _genetic_engine is not None else None
+                if _fn is not None:
+                    _regime = pos.get('hmm_regime') or pos.get('hurst_regime') or 'UNKNOWN'
+                    for _dna_id in _dna_ids:
+                        try:
+                            _fn(_dna_id, float(pnl_pct), _regime)
+                        except Exception as _dfe:
+                            try:
+                                logger.debug(f"[GENETIC] record_live_outcome({_dna_id}) failed: {_dfe}")
+                            except Exception:
+                                pass
+                else:
+                    # Fallback: executor may only have self._genetic_hall_of_fame (raw list), no engine object
+                    _hof = getattr(self, '_genetic_hall_of_fame', None)
+                    if _hof:
+                        try:
+                            import json, os
+                            _path = 'logs/genetic_evolution_results.json'
+                            _updated = False
+                            for _entry in _hof:
+                                _name = _entry.get('name') if isinstance(_entry, dict) else getattr(_entry, 'name', None)
+                                if _name in _dna_ids:
+                                    if isinstance(_entry, dict):
+                                        if float(pnl_pct) > 0:
+                                            _entry['live_wins'] = _entry.get('live_wins', 0) + 1
+                                        else:
+                                            _entry['live_losses'] = _entry.get('live_losses', 0) + 1
+                                        _entry['live_pnl_sum'] = _entry.get('live_pnl_sum', 0.0) + float(pnl_pct)
+                                        _total = _entry.get('live_wins', 0) + _entry.get('live_losses', 0)
+                                        if _total >= 5:
+                                            _entry['validated'] = True
+                                        _updated = True
+                            if _updated:
+                                try:
+                                    _tmp = _path + '.tmp'
+                                    _out = {}
+                                    if os.path.exists(_path):
+                                        with open(_path, 'r') as _f:
+                                            _out = json.load(_f) or {}
+                                    _out['hall_of_fame'] = _hof
+                                    with open(_tmp, 'w') as _f:
+                                        json.dump(_out, _f, indent=2, default=str)
+                                    os.replace(_tmp, _path)
+                                except Exception as _pe:
+                                    logger.debug(f"[GENETIC] fallback HoF persist failed: {_pe}")
+                        except Exception as _ge:
+                            logger.debug(f"[GENETIC] fallback feedback failed: {_ge}")
+        except Exception as _gfe:
+            try:
+                logger.debug(f"[GENETIC] feedback block failed: {_gfe}")
+            except Exception:
+                pass
+
         sl_chain = '->'.join(pos.get('sl_levels', ['L1']))
         actual_l_count = len(pos.get('sl_levels', ['L1']))
         actual_l_level = f"L{actual_l_count}"
