@@ -581,9 +581,20 @@ class IslandModel:
         for regime, engine in self.islands.items():
             engine.evaluate_population()
             engine.update_hall_of_fame()
+            island_name = str(regime).upper()
             for entry in engine.hall_of_fame[:3]:
-                d = entry.to_dict()
-                d['home_regime'] = regime
+                if isinstance(entry, dict):
+                    entry['regime'] = island_name
+                    d = dict(entry)
+                else:
+                    try:
+                        setattr(entry, 'regime', island_name)
+                    except Exception:
+                        pass
+                    d = entry.to_dict() if hasattr(entry, 'to_dict') else {}
+                d['regime'] = island_name
+                d['home_regime'] = regime  # backward-compat field retained for older readers
+                logger.info(f"[GENETIC] Tagged HoF entry {d.get('name', '?')} with regime={island_name}")
                 combined_hof.append(d)
         combined_hof.sort(key=lambda x: x.get('fitness', 0), reverse=True)
         return {'hall_of_fame': combined_hof[:10], 'regime_counts': dict(counts)}
@@ -986,12 +997,26 @@ class GeneticStrategyEngine:
 
     def _save_results(self):
         """Save evolution results + Pareto front + evolution summary."""
+        # Ensure every HoF entry carries a regime tag; preserve any non-default value
+        hof_serialized = []
+        for dna in self.hall_of_fame:
+            if isinstance(dna, dict):
+                d = dict(dna)
+                existing = dna.get('regime')
+            else:
+                d = dna.to_dict() if hasattr(dna, 'to_dict') else {}
+                existing = getattr(dna, 'regime', None)
+            if not existing or existing in ('ANY', ''):
+                existing = d.get('regime') if d.get('regime') not in (None, '', 'ANY') else 'ANY'
+            d['regime'] = existing
+            hof_serialized.append(d)
+
         results = {
             'timestamp': datetime.now(tz=timezone.utc).isoformat(),
             'generations': self.generation,
             'spread_pct': self.spread_pct,
             'population_size': len(self.population),
-            'hall_of_fame': [dna.to_dict() for dna in self.hall_of_fame],
+            'hall_of_fame': hof_serialized,
             'best_fitness': self.hall_of_fame[0].fitness if self.hall_of_fame else 0,
             'best_pnl': self.hall_of_fame[0].total_pnl if self.hall_of_fame else 0,
             'pareto_front': self.pareto_front.to_list(),
