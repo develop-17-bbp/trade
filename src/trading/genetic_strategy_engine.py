@@ -312,7 +312,7 @@ def backtest_dna(dna: StrategyDNA, closes, highs, lows, volumes,
     """Backtest a strategy DNA and compute fitness metrics."""
     n = len(closes)
     if n < 100:
-        return {'fitness': 0, 'trades': 0, 'win_rate': 0, 'total_pnl': 0, 'sharpe': 0}
+        return {'fitness': 0, 'trades': 0, 'win_rate': 0, 'total_pnl': 0, 'sharpe': 0, 'spread_drag': 0.0}
 
     trades = []
     position = None
@@ -369,7 +369,7 @@ def backtest_dna(dna: StrategyDNA, closes, highs, lows, volumes,
                 position = None
 
     if not trades:
-        return {'fitness': 0, 'trades': 0, 'win_rate': 0, 'total_pnl': 0, 'sharpe': 0}
+        return {'fitness': 0, 'trades': 0, 'win_rate': 0, 'total_pnl': 0, 'sharpe': 0, 'spread_drag': 0.0}
 
     wins = [t for t in trades if t['won']]
     pnls = [t['pnl_pct'] for t in trades]
@@ -398,6 +398,13 @@ def backtest_dna(dna: StrategyDNA, closes, highs, lows, volumes,
         if total_pnl < 0:
             fitness *= 0.3
 
+    # Cumulative spread drag penalty — discourages churn. Per-trade spread
+    # is already netted in pnl above; this is an additional fitness-scale
+    # penalty so 50 marginal trades score worse than 5 well-timed ones.
+    spread_drag_pct = SPREAD_PCT * len(trades)
+    fitness_penalty = spread_drag_pct / 100.0
+    fitness = max(0.0, fitness - fitness_penalty)
+
     return {
         'fitness': round(fitness, 4),
         'trades': len(trades),
@@ -406,6 +413,7 @@ def backtest_dna(dna: StrategyDNA, closes, highs, lows, volumes,
         'total_pnl': round(total_pnl, 2),
         'avg_pnl': round(avg_pnl, 2),
         'sharpe': round(sharpe, 3),
+        'spread_drag': round(spread_drag_pct, 3),
         'metrics': metrics,
     }
 
