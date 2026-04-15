@@ -1018,6 +1018,125 @@ class GeneticStrategyEngine:
 
         print(f"\n  Results saved to {path}")
 
+    def record_live_outcome(self, dna_name: str, pnl_pct: float, regime: str = None) -> bool:
+        """Update a hall-of-fame DNA with a live trade outcome.
+
+        Called from executor._close_position after a trade is finalized.
+        Updates live_wins/live_losses/live_pnl_sum on the matching DNA
+        and persists the HoF back to disk atomically.
+
+        Uses getattr/setattr fallbacks so it works whether or not U1
+        (schema extension) has merged yet.
+
+        Returns True if DNA was found and updated, False otherwise.
+        """
+        try:
+            hof = getattr(self, 'hall_of_fame', None) or []
+            if not hof:
+                return False
+
+            matched = None
+            for dna in hof:
+                if isinstance(dna, dict):
+                    name = dna.get('name')
+                else:
+                    name = getattr(dna, 'name', None)
+                if name == dna_name:
+                    matched = dna
+                    break
+
+            if matched is None:
+                try:
+                    logger.debug(f"[GENETIC] record_live_outcome: DNA '{dna_name}' not found in hall of fame")
+                except Exception:
+                    pass
+                return False
+
+            # Update live stats with getattr/setattr fallback (works before U1 lands)
+            def _get(obj, attr, default):
+                if isinstance(obj, dict):
+                    return obj.get(attr, default)
+                return getattr(obj, attr, default)
+
+            def _set(obj, attr, value):
+                if isinstance(obj, dict):
+                    obj[attr] = value
+                else:
+                    setattr(obj, attr, value)
+
+            if pnl_pct > 0:
+                _set(matched, 'live_wins', _get(matched, 'live_wins', 0) + 1)
+            else:
+                _set(matched, 'live_losses', _get(matched, 'live_losses', 0) + 1)
+
+            _set(matched, 'live_pnl_sum', _get(matched, 'live_pnl_sum', 0.0) + float(pnl_pct))
+
+            if regime is not None:
+                _set(matched, 'last_live_regime', str(regime))
+
+            total_live = _get(matched, 'live_wins', 0) + _get(matched, 'live_losses', 0)
+            if total_live >= 5:
+                _set(matched, 'validated', True)
+                if hasattr(matched, 'mark_validated'):
+                    try:
+                        matched.mark_validated()
+                    except Exception:
+                        pass
+
+            # Persist HoF atomically
+            try:
+                hof_path = getattr(self, 'hall_of_fame_path', None) or os.path.join(PROJECT_ROOT, 'logs/genetic_evolution_results.json')
+                os.makedirs(os.path.dirname(hof_path), exist_ok=True)
+                tmp_path = hof_path + '.tmp'
+
+                # Serialize HoF — use to_dict() when available, else dict form
+                serialized = []
+                for d in hof:
+                    if hasattr(d, 'to_dict'):
+                        try:
+                            serialized.append(d.to_dict())
+                        except Exception:
+                            pass
+                    elif isinstance(d, dict):
+                        serialized.append(d)
+
+                # Preserve existing top-level fields (pareto_front, evolution_summary, etc.)
+                out = {}
+                try:
+                    with open(hof_path, 'r') as f:
+                        out = json.load(f) or {}
+                except Exception:
+                    out = {}
+                out['hall_of_fame'] = serialized
+                out['last_live_update'] = datetime.now(tz=timezone.utc).isoformat()
+
+                with open(tmp_path, 'w') as f:
+                    json.dump(out, f, indent=2, default=str)
+                os.replace(tmp_path, hof_path)
+            except Exception as _pe:
+                try:
+                    logger.debug(f"[GENETIC] record_live_outcome persist failed: {_pe}")
+                except Exception:
+                    pass
+                # In-memory update still succeeded, so return True
+
+            try:
+                logger.info(
+                    f"[GENETIC] {dna_name}: "
+                    f"{_get(matched, 'live_wins', 0)}W/{_get(matched, 'live_losses', 0)}L "
+                    f"(pnl={pnl_pct:+.2f}%)"
+                )
+            except Exception:
+                pass
+
+            return True
+        except Exception as e:
+            try:
+                logger.debug(f"[GENETIC] record_live_outcome failed: {e}")
+            except Exception:
+                pass
+            return False
+
 
 def main():
     parser = argparse.ArgumentParser(description='Genetic Strategy Evolution Engine')
