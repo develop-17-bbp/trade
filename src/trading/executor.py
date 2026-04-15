@@ -5848,6 +5848,43 @@ class TradingExecutor:
 
         sl_order_id = None
 
+        # ── Capture ML model predictions for Model Accuracy telemetry ──
+        # Convert each model's prediction to "predicts-profitable" axis (+1/-1/0):
+        #   +1 = model expects this trade to work out
+        #   -1 = model expects this trade to fail
+        #    0 = model didn't run or was NEUTRAL/FLAT (skipped in stats)
+        _mlp_lgbm_raw = ml_context.get('lgbm_direction', 'FLAT')
+        if _mlp_lgbm_raw == 'TRADE':
+            _mlp_lgbm = 1
+        elif _mlp_lgbm_raw == 'SKIP':
+            _mlp_lgbm = -1
+        elif _mlp_lgbm_raw in ('LONG', 'SHORT'):
+            _mlp_lgbm = (1 if _mlp_lgbm_raw == 'LONG' else -1) * (1 if action == 'LONG' else -1)
+        else:
+            _mlp_lgbm = 0
+
+        _mlp_patch_raw = ml_context.get('patchtst_direction', 'NEUTRAL')
+        if _mlp_patch_raw == 'UP':
+            _mlp_patch = 1 if action == 'LONG' else -1
+        elif _mlp_patch_raw == 'DOWN':
+            _mlp_patch = -1 if action == 'LONG' else 1
+        else:
+            _mlp_patch = 0
+
+        _mlp_rl_enter = ml_context.get('rl_enter')
+        if _mlp_rl_enter is True:
+            _mlp_rl = 1
+        elif _mlp_rl_enter is False:
+            _mlp_rl = -1
+        else:
+            _mlp_rl = 0
+
+        _ml_predictions_snapshot = {
+            'lightgbm': _mlp_lgbm,
+            'patchtst': _mlp_patch,
+            'rl_agent': _mlp_rl,
+        }
+
         # Record position (with chosen timeframe for scaled SL management)
         self.positions[asset] = {
             'direction': action,          # LONG or SHORT
@@ -5880,6 +5917,7 @@ class TradingExecutor:
             'dca_count': 0,
             'rl_state': ml_context.get('_rl_state', None),        # RL state at entry (for learning)
             'rl_action_idx': ml_context.get('_rl_action_idx', 0),  # RL action chosen at entry
+            'ml_predictions': _ml_predictions_snapshot,           # Model Accuracy telemetry
         }
         self.last_trade_time[asset] = time.time()
         print(f"  [{self._ex_tag}:{asset}] POSITION STORED: {action} {qty:.6f} @ ${price:,.2f} | positions={list(self.positions.keys())}")
@@ -6876,6 +6914,22 @@ class TradingExecutor:
             _spread_cost_usd = entry * qty * cs * (_spread_cost_pct / 100.0)
             pnl_pct -= _spread_cost_pct
             pnl_usd -= _spread_cost_usd
+
+        # ── Model Accuracy Telemetry: compare predictions vs actual profitability ──
+        try:
+            _ml_preds = pos.get('ml_predictions') or {}
+            if _ml_preds:
+                from src.api.state import DashboardState as _DashboardState
+                _mlp_actual = 1 if pnl_pct > 0 else -1
+                _mlp_state = _DashboardState()
+                for _mlp_name, _mlp_pred in _ml_preds.items():
+                    if _mlp_pred != 0:
+                        _mlp_state.record_model_prediction(_mlp_name, int(_mlp_pred), _mlp_actual)
+        except Exception as _mlp_err:
+            try:
+                logger.debug(f"record_model_prediction failed: {_mlp_err}")
+            except Exception:
+                pass
 
         sl_chain = '->'.join(pos.get('sl_levels', ['L1']))
         actual_l_count = len(pos.get('sl_levels', ['L1']))
