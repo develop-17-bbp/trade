@@ -2,7 +2,7 @@
 Genetic Strategy Evolution Engine — Self-Evolving Trading Strategies
 =====================================================================
 Creates NEW strategies by combining, mutating, and evolving existing ones.
-Specifically optimized for Robinhood's 3.34% spread — only strategies
+Specifically optimized for Robinhood's 1.69% spread — only strategies
 that produce 5%+ moves survive natural selection.
 
 Architecture:
@@ -55,7 +55,7 @@ from src.indicators.indicators import (
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SPREAD_PCT = 3.34
+SPREAD_PCT = 1.69
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -7,7 +7,7 @@ in one automated loop.
 This is the BRAIN of the adaptive system. Every cycle:
 1. Refresh market data from Kraken
 2. Backtest ALL 278 strategies on fresh data
-3. Find winners that profit AFTER 3.34% Robinhood spread
+3. Find winners that profit AFTER 1.69% Robinhood spread
 4. Auto-update strategy weights in multi_strategy_engine.py
 5. Retrain LightGBM with fresh features + spread-aware labels
 6. Save results for LLM context enrichment
@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 logger = logging.getLogger('continuous_adapt')
 
-SPREAD_PCT = 3.34
+SPREAD_PCT = 1.69
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 

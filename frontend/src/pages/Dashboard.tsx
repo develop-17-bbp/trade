@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useCallback } from 'react'
 import { DollarSign, TrendingUp, Target, Activity, Brain, ChevronDown, ChevronUp } from 'lucide-react'
 import GlassCard from '../components/cards/GlassCard'
 import EquityCurve from '../components/charts/EquityCurve'
-import TradingViewWidget from '../components/charts/TradingViewWidget'
+import CandlestickChart from '../components/charts/CandlestickChart'
 import AgentVotePanel from '../components/ai/AgentVotePanel'
 import { useSystemState } from '../hooks/useSystemState'
 
@@ -72,7 +72,6 @@ export default function Dashboard() {
     </div>
   )
 
-  const tvSymbol = selectedAsset === 'BTC' ? 'KRAKEN:BTCUSD' : 'KRAKEN:ETHUSD'
   const todayPnl = portfolio?.today_pnl ?? 0
   const equity = portfolio?.equity ?? 0
   const totalReturnPct = portfolio?.total_return_pct ?? 0
@@ -179,9 +178,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Full-page TradingView Chart ── */}
+      {/* ── Full-page Native Chart with ACT trade markers ── */}
       <div className="flex-1 min-h-0 relative">
-        <TradingViewWidget symbol={tvSymbol} interval="60" height={chartHeight} />
+        <CandlestickChart
+          asset={selectedAsset}
+          timeframe="1h"
+          height={chartHeight}
+          trades={trades}
+          positions={positions}
+        />
 
         {/* ── Collapsible bottom panel ── */}
         <div className="absolute bottom-0 left-0 right-0 bg-black border-t border-[#222]">

@@ -6,7 +6,7 @@ programmatically from combinations of indicators and rules.
 
 Architecture:
   20 indicators x 3 param sets x 5 entry rules x 3 exit rules = 900 combos
-  Filter by: backtested positive PnL after 3.34% spread = ~50-100 viable
+  Filter by: backtested positive PnL after 1.69% spread = ~50-100 viable
 
 This is how quantitative hedge funds work -- they test thousands of
 strategy hypotheses and deploy only the survivors.
@@ -1618,7 +1618,7 @@ class StrategyUniverse:
         top = universe.get_top_strategies(n=10, metric='win_rate')
     """
 
-    SPREAD_COST = 0.0334  # 3.34% round-trip spread
+    SPREAD_COST = 0.0169  # 1.69% round-trip spread
 
     def __init__(self):
         self.strategies: List[IndicatorSignal] = []

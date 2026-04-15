@@ -80,7 +80,7 @@ class RobinhoodPaperFetcher:
         self._spread_cost_pct = 0.0
         for ex in self.config.get('exchanges', []):
             if ex.get('name', '').lower() == 'robinhood':
-                self._spread_cost_pct = ex.get('round_trip_spread_pct', 3.34)
+                self._spread_cost_pct = ex.get('round_trip_spread_pct', 1.69)
                 break
 
         # Paper state — keyed by unique trade ID to support multiple concurrent positions per asset

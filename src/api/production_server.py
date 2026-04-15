@@ -297,7 +297,7 @@ async def live_prices():
                         asset = m.group(1)
                         price = float(m.group(2).replace(',', ''))
                         if asset not in prices or prices[asset].get("price", 0) == 0:
-                            prices[asset] = {"price": price, "change_pct": 0, "bid": 0, "ask": 0, "spread_pct": 1.67}
+                            prices[asset] = {"price": price, "change_pct": 0, "bid": 0, "ask": 0, "spread_pct": 0.845}
         except Exception:
             pass
 

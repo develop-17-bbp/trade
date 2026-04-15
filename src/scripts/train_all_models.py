@@ -2200,7 +2200,7 @@ def main():
     parser.add_argument('--loop-hours', type=float, default=4.0)
     parser.add_argument('--max-cycles', type=int, default=0)
     parser.add_argument('--exchange', default='bybit',
-                        help='Exchange profile: bybit (default, 0.05%% spread) or robinhood (3.34%% spread)')
+                        help='Exchange profile: bybit (default, 0.05%% spread) or robinhood (1.69%% spread)')
     parser.add_argument('--spread', type=float, default=0.0,
                         help='Custom round-trip spread %% (overrides exchange default)')
     args = parser.parse_args()
@@ -2211,7 +2211,7 @@ def main():
 
     # ── Exchange-specific training profile ──
     if args.exchange.lower() == 'robinhood':
-        spread_cost_pct = args.spread if args.spread > 0 else 3.34
+        spread_cost_pct = args.spread if args.spread > 0 else 1.69
         print(f"\n  [ROBINHOOD MODE] Training with {spread_cost_pct:.2f}% round-trip spread cost in labels")
         print(f"  [ROBINHOOD MODE] Only LONG labels (shorts disabled)")
         print(f"  [ROBINHOOD MODE] Labels: TRADE only if PnL > spread cost")

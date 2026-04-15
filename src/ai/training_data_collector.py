@@ -45,7 +45,7 @@ class TrainingDataCollector:
     """Collects and labels LLM decision data for fine-tuning."""
 
     def __init__(self, data_dir: str = 'data/finetune',
-                 spread_cost_pct: float = 3.34):
+                 spread_cost_pct: float = 1.69):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.spread_cost = spread_cost_pct
@@ -438,7 +438,7 @@ class TrainingDataCollector:
 
             # Synthetic analyst output
             pnl = random.uniform(2, 8) if is_winner else random.uniform(-6, -1)
-            net_pnl = pnl - 3.34
+            net_pnl = pnl - 1.69
             label = 'WIN' if net_pnl > 1 else 'LOSS' if net_pnl < -1 else 'BREAKEVEN'
 
             analyst_target = self._build_analyst_target(
@@ -470,7 +470,7 @@ class TrainingDataCollector:
             # Analyst training example
             analyst_input = (
                 f"Pattern Bias: {scanner_out['pattern_bias']} Strength: {scanner_out['pattern_strength']}/10\n"
-                f"Signal: {signal} | Regime: {regime} | Spread: 3.34%\n"
+                f"Signal: {signal} | Regime: {regime} | Spread: 1.69%\n"
                 f"EMA Direction: RISING | HTF Alignment: {'3/3' if is_winner else '1/3'}\n"
                 f"Entry Score: {random.randint(4, 8) if is_winner else random.randint(0, 4)}/10"
             )

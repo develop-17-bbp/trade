@@ -71,7 +71,7 @@ class EMATradeState:
     day_of_week: int              # 0-6
 
     # ── NEW: Robinhood / Spot-specific state features ──
-    spread_cost_pct: float = 0.0       # Round-trip spread cost as % (Robinhood ~3.3%)
+    spread_cost_pct: float = 0.0       # Round-trip spread cost as % (Robinhood ~1.69%)
     expected_move_pct: float = 0.0     # ATR × TP_mult / price as % (how far can it go?)
     move_to_spread_ratio: float = 0.0  # expected_move / spread_cost (>2.0 = profitable)
     is_spot: bool = False              # True = spot (no leverage), False = futures
@@ -351,7 +351,7 @@ class EMAStrategyRL:
         - Skipped signals that would have won get penalty
 
         SPREAD-AWARE: Deducts spread cost from P&L before computing reward.
-        Robinhood spread ~1.67% per side = ~3.3% round-trip. A +2% trade is
+        Robinhood spread ~0.845% per side = ~1.69% round-trip. A +2% trade is
         actually -1.3% after spread. This teaches the RL agent to only enter
         trades where expected move >> spread cost.
 

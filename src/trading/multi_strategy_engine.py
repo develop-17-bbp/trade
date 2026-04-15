@@ -622,7 +622,7 @@ class MultiStrategyEngine:
             details: dict with per-strategy breakdown
         """
         # Robinhood trend-only mode: suppress mean-reversion/grid strategies
-        # These target 1-3% moves which LOSE money after 3.34% spread
+        # These target 1-3% moves which LOSE money after 1.69% spread
         _mean_rev_strategies = {'mean_reversion', 'grid_trading', 'market_making', 'vwap_bounce',
                                 'pine_volume_profile', 'pine_linear_regression', 'pine_stochrsi'}
         if self.config.get('exchanges', [{}])[0].get('trend_only', False) if self.config.get('exchanges') else False:

@@ -79,7 +79,7 @@ DEFAULT_FREQAI_CONFIG = {
     'retrain_every_hours': 4,
     'min_improvement_pct': 1.0,
     'assets': ['BTC', 'ETH'],
-    'spread_cost_pct': 3.34,
+    'spread_cost_pct': 1.69,
     'lookback_bars': 1500,
     'label_threshold': 0.01,
     'optuna_trials': 40,
@@ -501,7 +501,7 @@ class FreqAIRetrain:
         labels = create_labels(
             df,
             threshold=self.config.get('label_threshold', 0.01),
-            spread_cost_pct=self.config.get('spread_cost_pct', 3.34),
+            spread_cost_pct=self.config.get('spread_cost_pct', 1.69),
             longs_only=self.config.get('longs_only', True),
         )
 

@@ -202,9 +202,18 @@ class LowProfitPairLock:
 # 4. ROITable
 # ---------------------------------------------------------------------------
 class ROITable:
-    """Time-decaying profit targets — forces exits when trades stall."""
+    """Time-decaying profit targets — forces exits when trades stall.
 
-    def __init__(self, roi_table=None):
+    IMPORTANT: All ROI targets are interpreted as NET profit targets (after
+    spread cost). The `spread_cost_pct` is subtracted from the gross price
+    move before comparing against the target. This ensures an ROI exit at
+    "0% target" actually realizes ~0% P&L, not a spread-sized loss.
+
+    Without this, on high-spread venues like Robinhood (~1.69% round-trip)
+    every ROI exit would close a "profitable" trade at a guaranteed loss.
+    """
+
+    def __init__(self, roi_table=None, spread_cost_pct=0.0):
         self.roi_table = roi_table or {
             0: 0.08,
             15: 0.04,
@@ -212,18 +221,30 @@ class ROITable:
             60: 0.005,
             120: 0.0,
         }
+        self.spread_cost_pct = float(spread_cost_pct or 0.0)
         # Pre-sort: highest duration first for reverse walk
         self._sorted_entries = sorted(self.roi_table.items(), key=lambda x: x[0], reverse=True)
 
     def should_exit(self, trade_duration_min, current_profit_pct) -> dict:
         """Check if trade should exit based on ROI table.
+
+        `current_profit_pct` is the GROSS price move. We subtract
+        `spread_cost_pct` to get NET profit, which is compared against
+        the target. This prevents the ROI table from closing trades at a
+        spread-adjusted loss.
+
         Returns {exit: bool, reason: str, min_roi: float}"""
         try:
+            net_profit_pct = current_profit_pct - self.spread_cost_pct
             for duration_threshold, min_roi in self._sorted_entries:
-                if trade_duration_min >= duration_threshold and current_profit_pct >= min_roi * 100:
+                target_pct = min_roi * 100
+                if trade_duration_min >= duration_threshold and net_profit_pct >= target_pct:
                     return {
                         "exit": True,
-                        "reason": f"ROI: profit {current_profit_pct:.2f}% >= {min_roi*100:.1f}% target at {duration_threshold}min",
+                        "reason": (
+                            f"ROI: net {net_profit_pct:+.2f}% >= {target_pct:.1f}% target "
+                            f"at {duration_threshold}min (gross {current_profit_pct:+.2f}% - spread {self.spread_cost_pct:.2f}%)"
+                        ),
                         "min_roi": min_roi,
                     }
             return {"exit": False, "reason": "", "min_roi": 0.0}
@@ -665,7 +686,11 @@ class TradeProtections:
         self.sl_guard = StoplossGuard(**config.get("sl_guard", {}))
         self.drawdown = MaxDrawdownProtection(**config.get("max_drawdown", {}))
         self.pair_lock = LowProfitPairLock(**config.get("pair_lock", {}))
-        self.roi = ROITable(config.get("roi_table"))
+        # Spread-aware ROI: pass round-trip spread so ROI targets are NET
+        self.roi = ROITable(
+            config.get("roi_table"),
+            spread_cost_pct=config.get("spread_cost_pct", 0.0),
+        )
         self.pairlist = DynamicPairlistFilter(**config.get("pairlist", {}))
         self.confirm = ConfirmTradeEntry(**config.get("confirm", {}))
         self.tagger = EntryExitTagger()

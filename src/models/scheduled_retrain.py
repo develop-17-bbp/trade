@@ -71,7 +71,7 @@ RETRAIN_CONFIG = {
     'timeframe': '4h',             # 4h timeframe for Robinhood swing trading (was 1h)
     'model_dir': 'models',
     'history_file': 'models/retrain_history.json',
-    'spread_cost_pct': 0.0,       # Round-trip spread (0 for futures, 3.34 for Robinhood)
+    'spread_cost_pct': 0.0,       # Round-trip spread (0 for futures, 1.69 for Robinhood)
     'longs_only': False,           # True for Robinhood (spot, no shorts)
 }
 
@@ -81,7 +81,7 @@ ROBINHOOD_CONFIG = {
     'lookback_bars': 1500,         # ~250 days of 4h data (fewer bars, more recent)
     'label_threshold': 0.01,       # 1% moves (wider threshold — spread demands bigger moves)
     'min_accuracy_improvement': 0.01,  # Higher bar: 1% improvement required (was 0.5%)
-    'spread_cost_pct': 3.34,       # Robinhood round-trip spread deducted from labels
+    'spread_cost_pct': 1.69,       # Robinhood round-trip spread deducted from labels
     'longs_only': True,            # Only train LONG labels (no SHORT on spot)
     'boost_rounds': 400,           # Slightly fewer rounds (less data complexity)
     'timeframe': '4h',             # Only 4h (1d could be added later)

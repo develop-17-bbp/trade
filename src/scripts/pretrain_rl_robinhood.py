@@ -2,7 +2,7 @@
 RL Pre-Training for Robinhood (Spread-Aware, Multi-Timeframe)
 =============================================================
 Simulates the EMA(8) strategy on SPOT historical data (4h + 1d) WITH
-Robinhood's 3.34% round-trip spread cost. Feeds completed trades into the
+Robinhood's 1.69% round-trip spread cost. Feeds completed trades into the
 RL agent so it learns which setups are profitable AFTER spread.
 
 Uses SPOT market data (not futures) to match Robinhood's actual pricing.
@@ -37,7 +37,7 @@ from src.ai.reinforcement_learning import EMAStrategyRL, EMATradeState
 
 
 # -- CONFIG --
-SPREAD_COST_PCT = 3.34          # Robinhood round-trip spread
+SPREAD_COST_PCT = 1.69          # Robinhood round-trip spread
 EMA_PERIOD = 8
 ASSETS = ['BTC', 'ETH']
 HARD_STOP_PCT = -5.0            # Same as config
@@ -636,7 +636,7 @@ def main():
     print(f"\n{'=' * 60}")
     print("  PRE-TRAINING COMPLETE!")
     print("  RL agents now have historical knowledge of:")
-    print("    - Robinhood's 3.34% round-trip spread impact")
+    print("    - Robinhood's 1.69% round-trip spread impact")
     print("    - Which setups are profitable AFTER spread on SPOT")
     print("    - Multi-timeframe patterns (4h + 1d)")
     print("  They will continue learning online from live trades.")

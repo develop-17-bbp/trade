@@ -261,7 +261,7 @@ class DailyOps:
         result = {
             'status': 'GREEN', 'total_pnl_pct': 0, 'total_pnl_usd': 0,
             'trades_today': 0, 'wins': 0, 'losses': 0, 'win_rate': 0,
-            'spread_cost_pct': 3.34, 'pnl_after_spread': 0,
+            'spread_cost_pct': 1.69, 'pnl_after_spread': 0,
             'ema_20_pnl': 0, 'max_drawdown': 0,
         }
 
@@ -310,7 +310,7 @@ class DailyOps:
 
         # P&L after spread
         result['pnl_after_spread'] = round(
-            sum(max(0, p - 3.34) if p > 0 else p for p in today_pnls), 4
+            sum(max(0, p - 1.69) if p > 0 else p for p in today_pnls), 4
         )
 
         # EMA-20 of recent daily PnLs

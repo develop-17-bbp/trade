@@ -466,16 +466,40 @@ class TradingExecutor:
                 print(f"  [AI] Trading Brain v2 init failed ({e}) — using legacy LLM")
                 self._brain = None
 
+        # ── EARLY SPREAD CONFIG (needed by protections below) ──
+        # The full spread block runs later at ~line 800+, but ROITable needs
+        # this value at construction time so its targets are net-of-spread.
+        # Safe to run twice: both reads are idempotent.
+        self._spread_per_side = 0.05
+        self._round_trip_spread = 0.10
+        try:
+            for _ex_cfg_early in config.get('exchanges', []):
+                if _ex_cfg_early.get('name', '').lower() == self._exchange_name.lower():
+                    self._spread_per_side = _ex_cfg_early.get('spread_pct_per_side', 0.05)
+                    self._round_trip_spread = _ex_cfg_early.get(
+                        'round_trip_spread_pct', self._spread_per_side * 2
+                    )
+                    break
+        except Exception:
+            pass
+
         # ── Trade Protections (freqtrade-inspired) ──
         self._protections = None
         if PROTECTIONS_AVAILABLE:
             try:
+                # Round-trip spread (already a percentage, e.g. 1.69 for Robinhood) —
+                # critical for ROI table so targets are NET profit. Without this,
+                # ROI table closes profitable trades at spread-sized losses on Robinhood.
+                _rt_spread_pct = float(getattr(self, '_round_trip_spread', 0.0) or 0.0)
                 prot_cfg = {
                     "sl_guard": {"trade_limit": 3, "lookback_minutes": 60, "cooldown_minutes": 30},
                     "max_drawdown": {"max_drawdown_pct": risk.get('max_drawdown_pct', 10.0),
                                      "lookback_minutes": 120, "cooldown_minutes": 60},
                     "pair_lock": {"min_profit_pct": -8.0, "lookback_trades": 8, "lock_hours": 0.5},
+                    # ROI targets are NET of spread. On Robinhood (~1.69% round-trip) a 1%
+                    # NET target fires when gross ~4.34% — so the exit is truly profitable.
                     "roi_table": {0: 0.10, 30: 0.05, 60: 0.025, 120: 0.01, 240: 0.0},
+                    "spread_cost_pct": _rt_spread_pct,
                     "confirm": {"max_spread_pct": 1.0, "max_price_drift_pct": 0.5,
                                 "max_concurrent_trades": len(self.assets) * 2},
                     "position_adjust": {
@@ -485,7 +509,7 @@ class TradingExecutor:
                     },
                 }
                 self._protections = TradeProtections(prot_cfg)
-                print(f"  [PROTECT] Trade Protections ACTIVE — SL guard, drawdown, pair lock, ROI table, partial exits")
+                print(f"  [PROTECT] Trade Protections ACTIVE — SL guard, drawdown, pair lock, ROI table (spread-aware {_rt_spread_pct:.2f}%), partial exits")
             except Exception as e:
                 print(f"  [PROTECT] Init failed ({e}) — proceeding without protections")
                 self._protections = None
@@ -846,7 +870,7 @@ class TradingExecutor:
         self._genetic_hof_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'logs/genetic_evolution_results.json')
         try:
             from src.trading.genetic_strategy_engine import GeneticStrategyEngine, backtest_dna
-            self._genetic_engine = GeneticStrategyEngine(spread_pct=self._round_trip_spread * 100 if self._round_trip_spread else 3.34)
+            self._genetic_engine = GeneticStrategyEngine(spread_pct=self._round_trip_spread * 100 if self._round_trip_spread else 1.69)
             self._reload_genetic_hall_of_fame()
         except Exception as e:
             logger.debug(f"GeneticStrategyEngine init failed: {e}")
@@ -895,12 +919,12 @@ class TradingExecutor:
         # Scale ratchet thresholds by timeframe (higher TF = bigger moves = wider %)
         # Ratchet scale: how many % PnL to trigger breakeven/profit lock per TF
         # Old: 4h=5.0, 1d=10.0 → breakeven needed +5%/+10% = too late, spread already ate profit
-        # New: 4h=3.0, 1d=5.0 → breakeven at +3%/+5% = just above spread cost (3.34%)
+        # New: 4h=3.0, 1d=5.0 → breakeven at +3%/+5% = just above spread cost (1.69%)
         self.TF_RATCHET_SCALE = {'1m': 0.5, '5m': 1.0, '15m': 1.5, '1h': 2.5, '4h': 3.0, '1d': 5.0}
         # Min/Max SL distance as % of price, per timeframe
         self.TF_SL_MIN_PCT = {'1m': 0.003, '5m': 0.005, '15m': 0.008, '1h': 0.012, '4h': 0.02, '1d': 0.03}
         self.TF_SL_MAX_PCT = {'1m': 0.01, '5m': 0.02, '15m': 0.03, '1h': 0.05, '4h': 0.08, '1d': 0.12}
-        # Widen SL/TP/ratchet bounds for high-spread exchanges (Robinhood ~3.34% round-trip)
+        # Widen SL/TP/ratchet bounds for high-spread exchanges (Robinhood ~1.69% round-trip)
         if self._round_trip_spread > 1.0:
             self.TF_SL_MIN_PCT = {k: max(v, 0.04) for k, v in self.TF_SL_MIN_PCT.items()}
             self.TF_SL_MAX_PCT = {k: max(v, 0.15) for k, v in self.TF_SL_MAX_PCT.items()}
@@ -4179,7 +4203,7 @@ class TradingExecutor:
                     _atr_pctile = _rank / len(_sorted)
                 _vol_ratio = volumes[-1] / (sum(volumes[-20:]) / 20) if len(volumes) >= 20 and sum(volumes[-20:]) > 0 else 1.0
                 # Compute Robinhood-specific state features
-                _spread_cost_pct = 3.34 if self._paper_mode else 0.1  # Round-trip spread
+                _spread_cost_pct = 1.69 if self._paper_mode else 0.1  # Round-trip spread
                 _atr_tp_mult = self.config.get('risk', {}).get('atr_tp_mult', 10.0)
                 _filter_atr = current_atr
                 if hasattr(self, '_last_chosen_tf_atr') and self._last_chosen_tf_atr.get(asset, 0) > 0:
@@ -5349,7 +5373,7 @@ class TradingExecutor:
                 return
 
             # ── Robinhood SHORT hard-block ──
-            # Robinhood spot has ~1.67% spread. SHORTs lose ~70% after spread.
+            # Robinhood spot has ~0.845% spread. SHORTs lose ~70% after spread.
             # Block ALL shorts on Robinhood/paper unless 1d EMA is confirmed FALLING.
             _htf_1d_dir = 'FLAT'
             if hasattr(self, '_last_tf_signals'):
@@ -5960,7 +5984,7 @@ class TradingExecutor:
 
         # 3. EXPECTED MOVE > 1.5× SPREAD (ATR-based projected move must justify spread)
         # With 25x ATR TP, BTC/ETH typically get 5-8% expected moves
-        # At 3.34% round-trip spread, 1.5x = 5.01% — reasonable for swing trades
+        # At 1.69% round-trip spread, 1.5x = 5.01% — reasonable for swing trades
         atr_tp_mult = self.config.get('risk', {}).get('atr_tp_mult', 25.0)
         if price > 0 and atr > 0:
             atr_move_pct = (atr * atr_tp_mult / price) * 100
@@ -6067,7 +6091,7 @@ class TradingExecutor:
                 return
 
         # ── 2. HARD STOP: max loss — non-negotiable ──
-        # Robinhood: spread alone is ~1.67%, so -1.8% hard stop kills every trade.
+        # Robinhood: spread alone is ~0.845%, so -1.8% hard stop kills every trade.
         # Use configurable hard stop: paper mode with wide spread needs -5%+
         _default_hard_stop = -5.0 if self._paper_mode else -1.8
         hard_stop_pct = self.config.get('risk', {}).get('hard_stop_pct', _default_hard_stop)
@@ -6550,7 +6574,7 @@ class TradingExecutor:
 
             # Exit conditions: new opposite line forming
             # ONLY when in MEANINGFUL profit — protects from premature exits on tiny gains
-            # With Robinhood 3.34% round-trip spread, exiting at 0.04% "profit" is a real loss
+            # With Robinhood 1.69% round-trip spread, exiting at 0.04% "profit" is a real loss
             # min_exit_pnl_pct: minimum profit % required before EMA reversal exit triggers
             min_reversal = 2
             min_exit_pnl_pct = self.config.get('risk', {}).get('min_exit_pnl_pct', 1.5)
@@ -6846,7 +6870,7 @@ class TradingExecutor:
             pnl_pct = ((entry - price) / entry) * 100.0
             pnl_usd = (entry - price) * qty * cs
 
-        # ── Deduct round-trip spread from P&L (Robinhood ~3.34%) ──
+        # ── Deduct round-trip spread from P&L (Robinhood ~1.69%) ──
         _spread_cost_pct = self._round_trip_spread if hasattr(self, '_round_trip_spread') else 0
         if _spread_cost_pct > 0.5:
             _spread_cost_usd = entry * qty * cs * (_spread_cost_pct / 100.0)
@@ -7164,8 +7188,8 @@ class TradingExecutor:
                 # Compute spread cost for this trade
                 _spread_cost_pct = 0.0
                 if self._paper_mode:
-                    # Robinhood: ~1.67% per side = ~3.34% round-trip
-                    _spread_cost_pct = 3.34
+                    # Robinhood: ~0.845% per side = ~1.69% round-trip
+                    _spread_cost_pct = 1.69
                 else:
                     # Futures: typical spread ~0.05-0.1% round-trip
                     _spread_cost_pct = 0.1

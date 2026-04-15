@@ -67,7 +67,7 @@ MODEL_CONFIGS = {
         'lora_alpha': 16,
         'max_seq_length': 4096,
         'system_prompt': (
-            "You are a crypto trade analyst for Robinhood with 3.34% round-trip spread. "
+            "You are a crypto trade analyst for Robinhood with 1.69% round-trip spread. "
             "Given pattern scan results and market context, decide whether to trade. "
             "Output ONLY JSON with: proceed (bool), confidence (0.0-1.0), risk_score (0-10), "
             "trade_quality (0-10), predicted_l_level, bull_case, bear_case, facilitator_verdict."

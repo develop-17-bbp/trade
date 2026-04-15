@@ -69,7 +69,7 @@ def load_parquet_ohlcv(asset='BTC', timeframe='4h', bars=100):
         return []
 
 
-def analyze_chart(bars, asset='BTC', timeframe='4h', spread_pct=3.34):
+def analyze_chart(bars, asset='BTC', timeframe='4h', spread_pct=1.69):
     """Comprehensive chart analysis for Claude Code agents."""
     if len(bars) < 20:
         return {"error": "Insufficient data", "bars": len(bars)}

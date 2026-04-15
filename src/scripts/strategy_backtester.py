@@ -70,7 +70,7 @@ class StrategyBacktester:
     spread, and ranks strategies by a composite risk-adjusted score.
     """
 
-    def __init__(self, spread_cost_pct: float = 3.34, longs_only: bool = True):
+    def __init__(self, spread_cost_pct: float = 1.69, longs_only: bool = True):
         self.spread_cost = spread_cost_pct
         self.longs_only = longs_only
         self.strategies: Dict[str, SubStrategy] = {}
@@ -731,8 +731,8 @@ def main():
         help="Output JSON path (default: logs/strategy_backtest_results.json)",
     )
     parser.add_argument(
-        "--spread", type=float, default=3.34,
-        help="Round-trip spread cost in percent (default: 3.34)",
+        "--spread", type=float, default=1.69,
+        help="Round-trip spread cost in percent (default: 1.69)",
     )
     parser.add_argument(
         "--max-hold", type=int, default=20,

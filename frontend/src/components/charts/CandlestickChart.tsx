@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import {
   createChart,
+  createSeriesMarkers,
   type IChartApi,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
   ColorType,
   CandlestickSeries,
   LineSeries,
@@ -21,10 +26,38 @@ interface OHLCVBar {
   volume?: number
 }
 
+/** ACT trade event (ENTRY or EXIT) from /api/v1/dashboard trades[] */
+export interface ChartTrade {
+  asset: string
+  direction: string          // "LONG" | "SHORT" | "long" | "short"
+  status: string             // "OPEN" | "CLOSED"
+  event?: string             // "ENTRY" | "EXIT"
+  entry_price: number
+  exit_price: number
+  pnl: number
+  pnl_pct: number
+  timestamp: string          // ISO datetime
+  reason: string
+}
+
+/** Open position */
+export interface ChartPosition {
+  asset: string
+  direction: string
+  entry_price: number
+  current_price: number
+  quantity: number
+  unrealized_pnl: number
+  stop_loss: number
+  entry_time?: number | string
+}
+
 interface Props {
   asset?: string
   height?: number
   timeframe?: string
+  trades?: ChartTrade[]
+  positions?: ChartPosition[]
 }
 
 // ---------------------------------------------------------------------------
@@ -42,111 +75,78 @@ function computeEMA(bars: OHLCVBar[], period: number): { time: number; value: nu
   })
 }
 
-/** Find simple support and resistance from recent swing highs/lows */
-function computeSupportResistance(bars: OHLCVBar[], lookback = 20): { support: number; resistance: number } {
-  if (bars.length < lookback) {
-    const allHighs = bars.map((b) => b.high)
-    const allLows = bars.map((b) => b.low)
-    return {
-      support: Math.min(...allLows),
-      resistance: Math.max(...allHighs),
-    }
-  }
-  const recent = bars.slice(-lookback)
-  const highs = recent.map((b) => b.high)
-  const lows = recent.map((b) => b.low)
-
-  // Use second-highest and second-lowest for more stable levels
-  highs.sort((a, b) => b - a)
-  lows.sort((a, b) => a - b)
-
-  return {
-    support: lows[Math.min(2, lows.length - 1)],
-    resistance: highs[Math.min(2, highs.length - 1)],
-  }
+/** Parse ISO timestamp to unix seconds */
+function isoToUnix(iso: string): number {
+  return Math.floor(new Date(iso).getTime() / 1000)
 }
 
-/** Generate synthetic buy/sell signals from EMA crossover */
-function computeSignals(
-  bars: OHLCVBar[],
-  emaFast: { time: number; value: number }[],
-  emaSlow: { time: number; value: number }[]
-): { buys: { time: number; value: number }[]; sells: { time: number; value: number }[] } {
-  const buys: { time: number; value: number }[] = []
-  const sells: { time: number; value: number }[] = []
-
-  if (emaFast.length < 2 || emaSlow.length < 2) return { buys, sells }
-
-  for (let i = 1; i < Math.min(emaFast.length, emaSlow.length); i++) {
-    const prevFast = emaFast[i - 1].value
-    const prevSlow = emaSlow[i - 1].value
-    const currFast = emaFast[i].value
-    const currSlow = emaSlow[i].value
-
-    // Golden cross — buy
-    if (prevFast <= prevSlow && currFast > currSlow) {
-      buys.push({ time: bars[i].time, value: bars[i].low * 0.998 })
-    }
-    // Death cross — sell
-    if (prevFast >= prevSlow && currFast < currSlow) {
-      sells.push({ time: bars[i].time, value: bars[i].high * 1.002 })
-    }
+/** Snap a timestamp to the nearest bar time in the visible range */
+function snapToBar(ts: number, bars: OHLCVBar[]): number {
+  if (bars.length === 0) return ts
+  // Find the closest bar (earlier-or-equal preferred)
+  let best = bars[0].time
+  for (const b of bars) {
+    if (b.time <= ts) best = b.time
+    else break
   }
-
-  return { buys, sells }
+  return best
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export default function CandlestickChart({ asset = 'BTC', height = 360, timeframe = '1h' }: Props) {
+export default function CandlestickChart({
+  asset = 'BTC',
+  height = 360,
+  timeframe = '1h',
+  trades = [],
+  positions = [],
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const ema8Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const seriesRefs = useRef<Record<string, any>>({})
+  const priceLinesRef = useRef<any[]>([])
+
   const [bars, setBars] = useState<OHLCVBar[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   // ── Fetch OHLCV data ──
   useEffect(() => {
     let cancelled = false
     async function fetchData() {
       setLoading(true)
+      setError(null)
       try {
-        const res = await fetch(`/api/v1/ohlcv/${asset}?timeframe=${timeframe}&limit=200`)
-        if (!res.ok) throw new Error('API error')
+        const res = await fetch(
+          `/api/v1/ohlcv/${asset}?timeframe=${timeframe}&limit=300`
+        )
+        if (!res.ok) throw new Error(`OHLCV API error ${res.status}`)
         const data = await res.json()
-        if (!cancelled && data?.bars?.length > 0) {
+        if (cancelled) return
+        if (data?.bars?.length > 0) {
           setBars(data.bars)
+          setError(null)
         } else {
-          throw new Error('No bars')
+          setError('No OHLCV data available')
+          setBars([])
         }
-      } catch {
-        // Generate realistic sample data when API is unavailable
-        const now = Math.floor(Date.now() / 1000)
-        const tfSeconds =
-          timeframe === '1d' ? 86400 : timeframe === '4h' ? 14400 : 3600
-        const sample: OHLCVBar[] = []
-        let price = asset === 'BTC' ? 73000 : 2240
-        for (let i = 200; i >= 0; i--) {
-          const t = now - i * tfSeconds
-          const volatility = asset === 'BTC' ? 0.008 : 0.012
-          const change = (Math.random() - 0.48) * price * volatility
-          const o = price
-          const c = price + change
-          const h = Math.max(o, c) + Math.random() * price * 0.003
-          const l = Math.min(o, c) - Math.random() * price * 0.003
-          const vol = (500 + Math.random() * 2000) * (asset === 'BTC' ? 1 : 100)
-          sample.push({ time: t, open: o, high: h, low: l, close: c, volume: vol })
-          price = c
-        }
-        if (!cancelled) setBars(sample)
+      } catch (e) {
+        if (cancelled) return
+        setError(e instanceof Error ? e.message : 'Fetch failed')
+        setBars([])
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      if (!cancelled) setLoading(false)
     }
     fetchData()
-    const interval = setInterval(fetchData, 60000)
+    const interval = setInterval(fetchData, 60_000) // refresh every minute
     return () => {
       cancelled = true
       clearInterval(interval)
@@ -156,8 +156,17 @@ export default function CandlestickChart({ asset = 'BTC', height = 360, timefram
   // ── Computed indicators ──
   const emaFast = useMemo(() => computeEMA(bars, 8), [bars])
   const emaSlow = useMemo(() => computeEMA(bars, 21), [bars])
-  const sr = useMemo(() => computeSupportResistance(bars, 30), [bars])
-  const signals = useMemo(() => computeSignals(bars, emaFast, emaSlow), [bars, emaFast, emaSlow])
+
+  // ── Filter trades for this asset and convert to markers ──
+  const assetTrades = useMemo(
+    () => trades.filter((t) => t.asset === asset),
+    [trades, asset]
+  )
+
+  const assetPositions = useMemo(
+    () => positions.filter((p) => p.asset === asset),
+    [positions, asset]
+  )
 
   // ── Create chart ──
   useEffect(() => {
@@ -165,7 +174,12 @@ export default function CandlestickChart({ asset = 'BTC', height = 360, timefram
     if (chartRef.current) {
       chartRef.current.remove()
       chartRef.current = null
-      seriesRefs.current = {}
+      candleRef.current = null
+      ema8Ref.current = null
+      ema21Ref.current = null
+      volumeRef.current = null
+      markersRef.current = null
+      priceLinesRef.current = []
     }
 
     const chart = createChart(containerRef.current, {
@@ -173,97 +187,57 @@ export default function CandlestickChart({ asset = 'BTC', height = 360, timefram
       height,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#5a6080',
+        textColor: '#a0a0a0',
         fontSize: 11,
         fontFamily: "'Inter', system-ui, sans-serif",
       },
       grid: {
-        vertLines: { color: 'rgba(255,255,255,0.025)' },
-        horzLines: { color: 'rgba(255,255,255,0.025)' },
+        vertLines: { color: 'rgba(255,255,255,0.04)' },
+        horzLines: { color: 'rgba(255,255,255,0.04)' },
       },
       crosshair: {
-        vertLine: { color: 'rgba(0,255,240,0.25)', width: 1, style: 2 },
-        horzLine: { color: 'rgba(0,255,240,0.25)', width: 1, style: 2 },
+        vertLine: { color: 'rgba(34,197,94,0.35)', width: 1, style: 2 },
+        horzLine: { color: 'rgba(34,197,94,0.35)', width: 1, style: 2 },
       },
       rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.06)',
-        scaleMargins: { top: 0.05, bottom: 0.2 },
+        borderColor: 'rgba(255,255,255,0.08)',
+        scaleMargins: { top: 0.05, bottom: 0.22 },
       },
       timeScale: {
-        borderColor: 'rgba(255,255,255,0.06)',
+        borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
       },
     })
 
-    // ── Candlestick series ──
+    // Candlestick
     const candle = chart.addSeries(CandlestickSeries, {
-      upColor: '#00ffaa',
-      downColor: '#ff2266',
-      borderUpColor: '#00ffaa',
-      borderDownColor: '#ff2266',
-      wickUpColor: '#00ffaa66',
-      wickDownColor: '#ff226666',
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderUpColor: '#22c55e',
+      borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e88',
+      wickDownColor: '#ef444488',
     })
 
-    // ── EMA 8 (fast) ──
+    // EMA 8 (fast)
     const ema8 = chart.addSeries(LineSeries, {
       color: '#00ccff',
-      lineWidth: 1,
+      lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
     })
 
-    // ── EMA 21 (slow) ──
+    // EMA 21 (slow)
     const ema21 = chart.addSeries(LineSeries, {
       color: '#ff00aa',
-      lineWidth: 1,
+      lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
-      lineStyle: 2, // dashed
+      lineStyle: 2,
     })
 
-    // ── Support line ──
-    const supportLine = chart.addSeries(LineSeries, {
-      color: '#00ffaa44',
-      lineWidth: 1,
-      lineStyle: 1, // dotted
-      priceLineVisible: false,
-      lastValueVisible: false,
-    })
-
-    // ── Resistance line ──
-    const resistanceLine = chart.addSeries(LineSeries, {
-      color: '#ff226644',
-      lineWidth: 1,
-      lineStyle: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    })
-
-    // ── Buy signal markers ──
-    const buyMarkers = chart.addSeries(LineSeries, {
-      color: '#00ffaa',
-      lineWidth: 1 as const,
-      lineVisible: false,
-      pointMarkersVisible: true,
-      pointMarkersRadius: 4,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    })
-
-    // ── Sell signal markers ──
-    const sellMarkers = chart.addSeries(LineSeries, {
-      color: '#ff2266',
-      lineWidth: 1 as const,
-      lineVisible: false,
-      pointMarkersVisible: true,
-      pointMarkersRadius: 4,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    })
-
-    // ── Volume histogram ──
+    // Volume histogram
     const volume = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
@@ -275,16 +249,10 @@ export default function CandlestickChart({ asset = 'BTC', height = 360, timefram
     })
 
     chartRef.current = chart
-    seriesRefs.current = {
-      candle,
-      ema8,
-      ema21,
-      supportLine,
-      resistanceLine,
-      buyMarkers,
-      sellMarkers,
-      volume,
-    }
+    candleRef.current = candle
+    ema8Ref.current = ema8
+    ema21Ref.current = ema21
+    volumeRef.current = volume
 
     // Resize observer
     const ro = new ResizeObserver(() => {
@@ -298,19 +266,26 @@ export default function CandlestickChart({ asset = 'BTC', height = 360, timefram
       ro.disconnect()
       chart.remove()
       chartRef.current = null
-      seriesRefs.current = {}
+      candleRef.current = null
+      ema8Ref.current = null
+      ema21Ref.current = null
+      volumeRef.current = null
+      markersRef.current = null
+      priceLinesRef.current = []
     }
   }, [height])
 
-  // ── Update series data ──
+  // ── Update candle/EMA/volume data ──
   useEffect(() => {
-    const s = seriesRefs.current
-    if (!s.candle || bars.length === 0) return
+    const candle = candleRef.current
+    const ema8 = ema8Ref.current
+    const ema21 = ema21Ref.current
+    const volume = volumeRef.current
+    if (!candle || bars.length === 0) return
 
-    // Candlestick data
-    s.candle.setData(
+    candle.setData(
       bars.map((b) => ({
-        time: b.time as unknown,
+        time: b.time as Time,
         open: b.open,
         high: b.high,
         low: b.low,
@@ -318,83 +293,213 @@ export default function CandlestickChart({ asset = 'BTC', height = 360, timefram
       }))
     )
 
-    // EMA lines
-    if (s.ema8 && emaFast.length > 0) {
-      s.ema8.setData(emaFast.map((e) => ({ time: e.time as unknown, value: e.value })))
+    if (ema8 && emaFast.length > 0) {
+      ema8.setData(emaFast.map((e) => ({ time: e.time as Time, value: e.value })))
     }
-    if (s.ema21 && emaSlow.length > 0) {
-      s.ema21.setData(emaSlow.map((e) => ({ time: e.time as unknown, value: e.value })))
-    }
-
-    // Support/Resistance as horizontal lines spanning the full time range
-    if (s.supportLine && bars.length >= 2) {
-      s.supportLine.setData(
-        bars.map((b) => ({ time: b.time as unknown, value: sr.support }))
-      )
-    }
-    if (s.resistanceLine && bars.length >= 2) {
-      s.resistanceLine.setData(
-        bars.map((b) => ({ time: b.time as unknown, value: sr.resistance }))
-      )
+    if (ema21 && emaSlow.length > 0) {
+      ema21.setData(emaSlow.map((e) => ({ time: e.time as Time, value: e.value })))
     }
 
-    // Buy/Sell signal markers
-    if (s.buyMarkers && signals.buys.length > 0) {
-      s.buyMarkers.setData(
-        signals.buys.map((sig) => ({ time: sig.time as unknown, value: sig.value }))
-      )
-    } else if (s.buyMarkers) {
-      s.buyMarkers.setData([])
-    }
-    if (s.sellMarkers && signals.sells.length > 0) {
-      s.sellMarkers.setData(
-        signals.sells.map((sig) => ({ time: sig.time as unknown, value: sig.value }))
-      )
-    } else if (s.sellMarkers) {
-      s.sellMarkers.setData([])
-    }
-
-    // Volume histogram
-    if (s.volume) {
-      s.volume.setData(
+    if (volume) {
+      volume.setData(
         bars.map((b) => ({
-          time: b.time as unknown,
+          time: b.time as Time,
           value: b.volume ?? 0,
-          color: b.close >= b.open ? 'rgba(0,255,170,0.15)' : 'rgba(255,34,102,0.15)',
+          color: b.close >= b.open ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)',
         }))
       )
     }
 
     chartRef.current?.timeScale().fitContent()
-  }, [bars, emaFast, emaSlow, sr, signals])
+  }, [bars, emaFast, emaSlow])
+
+  // ── Apply trade markers from REAL ACT trades ──
+  useEffect(() => {
+    const candle = candleRef.current
+    if (!candle || bars.length === 0) return
+
+    // Build markers from assetTrades
+    const markers: SeriesMarker<Time>[] = []
+    const earliestBarTime = bars[0]?.time ?? 0
+    const latestBarTime = bars[bars.length - 1]?.time ?? 0
+
+    for (const t of assetTrades) {
+      const ts = isoToUnix(t.timestamp)
+      // Skip trades outside the visible chart range
+      if (ts < earliestBarTime - 3600 || ts > latestBarTime + 3600) continue
+
+      const snapped = snapToBar(ts, bars)
+      const event = (t.event || t.status || '').toUpperCase()
+      const dir = (t.direction || '').toUpperCase()
+      const isExit = event === 'EXIT' || event === 'CLOSED'
+
+      if (isExit) {
+        const profitable = t.pnl >= 0
+        markers.push({
+          time: snapped as Time,
+          position: 'aboveBar',
+          color: profitable ? '#22c55e' : '#ef4444',
+          shape: 'arrowDown',
+          text: `${profitable ? 'WIN' : 'LOSS'} ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)} (${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(2)}%)`,
+          size: 2,
+        })
+      } else {
+        // ENTRY
+        const isLong = dir === 'LONG'
+        markers.push({
+          time: snapped as Time,
+          position: 'belowBar',
+          color: isLong ? '#22c55e' : '#ef4444',
+          shape: isLong ? 'arrowUp' : 'arrowDown',
+          text: `${isLong ? 'LONG' : 'SHORT'} $${t.entry_price.toFixed(2)}`,
+          size: 2,
+        })
+      }
+    }
+
+    // Sort markers by time (required by lightweight-charts)
+    markers.sort((a, b) => (a.time as number) - (b.time as number))
+
+    // Create or update the markers plugin
+    if (!markersRef.current) {
+      markersRef.current = createSeriesMarkers(candle, markers)
+    } else {
+      markersRef.current.setMarkers(markers)
+    }
+  }, [assetTrades, bars])
+
+  // ── Draw price lines for open positions (entry + SL) ──
+  useEffect(() => {
+    const candle = candleRef.current
+    if (!candle) return
+
+    // Clean up existing price lines
+    for (const line of priceLinesRef.current) {
+      try {
+        candle.removePriceLine(line)
+      } catch {
+        // ignore
+      }
+    }
+    priceLinesRef.current = []
+
+    for (const p of assetPositions) {
+      const isLong = (p.direction || '').toLowerCase() === 'long'
+      const pnlColor = p.unrealized_pnl >= 0 ? '#22c55e' : '#ef4444'
+
+      // Entry line
+      const entryLine = candle.createPriceLine({
+        price: p.entry_price,
+        color: isLong ? '#22c55e' : '#ef4444',
+        lineWidth: 2,
+        lineStyle: 0, // solid
+        axisLabelVisible: true,
+        title: `ENTRY ${isLong ? 'LONG' : 'SHORT'}`,
+      })
+      priceLinesRef.current.push(entryLine)
+
+      // Current/PnL line
+      if (p.current_price > 0) {
+        const currentLine = candle.createPriceLine({
+          price: p.current_price,
+          color: pnlColor,
+          lineWidth: 1,
+          lineStyle: 2, // dashed
+          axisLabelVisible: true,
+          title: `PnL ${p.unrealized_pnl >= 0 ? '+' : ''}$${p.unrealized_pnl.toFixed(2)}`,
+        })
+        priceLinesRef.current.push(currentLine)
+      }
+
+      // Stop loss line
+      if (p.stop_loss > 0) {
+        const slLine = candle.createPriceLine({
+          price: p.stop_loss,
+          color: '#ef4444',
+          lineWidth: 1,
+          lineStyle: 3, // dotted
+          axisLabelVisible: true,
+          title: 'STOP LOSS',
+        })
+        priceLinesRef.current.push(slLine)
+      }
+    }
+  }, [assetPositions])
+
+  // ── Count stats for legend ──
+  const stats = useMemo(() => {
+    let wins = 0
+    let losses = 0
+    let totalPnl = 0
+    for (const t of assetTrades) {
+      const event = (t.event || t.status || '').toUpperCase()
+      if (event === 'EXIT' || event === 'CLOSED') {
+        if (t.pnl > 0) wins++
+        else if (t.pnl < 0) losses++
+        totalPnl += t.pnl
+      }
+    }
+    return { wins, losses, totalPnl, total: assetTrades.length }
+  }, [assetTrades])
 
   return (
     <div className="relative">
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#05050f]/60 backdrop-blur-sm">
+        <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#000]/60 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-2">
-            <div className="w-8 h-8 border-2 border-[#00fff0] border-t-transparent rounded-full animate-spin" />
-            <span className="text-[10px] text-[#5a6080] font-mono uppercase tracking-wider">
+            <div className="w-8 h-8 border-2 border-[#22c55e] border-t-transparent rounded-full animate-spin" />
+            <span className="text-[10px] text-[#a0a0a0] font-mono uppercase tracking-wider">
               Loading {asset} {timeframe}
             </span>
           </div>
         </div>
       )}
-      {/* Legend */}
-      <div className="absolute top-2 left-3 z-10 flex items-center gap-3 text-[9px] font-mono text-[#5a6080]">
+      {error && !loading && (
+        <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#000]/70">
+          <div className="flex flex-col items-center gap-1 text-center">
+            <span className="text-[11px] text-[#ef4444] font-mono">{error}</span>
+            <span className="text-[9px] text-[#666] font-mono">
+              Ensure /api/v1/ohlcv/{asset} is reachable
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Top-left legend */}
+      <div className="absolute top-2 left-3 z-10 flex items-center gap-3 text-[9px] font-mono text-[#a0a0a0]">
         <span className="flex items-center gap-1">
           <span className="w-3 h-px bg-[#00ccff] inline-block" /> EMA(8)
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-3 h-px bg-[#ff00aa] inline-block" style={{ borderTop: '1px dashed #ff00aa' }} /> EMA(21)
+          <span className="w-3 h-px bg-[#ff00aa] inline-block" /> EMA(21)
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-[#00ffaa] inline-block" /> Buy
+          <span className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-l-transparent border-r-transparent border-b-[#22c55e]" />
+          ENTRY
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-[#ff2266] inline-block" /> Sell
+          <span className="w-0 h-0 border-l-[4px] border-r-[4px] border-t-[6px] border-l-transparent border-r-transparent border-t-[#22c55e]" />
+          EXIT
         </span>
       </div>
+
+      {/* Top-right stats badge */}
+      {stats.total > 0 && (
+        <div className="absolute top-2 right-3 z-10 flex items-center gap-2 text-[9px] font-mono">
+          <span className="text-[#a0a0a0]">ACT TRADES:</span>
+          <span className="text-[#22c55e]">{stats.wins}W</span>
+          <span className="text-[#666]">/</span>
+          <span className="text-[#ef4444]">{stats.losses}L</span>
+          <span
+            className={
+              stats.totalPnl >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
+            }
+          >
+            {stats.totalPnl >= 0 ? '+' : ''}${stats.totalPnl.toFixed(2)}
+          </span>
+        </div>
+      )}
+
       <div ref={containerRef} className="w-full" style={{ height }} />
     </div>
   )
