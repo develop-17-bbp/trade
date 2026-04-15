@@ -2983,13 +2983,25 @@ class TradingExecutor:
         # ── GENETIC EVOLVED STRATEGIES (hall-of-fame strategies contribute signals) ──
         _genetic_vote = 0
         _genetic_count = 0
+        _genetic_voting_dnas: List[str] = []
         # Periodic refresh of hall-of-fame (every 30 min)
         if self._genetic_engine and time.time() - self._genetic_last_reload > 1800:
             self._reload_genetic_hall_of_fame()
         if self._genetic_engine and self._genetic_hall_of_fame and len(closes) >= 100:
             try:
                 from src.trading.genetic_strategy_engine import StrategyDNA, execute_strategy
-                for _hof_entry in self._genetic_hall_of_fame[:5]:  # Top 5 evolved strategies
+                current_regime = getattr(self, '_last_hmm_regime', {}).get(asset, 'ANY') or 'ANY'
+                _hof_top = self._genetic_hall_of_fame[:5]  # Top 5 evolved strategies
+                _genetic_skipped_regime = 0
+                for _hof_entry in _hof_top:
+                    if isinstance(_hof_entry, dict):
+                        dna_regime = _hof_entry.get('regime', 'ANY') or 'ANY'
+                    else:
+                        dna_regime = getattr(_hof_entry, 'regime', 'ANY') or 'ANY'
+                    if dna_regime not in ('ANY', current_regime):
+                        _genetic_skipped_regime += 1
+                        logger.debug(f"[GENETIC] {asset} skip DNA regime={dna_regime} (current={current_regime})")
+                        continue
                     _dna = StrategyDNA()
                     _dna.genes = _hof_entry.get('genes', _dna.genes)
                     _dna.entry_rule = _hof_entry.get('entry_rule', _dna.entry_rule)
@@ -2998,11 +3010,23 @@ class TradingExecutor:
                     if _sig != 0:  # execute_strategy returns int, not list
                         _genetic_vote += _sig
                         _genetic_count += 1
+                        if isinstance(_hof_entry, dict):
+                            _dna_name = _hof_entry.get('name') or _hof_entry.get('id') or ''
+                        else:
+                            _dna_name = getattr(_hof_entry, 'name', '') or getattr(_hof_entry, 'id', '')
+                        if _dna_name:
+                            _genetic_voting_dnas.append(str(_dna_name))
+                if _hof_top and _genetic_skipped_regime == len(_hof_top):
+                    logger.info(
+                        f"[GENETIC] {asset} ALL {len(_hof_top)} DNAs skipped by regime gate "
+                        f"(current={current_regime}) — check HoF regime tags"
+                    )
                 if _genetic_count > 0:
                     _genetic_dir = "BUY" if _genetic_vote > 0 else ("SELL" if _genetic_vote < 0 else "FLAT")
                     print(f"  [{self._ex_tag}:{asset}] GENETIC: {_genetic_count} evolved strategies vote {_genetic_dir} (net={_genetic_vote:+d})")
             except Exception as e:
                 logger.debug(f"[GENETIC] {asset} eval failed: {e}")
+        self._last_genetic_voting_dnas = _genetic_voting_dnas
 
         # Print status with active signals across all timeframes
         active_tfs_str = ", ".join(f"{tf}={s['signal']}" for tf, s in active_tf_signals.items()) or "none"
@@ -5880,6 +5904,7 @@ class TradingExecutor:
             'dca_count': 0,
             'rl_state': ml_context.get('_rl_state', None),        # RL state at entry (for learning)
             'rl_action_idx': ml_context.get('_rl_action_idx', 0),  # RL action chosen at entry
+            'genetic_dna_ids': list(getattr(self, '_last_genetic_voting_dnas', []) or []),
         }
         self.last_trade_time[asset] = time.time()
         print(f"  [{self._ex_tag}:{asset}] POSITION STORED: {action} {qty:.6f} @ ${price:,.2f} | positions={list(self.positions.keys())}")
