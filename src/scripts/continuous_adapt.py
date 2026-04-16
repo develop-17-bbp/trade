@@ -356,7 +356,7 @@ def step4_retrain_models():
                 features.append(feat)
                 future = c[i+1:i+21]
                 max_up = (max(future)-c[i])/c[i]*100 if len(future)>=5 else 0
-                labels.append(1 if max_up > SPREAD_PCT * 1.5 else 0)
+                labels.append(1 if max_up > SPREAD_PCT * 1.2 else 0)  # 1.2x spread = realistic profit threshold
 
             X = np.nan_to_num(np.array(features, dtype=np.float32), nan=0, posinf=3, neginf=-3)
             y = np.array(labels, dtype=np.int64)

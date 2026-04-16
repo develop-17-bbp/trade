@@ -6977,6 +6977,40 @@ class TradingExecutor:
             except Exception:
                 pass
 
+        # ── LEARNING HOOK 1: Label LLM decision with real trade outcome ──
+        # This feeds the fine-tuning pipeline so the LLM learns from every trade
+        if self._training_collector:
+            try:
+                entry_time = pos.get('entry_time', time.time())
+                self._training_collector.label_outcome(
+                    asset=asset,
+                    entry_time=entry_time,
+                    pnl_pct=pnl_pct,
+                    exit_reason=reason,
+                    sl_level=actual_l_level or 'L1',
+                    duration_min=duration_min,
+                )
+                print(f"  [LEARN] LLM outcome labeled: {asset} {pnl_pct:+.2f}% ({reason[:30]})")
+            except Exception as e:
+                logger.debug(f"[LEARN] label_outcome failed: {e}")
+
+        # ── LEARNING HOOK 2: Feed live outcome to Genetic Strategy Engine ──
+        # This updates strategy fitness scores with real P&L, not just backtests
+        if self._genetic_engine:
+            try:
+                active_dna = pos.get('active_dna_name')
+                if active_dna:
+                    self._genetic_engine.record_live_outcome(
+                        dna_name=active_dna,
+                        pnl_pct=pnl_pct,
+                        win=(pnl_pct > 0),
+                        duration_min=duration_min,
+                        regime=pos.get('regime', 'unknown'),
+                    )
+                    print(f"  [LEARN] Genetic outcome: {active_dna} {pnl_pct:+.2f}%")
+            except Exception as e:
+                logger.debug(f"[LEARN] genetic record failed: {e}")
+
         # ── MT5: Close mirrored/executed position (skip in paper mode) ──
         if self._mt5 and self._mt5.connected and not self._paper_mode:
             try:

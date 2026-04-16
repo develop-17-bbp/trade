@@ -776,6 +776,52 @@ class GeneticStrategyEngine:
         self.hall_of_fame.sort(key=lambda d: d.fitness, reverse=True)
         self.hall_of_fame = self.hall_of_fame[:max_size]
 
+    # ── Live Trade Feedback ──────────────────────────────────────
+
+    def record_live_outcome(self, dna_name: str, pnl_pct: float, win: bool,
+                             duration_min: float = 0, regime: str = 'unknown'):
+        """
+        Feed real live trade outcome back into strategy fitness.
+        Called by executor after every trade close.
+        This is the key link between live trading and genetic evolution.
+        """
+        import json, os
+        from datetime import datetime, timezone
+
+        # Update fitness of matching DNA in population and hall of fame
+        updated = False
+        for dna in self.population + self.hall_of_fame:
+            if dna.name == dna_name:
+                # Blend live result into fitness (80% backtest, 20% live)
+                live_signal = 10.0 if win else -5.0
+                dna.fitness = dna.fitness * 0.8 + live_signal * 0.2
+                dna.total_pnl = getattr(dna, 'total_pnl', 0) + pnl_pct
+                if not hasattr(dna, 'live_trades'): dna.live_trades = 0
+                if not hasattr(dna, 'live_wins'): dna.live_wins = 0
+                dna.live_trades += 1
+                if win: dna.live_wins += 1
+                updated = True
+
+        # Re-sort hall of fame with updated fitnesses
+        if updated:
+            self.hall_of_fame.sort(key=lambda d: d.fitness, reverse=True)
+
+        # Log live outcome for analysis
+        log_path = os.path.join(os.path.dirname(__file__), '../../logs/genetic_live_outcomes.jsonl')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({
+                    'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                    'dna_name': dna_name,
+                    'pnl_pct': pnl_pct,
+                    'win': win,
+                    'duration_min': duration_min,
+                    'regime': regime,
+                    'updated_in_population': updated,
+                }, default=str) + '\n')
+        except Exception:
+            pass
+
     # ── Per-Generation Logging ───────────────────────────────────
 
     def _log_generation(self, generation: int):
