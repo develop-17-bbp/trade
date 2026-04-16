@@ -50,7 +50,7 @@ try {
         OK "Ollama started."
     } catch {
         ERR "Ollama failed to start. Please start it manually."
-        Read-Host "Press Enter to exit"
+        Start-Sleep -Seconds 3
         exit 1
     }
 }
@@ -71,7 +71,7 @@ CHECK "Loading .env credentials..."
 $envFile = Join-Path $PSScriptRoot ".env"
 if (-not (Test-Path $envFile)) {
     ERR ".env file not found at $envFile"
-    Read-Host "Press Enter to exit"
+    Start-Sleep -Seconds 3
     exit 1
 }
 Get-Content $envFile | ForEach-Object {
@@ -172,4 +172,6 @@ Write-Host "   Open http://localhost:5173 to view dashboard" -ForegroundColor Gr
 Write-Host "   Check ACT-Tunnel window for remote access URL" -ForegroundColor Green
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Read-Host "Press Enter to close this window"
+Write-Host "" 
+Write-Host "All processes running. Close this window when done." -ForegroundColor Green
+Start-Sleep -Seconds 5
