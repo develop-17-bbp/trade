@@ -172,4 +172,4 @@ Write-Host "   Open http://localhost:5173 to view dashboard" -ForegroundColor Gr
 Write-Host "   Check ACT-Tunnel window for remote access URL" -ForegroundColor Green
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Read-Host "Press Enter to close this window (all processes keep running)"
+Read-Host "Press Enter to close this window"
