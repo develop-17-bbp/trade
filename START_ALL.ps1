@@ -38,15 +38,14 @@ try {
     OK "Ollama running."
 } catch {
     WARN "Ollama not detected! Starting Ollama..."
-    Start-Process "ollama" "serve" -WindowStyle Minimized
+    Start-Process "ollama" -ArgumentList "serve" -WindowStyle Minimized
     Start-Sleep 5
     try {
         Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop | Out-Null
         OK "Ollama started."
     } catch {
         ERR "Ollama failed to start. Please start it manually."
-        Start-Sleep 3
-        exit 1
+        Start-Sleep 3; exit 1
     }
 }
 
@@ -64,11 +63,10 @@ CHECK "Loading .env credentials..."
 $envFile = Join-Path $PSScriptRoot ".env"
 if (-not (Test-Path $envFile)) {
     ERR ".env file not found at $envFile"
-    Start-Sleep 3
-    exit 1
+    Start-Sleep 3; exit 1
 }
 Get-Content $envFile | ForEach-Object {
-    if ($_ -match "^\s*([^#][^=]+)=(.*)$") {
+    if ($_ -match "^\s*([^#=][^=]*)=(.*)$") {
         [System.Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
     }
 }
@@ -99,39 +97,41 @@ Write-Host "============================================================" -Foreg
 Write-Host
 
 $dir = $PSScriptRoot
+$env:PYTHONUNBUFFERED = "1"
+$env:PYTHONPATH = $dir
 
 STEP 1 "Starting API Server (port 11007)..."
-Start-Process cmd -ArgumentList "/k cd /d " && set PYTHONUNBUFFERED=1 && python -m src.api.production_server" -WindowStyle Normal
+Start-Process -FilePath "cmd.exe" -ArgumentList "/k","cd /d $dir && set PYTHONUNBUFFERED=1 && python -m src.api.production_server" -WindowStyle Normal
 Start-Sleep 3
 OK "API Server started on :11007"
 
 STEP 2 "Starting Trading Bot..."
-Start-Process cmd -ArgumentList "/k cd /d " && set PYTHONUNBUFFERED=1 && python -m src.main" -WindowStyle Normal
+Start-Process -FilePath "cmd.exe" -ArgumentList "/k","cd /d $dir && set PYTHONUNBUFFERED=1 && python -m src.main" -WindowStyle Normal
 Start-Sleep 3
 OK "Trading Bot started."
 
 STEP 3 "Starting Adaptation Loop (every 1h)..."
-Start-Process cmd -ArgumentList "/k cd /d " && set PYTHONUNBUFFERED=1 && python -m src.scripts.continuous_adapt --continuous --interval 1" -WindowStyle Normal
+Start-Process -FilePath "cmd.exe" -ArgumentList "/k","cd /d $dir && set PYTHONUNBUFFERED=1 && python -m src.scripts.continuous_adapt --continuous --interval 1" -WindowStyle Normal
 Start-Sleep 2
 OK "Adaptation Loop started."
 
 STEP 4 "Starting Autonomous Loop (every 30min)..."
-Start-Process cmd -ArgumentList "/k cd /d " && set PYTHONUNBUFFERED=1 && python -m src.scripts.autonomous_loop --interval 0.5" -WindowStyle Normal
+Start-Process -FilePath "cmd.exe" -ArgumentList "/k","cd /d $dir && set PYTHONUNBUFFERED=1 && python -m src.scripts.autonomous_loop --interval 0.5" -WindowStyle Normal
 Start-Sleep 2
 OK "Autonomous Loop started."
 
 STEP 5 "Starting Genetic Loop (pop=100, every 2h)..."
-Start-Process cmd -ArgumentList "/k cd /d " && set PYTHONUNBUFFERED=1 && python -m src.scripts.genetic_loop --population_size 100 --interval 2" -WindowStyle Normal
+Start-Process -FilePath "cmd.exe" -ArgumentList "/k","cd /d $dir && set PYTHONUNBUFFERED=1 && python -m src.scripts.genetic_loop --population_size 100 --interval 2" -WindowStyle Normal
 Start-Sleep 2
 OK "Genetic Loop started."
 
 STEP 6 "Starting Frontend (port 5173)..."
-Start-Process cmd -ArgumentList "/k cd /d " && npm run dev" -WindowStyle Normal
+Start-Process -FilePath "cmd.exe" -ArgumentList "/k","cd /d $dir\frontend && npm run dev" -WindowStyle Normal
 Start-Sleep 4
 OK "Frontend started on :5173"
 
 STEP 7 "Starting Cloudflare Tunnel..."
-Start-Process cmd -ArgumentList "/k cloudflared tunnel --url http://localhost:5173" -WindowStyle Normal
+Start-Process -FilePath "cmd.exe" -ArgumentList "/k","cloudflared tunnel --url http://localhost:5173" -WindowStyle Normal
 Start-Sleep 3
 OK "Tunnel started."
 
