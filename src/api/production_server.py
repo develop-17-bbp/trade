@@ -709,4 +709,9 @@ def run_production_server(host: str = "0.0.0.0", port: int = 11000,
 
 
 if __name__ == "__main__":
-    run_production_server()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=11007)
+    parser.add_argument("--host", type=str, default="0.0.0.0")
+    args = parser.parse_args()
+    run_production_server(host=args.host, port=args.port)
