@@ -1,26 +1,24 @@
 @echo off
 REM ===============================================================
-REM  ACT Trading System -- Full Self-Evolving Startup
-REM  Launches ALL components needed for autonomous operation:
-REM    1. Trading Bot (executor + LLM brain)
-REM    2. Continuous Adaptation Loop (backtest + retrain + fine-tune)
-REM    3. Autonomous Improvement Loop (self-healing + monitoring)
-REM    4. Genetic Evolution Loop (population=100, RTX 5090)
-REM
-REM  Prerequisites on GPU system:
-REM    - Ollama running locally with CUDA (ollama serve)
-REM    - Python environment with all deps installed
-REM    - .env file with Robinhood + API credentials
+REM  ACT Trading System -- Full Self-Evolving Startup (RTX 5090)
+REM  7 Windows: API + Bot + Adapt + Autonomous + Genetic + Frontend + Tunnel
 REM ===============================================================
+chcp 65001 >nul
 
 echo.
-echo =====================================================
-echo   ACT SELF-EVOLVING TRADING SYSTEM -- FULL STARTUP
-echo =====================================================
+echo ============================================================
+echo.
+echo    AAA   CCCCC  TTTTT
+echo   A   A C       T
+echo   AAAAA C       T      ACT TRADING SYSTEM
+echo   A   A C       T      RTX 5090 -- FULL STARTUP
+echo   A   A  CCCCC  T
+echo.
+echo ============================================================
 echo.
 
-REM -- Step 0: Verify Ollama is running locally --
-echo [CHECK] Verifying Ollama is running on localhost:11434...
+REM -- Step 0: Verify Ollama --
+echo [CHECK] Verifying Ollama on localhost:11434...
 curl -s http://localhost:11434/api/tags >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [WARN] Ollama not detected! Starting Ollama...
@@ -28,15 +26,14 @@ if %ERRORLEVEL% NEQ 0 (
     timeout /t 5 /nobreak >nul
     curl -s http://localhost:11434/api/tags >nul 2>&1
     if %ERRORLEVEL% NEQ 0 (
-        echo [ERROR] Ollama failed to start. Install from https://ollama.com
-        echo [ERROR] Make sure CUDA drivers are installed for GPU acceleration.
+        echo [ERROR] Ollama failed to start.
         pause
         exit /b 1
     )
 )
-echo [OK] Ollama is running.
+echo [OK] Ollama running.
 
-REM -- Step 0b: Verify required models exist --
+REM -- Step 0b: Verify models --
 echo [CHECK] Checking Ollama models...
 for %%m in (mistral:latest llama3.2:latest) do (
     ollama list 2>nul | findstr /i "%%m" >nul 2>&1
@@ -45,77 +42,107 @@ for %%m in (mistral:latest llama3.2:latest) do (
         ollama pull %%m
     )
 )
-echo [OK] Base models ready.
+echo [OK] Models ready: mistral + llama3.2
+
+REM -- Step 0c: Load .env --
+echo [CHECK] Loading .env credentials...
+if not exist "%~dp0.env" (
+    echo [ERROR] .env file not found at %~dp0.env
+    echo [ERROR] Create it with ROBINHOOD_API_KEY and ROBINHOOD_PRIVATE_KEY
+    pause
+    exit /b 1
+)
+echo [OK] .env found.
 
 cd /d %~dp0
 set PYTHONUNBUFFERED=1
 set PYTHONPATH=%~dp0
 
-REM -- Kill any existing bot processes --
+REM -- Load .env into environment --
+for /f "usebackq tokens=1,* delims==" %%A in ("%~dp0.env") do (
+    if not "%%A"=="" if not "%%A:~0,1%"=="#" set "%%A=%%B"
+)
+
+REM -- Kill existing ACT processes --
 echo.
-echo [CLEANUP] Stopping any existing ACT processes...
+echo [CLEANUP] Stopping existing ACT processes...
 taskkill /FI "WINDOWTITLE eq ACT*" /F >nul 2>&1
 timeout /t 2 /nobreak >nul
+echo [OK] Cleanup done.
 
-REM -- Step 1: Start Trading Bot (main executor) --
+REM ============================================================
+REM  START ALL 7 WINDOWS
+REM ============================================================
+
+REM -- Window 1: API Server --
 echo.
-echo [1/4] Starting Trading Bot (executor + LLM brain)...
-start "ACT - Trading Bot" /MIN cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.main 2>&1 | tee logs/main_output.log"
+echo [1/7] Starting API Server (port 11007)...
+start "ACT - API Server" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.api.production_server 2>&1 | tee logs/api_output.log"
+timeout /t 3 /nobreak >nul
+echo [OK] API Server started on :11007
+
+REM -- Window 2: Trading Bot --
+echo [2/7] Starting Trading Bot...
+start "ACT - Trading Bot" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.main 2>&1 | tee logs/main_output.log"
 timeout /t 3 /nobreak >nul
 echo [OK] Trading Bot started.
 
-REM -- Step 2: Start Continuous Adaptation Loop --
-REM  Runs every 1h: refresh data -> backtest -> evolve -> retrain LGBM -> fine-tune LLM -> deploy
-echo.
-echo [2/4] Starting Continuous Adaptation Loop (every 1h, RTX 5090)...
-start "ACT - Adaptation Loop" /MIN cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.continuous_adapt --continuous --interval 1 2>&1 | tee logs/adapt_output.log"
+REM -- Window 3: Adaptation Loop --
+echo [3/7] Starting Adaptation Loop (every 1h)...
+start "ACT - Adaptation Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.continuous_adapt --continuous --interval 1 2>&1 | tee logs/adapt_output.log"
 timeout /t 2 /nobreak >nul
 echo [OK] Adaptation Loop started.
 
-REM -- Step 3: Start Autonomous Improvement Loop --
-REM  Runs every 30min: health check -> performance audit -> auto-fix -> strategy discovery
-echo.
-echo [3/4] Starting Autonomous Improvement Loop (every 30min, RTX 5090)...
-start "ACT - Autonomous Loop" /MIN cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.autonomous_loop --interval 0.5 2>&1 | tee logs/autonomous_loop.log"
+REM -- Window 4: Autonomous Loop --
+echo [4/7] Starting Autonomous Loop (every 30min)...
+start "ACT - Autonomous Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.autonomous_loop --interval 0.5 2>&1 | tee logs/autonomous_loop.log"
 timeout /t 2 /nobreak >nul
 echo [OK] Autonomous Loop started.
 
-REM -- Step 4: Start Genetic Strategy Evolution Loop --
-REM  Runs every 2h: evolve population of 100 DNA strategies, select survivors, breed best
-echo.
-echo [4/4] Starting Genetic Evolution Loop (pop=100, every 2h, RTX 5090)...
-start "ACT - Genetic Loop" /MIN cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.genetic_loop --population_size 100 --interval 2 2>&1 | tee logs/genetic_loop.log"
+REM -- Window 5: Genetic Evolution --
+echo [5/7] Starting Genetic Loop (pop=100, every 2h)...
+start "ACT - Genetic Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.genetic_loop --population_size 100 --interval 2 2>&1 | tee logs/genetic_loop.log"
 timeout /t 2 /nobreak >nul
-echo [OK] Genetic Evolution Loop started.
+echo [OK] Genetic Loop started.
 
+REM -- Window 6: Frontend --
+echo [6/7] Starting Frontend (port 5173)...
+start "ACT - Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
+timeout /t 4 /nobreak >nul
+echo [OK] Frontend started on :5173
+
+REM -- Window 7: Cloudflare Tunnel --
+echo [7/7] Starting Cloudflare Tunnel...
+start "ACT - Tunnel" cmd /k "cloudflared tunnel --url http://localhost:5173"
+timeout /t 3 /nobreak >nul
+echo [OK] Tunnel started (check ACT - Tunnel window for public URL).
+
+REM ============================================================
 echo.
-echo =====================================================
-echo   ALL SYSTEMS RUNNING  (RTX 5090 Optimized)
-echo =====================================================
+echo ============================================================
 echo.
-echo   Trading Bot:      Trading on Robinhood (BTC, ETH)
-echo   Adaptation Loop:  Every 1h: backtest + retrain + fine-tune LLMs
-echo   Autonomous Loop:  Every 30min: self-heal + monitor + improve
-echo   Genetic Loop:     Every 2h: evolve 100 DNA strategies
+echo    ALL 7 SYSTEMS RUNNING  (RTX 5090 + CUDA)
 echo.
-echo   Ollama:           localhost:11434 (CUDA GPU - RTX 5090)
-echo   Models:           act-scanner (Mistral) + act-analyst (Llama3.2)
-echo                     Falls back to mistral:latest if not fine-tuned yet
+echo    1  API Server    http://localhost:11007
+echo    2  Trading Bot   Robinhood Paper (BTC/ETH)
+echo    3  Adapt Loop    Every 1h  -- retrain + fine-tune
+echo    4  Auto Loop     Every 30m -- self-heal + monitor
+echo    5  Genetic Loop  Every 2h  -- evolve 100 DNA strategies
+echo    6  Frontend      http://localhost:5173
+echo    7  CF Tunnel     Check ACT-Tunnel window for public URL
 echo.
-echo   Logs:
-echo     logs/main_output.log         -- Trading decisions
-echo     logs/adapt_output.log        -- Adaptation cycles
-echo     logs/autonomous_loop.log     -- Self-improvement cycles
-echo     logs/genetic_loop.log        -- Genetic evolution cycles
-echo     logs/finetune_history.jsonl  -- Fine-tuning results
-echo     logs/genetic_live_outcomes.jsonl -- Live trade DNA feedback
+echo    Ollama: localhost:11434  CUDA: RTX 5090
+echo    Models: mistral + llama3.2 + neural-chat
 echo.
-echo   Self-Evolution Flow:
-echo     Trade -> Collect data -> Label outcomes -> Fine-tune LLMs
-echo     -> Deploy improved models -> Trade better -> Repeat
-echo     Genetic DNA -> Live feedback -> Fitness update -> Evolve
+echo    Logs:
+echo      logs/main_output.log    -- Trading decisions
+echo      logs/adapt_output.log   -- Adaptation cycles
+echo      logs/autonomous_loop.log -- Self-improvement
+echo      logs/genetic_loop.log   -- Genetic evolution
+echo      logs/api_output.log     -- API server
 echo.
-echo   Press Ctrl+C in any window to stop that component.
-echo   Close this window to keep all processes running.
-echo =====================================================
+echo    Check ACT-Tunnel window for remote access URL
+echo    Open http://localhost:5173 to view dashboard
+echo.
+echo ============================================================
 pause
