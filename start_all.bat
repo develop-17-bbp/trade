@@ -6,70 +6,67 @@ REM ===============================================================
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-REM -- Colors --
-set "RED=[91m"
-set "GREEN=[92m"
-set "YELLOW=[93m"
-set "CYAN=[96m"
-set "WHITE=[97m"
-set "RESET=[0m"
+REM -- Enable ANSI colors in Windows Terminal --
+reg add HKCU\Console /v VirtualTerminalLevel /t REG_DWORD /d 1 /f >nul 2>&1
 
 cls
-
-REM -- Animated ASCII Art --
 echo.
-echo %RED%     AAA   %RESET%%WHITE%CCCCC%RESET%%GREEN%  TTTTT%RESET%
-timeout /t 0 /nobreak >nul
-echo %RED%   A   A %RESET%%WHITE%C      %RESET%%GREEN%    T  %RESET%
-timeout /t 0 /nobreak >nul
-echo %RED%   AAAAA %RESET%%WHITE%C      %RESET%%GREEN%    T  %RESET%     %CYAN%ACT TRADING SYSTEM%RESET%
-timeout /t 0 /nobreak >nul
-echo %RED%   A   A %RESET%%WHITE%C      %RESET%%GREEN%    T  %RESET%     %YELLOW%RTX 5090 -- FULL STARTUP%RESET%
-timeout /t 0 /nobreak >nul
-echo %RED%   A   A %RESET%%WHITE%CCCCC%RESET%%GREEN%  TTTTT%RESET%
+echo [91m     AAA   [0m[97mCCCCC[0m[92m  TTTTT[0m
+echo [91m   A   A [0m[97mC      [0m[92m    T  [0m
+echo [91m   AAAAA [0m[97mC      [0m[92m    T  [0m     [96mACT TRADING SYSTEM[0m
+echo [91m   A   A [0m[97mC      [0m[92m    T  [0m     [93mRTX 5090 -- FULL STARTUP[0m
+echo [91m   A   A [0m[97mCCCCC[0m[92m  TTTTT[0m
 echo.
-echo %CYAN%============================================================%RESET%
+echo [96m============================================================[0m
 echo.
 
 REM -- Step 0: Verify Ollama --
-echo %YELLOW%[CHECK]%RESET% Verifying Ollama on localhost:11434...
+echo [93m[CHECK][0m Verifying Ollama on localhost:11434...
 curl -s http://localhost:11434/api/tags >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo %YELLOW%[WARN]%RESET% Ollama not detected! Starting Ollama...
+    echo [93m[WARN][0m Ollama not detected! Starting Ollama...
     start "" /MIN ollama serve
     timeout /t 5 /nobreak >nul
     curl -s http://localhost:11434/api/tags >nul 2>&1
     if %ERRORLEVEL% NEQ 0 (
-        echo %RED%[ERROR]%RESET% Ollama failed to start.
+        echo [91m[ERROR][0m Ollama failed to start.
         pause
         exit /b 1
     )
 )
-echo %GREEN%[OK]%RESET% Ollama running.
+echo [92m[OK][0m Ollama running.
 
 REM -- Step 0b: Verify models --
-echo %YELLOW%[CHECK]%RESET% Checking Ollama models...
+echo [93m[CHECK][0m Checking Ollama models...
 for %%m in (mistral:latest llama3.2:latest) do (
     ollama list 2>nul | findstr /i "%%m" >nul 2>&1
     if %ERRORLEVEL% NEQ 0 (
-        echo %YELLOW%[PULL]%RESET% Downloading %%m ...
+        echo [93m[PULL][0m Downloading %%m ...
         ollama pull %%m
     )
 )
-echo %GREEN%[OK]%RESET% Models ready: mistral + llama3.2
+echo [92m[OK][0m Models ready: mistral + llama3.2
 
 REM -- Step 0c: Load .env --
-echo %YELLOW%[CHECK]%RESET% Loading .env credentials...
+echo [93m[CHECK][0m Loading .env credentials...
 if not exist "%~dp0.env" (
-    echo %RED%[ERROR]%RESET% .env file not found at %~dp0.env
+    echo [91m[ERROR][0m .env file not found at %~dp0.env
     pause
     exit /b 1
 )
-REM Parse .env file safely
 for /f "usebackq eol=# tokens=1,2 delims==" %%A in ("%~dp0.env") do (
     set "%%A=%%B"
 )
-echo %GREEN%[OK]%RESET% .env loaded.
+echo [92m[OK][0m .env loaded.
+
+REM -- Install cloudflared if missing --
+where cloudflared >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo [93m[INSTALL][0m cloudflared not found. Downloading...
+    curl -L -o "%~dp0cloudflared.exe" https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
+    copy "%~dp0cloudflared.exe" "C:\Windows\System32\cloudflared.exe" >nul 2>&1
+    echo [92m[OK][0m cloudflared installed.
+)
 
 cd /d %~dp0
 set PYTHONUNBUFFERED=1
@@ -77,78 +74,77 @@ set PYTHONPATH=%~dp0
 
 REM -- Kill existing ACT processes --
 echo.
-echo %YELLOW%[CLEANUP]%RESET% Stopping existing ACT processes...
+echo [93m[CLEANUP][0m Stopping existing ACT processes...
 taskkill /FI "WINDOWTITLE eq ACT*" /F >nul 2>&1
 timeout /t 2 /nobreak >nul
-echo %GREEN%[OK]%RESET% Cleanup done.
+echo [92m[OK][0m Cleanup done.
 
 echo.
-echo %CYAN%============================================================%RESET%
-echo %CYAN%  LAUNCHING ALL 7 SYSTEMS...%RESET%
-echo %CYAN%============================================================%RESET%
+echo [96m============================================================[0m
+echo [96m  LAUNCHING ALL 7 SYSTEMS...[0m
+echo [96m============================================================[0m
 echo.
 
 REM -- Window 1: API Server --
-echo %YELLOW%[1/7]%RESET% Starting %CYAN%API Server%RESET% (port 11007)...
-start "ACT - API Server" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.api.production_server 2>&1 | tee logs/api_output.log"
+echo [93m[1/7][0m Starting [96mAPI Server[0m (port 11007)...
+start "ACT - API Server" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.api.production_server > logs\api_output.log 2>&1"
 timeout /t 3 /nobreak >nul
-echo %GREEN%[OK]%RESET% API Server started on :11007
+echo [92m[OK][0m API Server started on :11007
 
 REM -- Window 2: Trading Bot --
-echo %YELLOW%[2/7]%RESET% Starting %RED%Trading Bot%RESET%...
-start "ACT - Trading Bot" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.main 2>&1 | tee logs/main_output.log"
+echo [93m[2/7][0m Starting [91mTrading Bot[0m...
+start "ACT - Trading Bot" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.main > logs\main_output.log 2>&1"
 timeout /t 3 /nobreak >nul
-echo %GREEN%[OK]%RESET% Trading Bot started.
+echo [92m[OK][0m Trading Bot started.
 
 REM -- Window 3: Adaptation Loop --
-echo %YELLOW%[3/7]%RESET% Starting %CYAN%Adaptation Loop%RESET% (every 1h)...
-start "ACT - Adaptation Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.continuous_adapt --continuous --interval 1 2>&1 | tee logs/adapt_output.log"
+echo [93m[3/7][0m Starting [96mAdaptation Loop[0m (every 1h)...
+start "ACT - Adaptation Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.continuous_adapt --continuous --interval 1 > logs\adapt_output.log 2>&1"
 timeout /t 2 /nobreak >nul
-echo %GREEN%[OK]%RESET% Adaptation Loop started.
+echo [92m[OK][0m Adaptation Loop started.
 
 REM -- Window 4: Autonomous Loop --
-echo %YELLOW%[4/7]%RESET% Starting %CYAN%Autonomous Loop%RESET% (every 30min)...
-start "ACT - Autonomous Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.autonomous_loop --interval 0.5 2>&1 | tee logs/autonomous_loop.log"
+echo [93m[4/7][0m Starting [96mAutonomous Loop[0m (every 30min)...
+start "ACT - Autonomous Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.autonomous_loop --interval 0.5 > logs\autonomous_loop.log 2>&1"
 timeout /t 2 /nobreak >nul
-echo %GREEN%[OK]%RESET% Autonomous Loop started.
+echo [92m[OK][0m Autonomous Loop started.
 
 REM -- Window 5: Genetic Evolution --
-echo %YELLOW%[5/7]%RESET% Starting %GREEN%Genetic Loop%RESET% (pop=100, every 2h)...
-start "ACT - Genetic Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.genetic_loop --population_size 100 --interval 2 2>&1 | tee logs/genetic_loop.log"
+echo [93m[5/7][0m Starting [92mGenetic Loop[0m (pop=100, every 2h)...
+start "ACT - Genetic Loop" cmd /k "cd /d %~dp0 && set PYTHONUNBUFFERED=1 && python -m src.scripts.genetic_loop --population_size 100 --interval 2 > logs\genetic_loop.log 2>&1"
 timeout /t 2 /nobreak >nul
-echo %GREEN%[OK]%RESET% Genetic Loop started.
+echo [92m[OK][0m Genetic Loop started.
 
 REM -- Window 6: Frontend --
-echo %YELLOW%[6/7]%RESET% Starting %CYAN%Frontend%RESET% (port 5173)...
+echo [93m[6/7][0m Starting [96mFrontend[0m (port 5173)...
 start "ACT - Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 timeout /t 4 /nobreak >nul
-echo %GREEN%[OK]%RESET% Frontend started on :5173
+echo [92m[OK][0m Frontend started on :5173
 
 REM -- Window 7: Cloudflare Tunnel --
-echo %YELLOW%[7/7]%RESET% Starting %CYAN%Cloudflare Tunnel%RESET%...
+echo [93m[7/7][0m Starting [96mCloudflare Tunnel[0m...
 start "ACT - Tunnel" cmd /k "cloudflared tunnel --url http://localhost:5173"
 timeout /t 3 /nobreak >nul
-echo %GREEN%[OK]%RESET% Tunnel started.
+echo [92m[OK][0m Tunnel started.
 
-REM ============================================================
 echo.
-echo %CYAN%============================================================%RESET%
+echo [96m============================================================[0m
 echo.
-echo %GREEN%   ALL 7 SYSTEMS RUNNING  ^(RTX 5090 + CUDA^)%RESET%
+echo [92m   ALL 7 SYSTEMS RUNNING  (RTX 5090 + CUDA)[0m
 echo.
-echo %WHITE%   1%RESET%  %CYAN%API Server%RESET%    http://localhost:11007
-echo %WHITE%   2%RESET%  %RED%Trading Bot%RESET%   Robinhood Paper ^(BTC/ETH^)
-echo %WHITE%   3%RESET%  %CYAN%Adapt Loop%RESET%    Every 1h  -- retrain + fine-tune
-echo %WHITE%   4%RESET%  %CYAN%Auto Loop%RESET%     Every 30m -- self-heal + monitor
-echo %WHITE%   5%RESET%  %GREEN%Genetic Loop%RESET%  Every 2h  -- evolve 100 DNA strategies
-echo %WHITE%   6%RESET%  %CYAN%Frontend%RESET%      http://localhost:5173
-echo %WHITE%   7%RESET%  %CYAN%CF Tunnel%RESET%     Check ACT-Tunnel window for public URL
+echo    [97m1[0m  [96mAPI Server[0m     http://localhost:11007
+echo    [97m2[0m  [91mTrading Bot[0m    Robinhood Paper (BTC/ETH)
+echo    [97m3[0m  [96mAdapt Loop[0m     Every 1h  -- retrain + fine-tune
+echo    [97m4[0m  [96mAuto Loop[0m      Every 30m -- self-heal + monitor
+echo    [97m5[0m  [92mGenetic Loop[0m   Every 2h  -- evolve 100 DNA strategies
+echo    [97m6[0m  [96mFrontend[0m       http://localhost:5173
+echo    [97m7[0m  [96mCF Tunnel[0m      Check ACT-Tunnel window for URL
 echo.
-echo %YELLOW%   Ollama: localhost:11434  CUDA: RTX 5090%RESET%
-echo %YELLOW%   Models: mistral + llama3.2 + neural-chat%RESET%
+echo    [93mOllama: localhost:11434  CUDA: RTX 5090[0m
+echo    [93mModels: mistral + llama3.2 + neural-chat[0m
 echo.
-echo %GREEN%   Open http://localhost:5173 to view dashboard%RESET%
-echo %GREEN%   Check ACT-Tunnel window for remote access URL%RESET%
+echo    [92mOpen http://localhost:5173 to view dashboard[0m
+echo    [92mCheck ACT-Tunnel window for remote access URL[0m
 echo.
-echo %CYAN%============================================================%RESET%
+echo [96m============================================================[0m
 pause
