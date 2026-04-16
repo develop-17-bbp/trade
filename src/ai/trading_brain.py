@@ -1059,13 +1059,20 @@ class SessionFilter:
             now = datetime.now(timezone.utc)
             hour = now.hour
             weekday = now.weekday()
+            # Weekends: crypto volume drops 40-60% — skip new entries
             if weekday >= 5:
-                return {"allowed": True, "multiplier": 0.5, "reason": f"Weekend (day={weekday})"}
-            if hour >= 22 or hour < 2:
-                return {"allowed": True, "multiplier": 0.7, "reason": f"Low volume (UTC {hour}:00)"}
+                return {"allowed": False, "multiplier": 0.0, "reason": f"Weekend — no new entries (day={weekday})"}
+            # Dead hours UTC 00:00-07:00: low volume, wide spreads, stop hunts
+            if 0 <= hour < 7:
+                return {"allowed": False, "multiplier": 0.0, "reason": f"Dead hours — no new entries (UTC {hour}:00)"}
+            # Late US / Asia overlap UTC 20:00-24:00: reduced quality
+            if 20 <= hour < 24:
+                return {"allowed": True, "multiplier": 0.6, "reason": f"Reduced session (UTC {hour}:00)"}
+            # Prime US session UTC 13:00-20:00: highest volume and trend clarity
             if 13 <= hour < 20:
-                return {"allowed": True, "multiplier": 1.2, "reason": f"US session (UTC {hour}:00)"}
-            return {"allowed": True, "multiplier": 1.0, "reason": f"Normal (UTC {hour}:00)"}
+                return {"allowed": True, "multiplier": 1.3, "reason": f"Prime US session (UTC {hour}:00)"}
+            # EU session UTC 07:00-13:00: good volume
+            return {"allowed": True, "multiplier": 1.0, "reason": f"EU session (UTC {hour}:00)"}
         except Exception:
             return {"allowed": True, "multiplier": 1.0, "reason": "Error"}
 
@@ -1145,6 +1152,15 @@ class TradingBrainV2:
         session_info = self.session.is_good_session()
         session_mult = session_info.get("multiplier", 1.0)
         print(f"[BRAIN:{asset}] Session: {session_info['reason']} (mult={session_mult})")
+        # Hard block during dead/weekend hours — no new entries
+        if not session_info.get("allowed", True):
+            print(f"[BRAIN:{asset}] SESSION BLOCK: {session_info['reason']} — skipping entry")
+            return {
+                "proceed": False, "confidence": 0.0, "risk_score": 10,
+                "trade_quality": 0, "position_size_pct": 0,
+                "facilitator_verdict": f"SESSION BLOCK: {session_info['reason']}",
+                "session_blocked": True,
+            }
 
         regime_info = self.regime.evaluate(closes=closes, volumes=volumes, orch_result=orch_result)
         regime_name = regime_info.get("regime", "UNKNOWN")
