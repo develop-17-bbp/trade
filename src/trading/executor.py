@@ -5208,19 +5208,32 @@ class TradingExecutor:
             pred_l = unified.get('predicted_l_level', '?')
             fac = str(unified.get('facilitator_verdict', ''))[:80]
 
-            # ── QUALITY OVERRIDE: LLM rejected but setup has merit ──
-            # In ranging markets, LLM says "conflicting signals" for everything.
-            # If quality >= 4 and risk <= 8, override with reduced size.
-            # Relaxed from quality>=7/risk<=7: ranging market gives quality 4-5, risk 6-8.
-            # Bear agent and min_confidence are SKIPPED when this fires (they block everything).
+            # ── QUALITY OVERRIDE: LLM rejected but setup has exceptional merit ──
+            # Only fires when LLM reasoning does NOT contain explicit skip/conflict keywords
+            # AND the setup clears much higher quality/confidence bars.
+            # This preserves the LLM's autonomy — if it says "skip", we skip.
             _conf = unified.get('confidence', 0.3)
-            if tq >= 4 and risk_score <= 8 and _conf >= 0.15:
+            _reasoning_text = (
+                str(unified.get('facilitator_verdict', '')) + ' ' +
+                str(unified.get('reasoning', '')) + ' ' +
+                str(unified.get('bull_case', '')) + ' ' +
+                str(unified.get('bear_case', ''))
+            ).lower()
+            # Keywords that signal the LLM explicitly wants to skip — respect these always
+            _llm_skip_keywords = [
+                'skip', 'conflicting', 'not recommended', 'avoid', 'do not enter',
+                'should be skipped', 'caution', 'proceed=false', 'conflicting signals',
+                'lack of', 'no clear', 'not a clear', 'bearish', 'risk of reversal',
+                'own risk', 'not confident',
+            ]
+            _llm_explicitly_skipping = any(kw in _reasoning_text for kw in _llm_skip_keywords)
+
+            # Only override if: LLM didn't explicitly say skip AND quality is genuinely high
+            if not _llm_explicitly_skipping and tq >= 7 and risk_score <= 5 and _conf >= 0.60:
                 _quality_override_active = True
                 unified['proceed'] = True
                 unified['position_size_pct'] = max(1.0, unified.get('position_size_pct', 3) * 0.3)
-                # Ensure confidence clears all downstream gates
                 unified['confidence'] = max(_conf, 0.85)
-                # On LONGS-ONLY exchange, force LONG direction regardless of signal
                 if self._longs_only:
                     unified['chosen_direction'] = 'CALL'
                 print(f"  [{self._ex_tag}:{asset}] QUALITY OVERRIDE: LLM rejected but quality={tq}/10 risk={risk_score}/10 conf={_conf:.2f} → entering {'LONG (forced)' if self._longs_only else ''} conf={unified['confidence']:.2f} size={unified['position_size_pct']:.0f}%")
