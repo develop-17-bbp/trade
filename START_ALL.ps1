@@ -109,14 +109,26 @@ try {
 
 # ── Verify PyTorch CUDA ──
 CHECK "Verifying PyTorch CUDA..."
-$cudaCheck = python -c "import torch; print(f'CUDA={torch.cuda.is_available()} GPU={torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"none\"} VRAM={torch.cuda.get_device_properties(0).total_mem // (1024**3) if torch.cuda.is_available() else 0}GB')" 2>&1
-if ($cudaCheck -match "CUDA=True") {
+# Write temp script to avoid PowerShell quote mangling
+$pyCheck = Join-Path $PSScriptRoot "_check_cuda.py"
+@"
+import torch
+cuda = torch.cuda.is_available()
+if cuda:
+    name = torch.cuda.get_device_name(0)
+    vram = torch.cuda.get_device_properties(0).total_mem // (1024**3)
+    print('CUDA=True GPU=' + name + ' VRAM=' + str(vram) + 'GB')
+else:
+    print('CUDA=False GPU=none VRAM=0GB')
+"@ | Set-Content -Path $pyCheck -Encoding UTF8
+$cudaCheck = python $pyCheck 2>&1
+Remove-Item $pyCheck -ErrorAction SilentlyContinue
+if ("$cudaCheck" -match "CUDA=True") {
     OK "PyTorch CUDA: $cudaCheck"
-    # Update VRAM from torch (more accurate than WMI)
-    if ($cudaCheck -match "VRAM=(\d+)GB") { $gpuVRAM = [int]$matches[1] }
+    if ("$cudaCheck" -match "VRAM=(\d+)GB") { $gpuVRAM = [int]$matches[1] }
 } else {
     WARN "PyTorch CUDA NOT available: $cudaCheck"
-    WARN "LLM fine-tuning will be slow (CPU only). Install: pip install torch --index-url https://download.pytorch.org/whl/cu128"
+    WARN "Install CUDA PyTorch: pip install torch --index-url https://download.pytorch.org/whl/cu128"
 }
 
 # ── Verify nvidia-smi ──
