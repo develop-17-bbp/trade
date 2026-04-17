@@ -94,6 +94,27 @@ try {
     }
 }
 
+# ── Verify PyTorch CUDA ──
+CHECK "Verifying PyTorch CUDA..."
+$cudaCheck = python -c "import torch; print(f'CUDA={torch.cuda.is_available()} GPU={torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"none\"} VRAM={torch.cuda.get_device_properties(0).total_mem // (1024**3) if torch.cuda.is_available() else 0}GB')" 2>&1
+if ($cudaCheck -match "CUDA=True") {
+    OK "PyTorch CUDA: $cudaCheck"
+    # Update VRAM from torch (more accurate than WMI)
+    if ($cudaCheck -match "VRAM=(\d+)GB") { $gpuVRAM = [int]$matches[1] }
+} else {
+    WARN "PyTorch CUDA NOT available: $cudaCheck"
+    WARN "LLM fine-tuning will be slow (CPU only). Install: pip install torch --index-url https://download.pytorch.org/whl/cu128"
+}
+
+# ── Verify nvidia-smi ──
+CHECK "Checking nvidia-smi..."
+$smi = nvidia-smi --query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu --format=csv,noheader,nounits 2>&1
+if ($LASTEXITCODE -eq 0) {
+    OK "nvidia-smi: $smi"
+} else {
+    WARN "nvidia-smi not found (NVIDIA drivers may need install)"
+}
+
 # ── Pull models ──
 CHECK "Checking models for $tier GPU..."
 $models = ollama list 2>$null
