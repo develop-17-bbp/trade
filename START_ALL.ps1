@@ -1,10 +1,50 @@
-# ===============================================================
+﻿# ===============================================================
 #  ACT v8.0 — GPU-Optimized Parallel Process Manager
 #  Auto-detects GPU and allocates processes accordingly.
 #  Run: powershell -ExecutionPolicy Bypass -File START_ALL.ps1
 # ===============================================================
 
 $Host.UI.RawUI.BackgroundColor = [System.ConsoleColor]::Black
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+try { chcp 65001 | Out-Null } catch {}
+
+# ── Enable ANSI/VT color processing (persistent + current session) ──
+try { reg add HKCU\Console /v VirtualTerminalLevel /t REG_DWORD /d 1 /f | Out-Null } catch {}
+try {
+    if (-not ('Win32.VT' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace Win32 {
+    public static class VT {
+        [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int h);
+        [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+        [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
+        public static void Enable() {
+            IntPtr h = GetStdHandle(-11);
+            uint m; GetConsoleMode(h, out m);
+            SetConsoleMode(h, m | 0x0004);
+        }
+    }
+}
+'@
+    }
+    [Win32.VT]::Enable()
+} catch {}
+
+# ── ANSI color palette (bright) — works everywhere VT is enabled ──
+$ESC = [char]27
+$R   = "$ESC[91m"   # bright red
+$G   = "$ESC[92m"   # bright green
+$Y   = "$ESC[93m"   # bright yellow
+$B   = "$ESC[94m"   # bright blue
+$M   = "$ESC[95m"   # bright magenta
+$C   = "$ESC[96m"   # bright cyan
+$W   = "$ESC[97m"   # bright white
+$DG  = "$ESC[90m"   # dark gray
+$NC  = "$ESC[0m"    # reset
+
 Clear-Host
 
 # ── GPU/CPU Detection ──
@@ -60,29 +100,34 @@ if ($gpuVRAM -ge 40) {
 
 $tier = "SCORE=$computeScore"
 
-# ── ASCII Art ──
+# ── ACT Color Motion Banner (ANSI escape codes — works in all modern Windows terminals) ──
 Write-Host ""
-Write-Host "     AAA   " -ForegroundColor Red -NoNewline
-Write-Host "CCCCC" -ForegroundColor White -NoNewline
-Write-Host "  TTTTT" -ForegroundColor Green
-Write-Host "   A   A " -ForegroundColor Red -NoNewline
-Write-Host "C      " -ForegroundColor White -NoNewline
-Write-Host "    T  " -ForegroundColor Green
-Write-Host "   AAAAA " -ForegroundColor Red -NoNewline
-Write-Host "C      " -ForegroundColor White -NoNewline
-Write-Host "    T  " -ForegroundColor Green -NoNewline
-Write-Host "     ACT v8.0 TRADING SYSTEM" -ForegroundColor Cyan
-Write-Host "   A   A " -ForegroundColor Red -NoNewline
-Write-Host "C      " -ForegroundColor White -NoNewline
-Write-Host "    T  " -ForegroundColor Green -NoNewline
-Write-Host "     GPU-OPTIMIZED PARALLEL LAUNCH" -ForegroundColor Yellow
-Write-Host "   A   A " -ForegroundColor Red -NoNewline
-Write-Host "CCCCC" -ForegroundColor White -NoNewline
-Write-Host "  TTTTT" -ForegroundColor Green
+Write-Host "${C}  ══════════════════════════════════════════════════════════${NC}"
 Write-Host ""
-Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  $tier : $gpuName ${gpuVRAM}GB | ${cpuCores} cores | ${ramGB}GB RAM" -ForegroundColor Yellow
-Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "${R}       █████╗ ${NC}${W}   ██████╗ ${NC}${G}  ████████╗${NC}"
+Write-Host "${R}      ██╔══██╗${NC}${W}  ██╔════╝ ${NC}${G}  ╚══██╔══╝${NC}"
+Write-Host "${R}      ███████║${NC}${W}  ██║      ${NC}${G}     ██║   ${NC}"
+Write-Host "${R}      ██╔══██║${NC}${W}  ██║      ${NC}${G}     ██║   ${NC}"
+Write-Host "${R}      ██║  ██║${NC}${W}  ╚██████╗ ${NC}${G}     ██║   ${NC}"
+Write-Host "${R}      ╚═╝  ╚═╝${NC}${W}   ╚═════╝ ${NC}${G}     ╚═╝   ${NC}"
+Write-Host ""
+Write-Host "         ${R}Autonomous${NC} ${DG}·${NC} ${W}Crypto${NC} ${DG}·${NC} ${G}Trader${NC}    ${Y}v8.0${NC}"
+Write-Host "${DG}       GPU-Optimized · Self-Evolving · 12-Agent Consensus${NC}"
+Write-Host ""
+
+# Pulse effect: motion flash through 5 colors
+$pulseText = "        [ ACT v8.0 BOOTING ]"
+$pulseColors = @($R, $W, $G, $Y, $C)
+foreach ($clr in $pulseColors) {
+    Write-Host ("`r" + (' ' * 60)) -NoNewline
+    Write-Host ("`r" + $clr + $pulseText + $NC) -NoNewline
+    Start-Sleep -Milliseconds 90
+}
+Write-Host ("`r" + (' ' * 60))
+Write-Host ""
+Write-Host "$C  ══════════════════════════════════════════════════════════$NC"
+Write-Host "$Y   $tier : $gpuName ${gpuVRAM}GB | ${cpuCores} cores | ${ramGB}GB RAM$NC"
+Write-Host "$C  ══════════════════════════════════════════════════════════$NC"
 Write-Host ""
 
 function OK($m) { Write-Host "[OK] " -ForegroundColor Green -NoNewline; Write-Host $m }
