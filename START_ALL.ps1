@@ -116,7 +116,8 @@ import torch
 cuda = torch.cuda.is_available()
 if cuda:
     name = torch.cuda.get_device_name(0)
-    vram = torch.cuda.get_device_properties(0).total_mem // (1024**3)
+    props = torch.cuda.get_device_properties(0)
+    vram = (getattr(props, 'total_memory', 0) or getattr(props, 'total_mem', 0)) // (1024**3)
     print('CUDA=True GPU=' + name + ' VRAM=' + str(vram) + 'GB')
 else:
     print('CUDA=False GPU=none VRAM=0GB')
