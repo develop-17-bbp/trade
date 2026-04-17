@@ -1230,6 +1230,24 @@ class TradingExecutor:
                 except Exception as e2:
                     print(f"  [SENT] SentimentPipeline init failed ({e2})")
 
+        # ── RSS News Aggregator (replaces dead CryptoPanic API) ──
+        self._news_rss = None
+        try:
+            from src.ai.rss_news_aggregator import RSSNewsAggregator
+            self._news_rss = RSSNewsAggregator(
+                fetch_interval=int((config or {}).get('news', {}).get('fetch_interval_sec', 300)),
+                max_age_hours=float((config or {}).get('news', {}).get('max_age_hours', 48.0)),
+            )
+            # Warm the cache in background so first trade decision has data
+            import threading as _th
+            _th.Thread(
+                target=lambda: self._news_rss.get_headlines(asset='BTC', force_refresh=True),
+                daemon=True,
+            ).start()
+            print(f"  [NEWS] RSSNewsAggregator ACTIVE — 9 sources, warming cache")
+        except Exception as e:
+            print(f"  [NEWS] RSSNewsAggregator init failed: {e}")
+
         # ── Temporal Transformer (attention-based multi-horizon forecaster) ──
         self._temporal_transformer = None
         if TEMPORAL_TRANSFORMER_AVAILABLE:
@@ -1409,18 +1427,72 @@ class TradingExecutor:
                 except Exception:
                     pass  # On-chain is optional, don't block trading
 
+            # ── Build sentiment_data from real RSS headlines (not price proxy) ──
+            sentiment_data = {}
+            try:
+                if self._news_rss is not None and self._sentiment is not None:
+                    headline_objs = self._news_rss.get_headlines(asset=asset, limit=20)
+                    headlines = [h.text for h in headline_objs]
+                    timestamps = [h.timestamp for h in headline_objs]
+                    if headlines:
+                        scored = self._sentiment.analyze(headlines, timestamps=timestamps)
+                        agg = self._sentiment.aggregate_sentiment(scored, timestamps=timestamps)
+                        if isinstance(agg, dict):
+                            sentiment_data = dict(agg)
+                            # Map fields the sentiment_decoder_agent reads
+                            sentiment_data['score'] = agg.get('aggregate_score', 0.0)
+                            sentiment_data['label'] = agg.get('aggregate_label', 'NEUTRAL')
+                        sentiment_data['headline_count'] = len(headlines)
+                        sentiment_data['recent_headlines'] = headlines[:5]
+                        sentiment_data['sources'] = list({h.source for h in headline_objs})
+            except Exception as e:
+                logger.debug(f"[SENT] news->sentiment aggregation failed: {e}")
+
+            # ── Build ext_feats from economic intelligence (real data) ──
+            ext_feats = {}
+            try:
+                if self._economic_intelligence is not None:
+                    # Fear & Greed from social_sentiment layer
+                    social = self._economic_intelligence._layers.get('social_sentiment')
+                    if social is not None and hasattr(social, 'get_cached'):
+                        fng = social.get_cached() or {}
+                        if isinstance(fng, dict) and 'value' in fng:
+                            ext_feats['fear_greed_index'] = float(fng.get('value', 50))
+                            ext_feats['fear_greed_signal'] = fng.get('signal', 'NEUTRAL')
+                    # Derivatives layer — funding rate + open interest
+                    deriv = self._economic_intelligence._layers.get('derivatives')
+                    if deriv is not None and hasattr(deriv, 'get_cached'):
+                        d = deriv.get_cached() or {}
+                        if isinstance(d, dict):
+                            val = d.get('value', {}) if isinstance(d.get('value'), dict) else {}
+                            ext_feats['funding_rate'] = float(val.get('funding_rate', 0.0) or 0.0)
+                            ext_feats['open_interest'] = float(val.get('open_interest', 0.0) or 0.0)
+            except Exception as e:
+                logger.debug(f"[ECON] ext_feats build failed: {e}")
+
+            # ── Economic macro snapshot for agent context ──
+            economic_data = {}
+            try:
+                if self._economic_intelligence is not None:
+                    economic_data = self._economic_intelligence.get_macro_summary() or {}
+            except Exception as e:
+                logger.debug(f"[ECON] macro summary failed: {e}")
+
             # Run full orchestrator pipeline (agents + debate + combine + audit)
             decision = self._orchestrator.run_cycle(
                 quant_state=quant_state,
                 raw_signal=raw_signal,
                 raw_confidence=0.5,
+                ext_feats=ext_feats,
                 on_chain=on_chain_data,
+                sentiment_data=sentiment_data,
                 ohlcv_data=ohlcv_ctx,
                 asset=asset,
                 daily_pnl=self.daily_realized_pnl,
                 account_balance=self.equity,
                 open_positions=list(self.positions.values()),
                 trade_history=[],
+                economic_data=economic_data,
             )
 
             # ── Pass RAW agent outputs to LLM — LLM is the brain, not Python ──

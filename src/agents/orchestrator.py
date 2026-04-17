@@ -171,7 +171,8 @@ class AgentOrchestrator:
                   daily_pnl: float = 0.0,
                   account_balance: float = 100_000.0,
                   open_positions: Optional[List] = None,
-                  trade_history: Optional[List] = None) -> EnhancedDecision:
+                  trade_history: Optional[List] = None,
+                  economic_data: Optional[Dict] = None) -> EnhancedDecision:
         """
         Execute the full 4-step agent pipeline.
 
@@ -195,6 +196,7 @@ class AgentOrchestrator:
             'on_chain': on_chain or {},
             'sentiment_data': sentiment_data or {},
             'ohlcv_data': ohlcv_data or {},
+            'economic_data': economic_data or {},
             'asset': asset,
             'daily_pnl': daily_pnl,
             'account_balance': account_balance,
