@@ -575,6 +575,52 @@ async def sentiment(_=Depends(_require_api_key)):
     assets = state.get("active_assets", {})
     return {a: v.get("sentiment", {}) for a, v in assets.items()}
 
+
+@app.get("/api/v1/signals/live_intelligence", tags=["Signals"])
+async def live_intelligence(_=Depends(_require_api_key)):
+    """Live sentiment + Fear&Greed + derivatives snapshot per asset.
+
+    Returns the data the Authority/Sentiment agents actually saw on the
+    most recent orchestrator cycle. Use this to verify the pipeline is
+    getting real data (not defaults).
+    """
+    state = DashboardState().get_full_state()
+    return state.get("live_intelligence", {})
+
+
+@app.get("/api/v1/decisions/recent", tags=["Trades"])
+async def recent_decisions(limit: int = 50, _=Depends(_require_api_key)):
+    """Tail of the trade-decision audit log (JSONL).
+
+    Each line records the orchestrator decision plus the headlines +
+    sentiment + macro context that drove it, so trades can be audited
+    against the news stream they happened under.
+    """
+    import os, json
+    limit = max(1, min(500, int(limit)))
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "logs", "trade_decisions.jsonl",
+    )
+    if not os.path.exists(path):
+        return {"decisions": [], "total": 0}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        tail = lines[-limit:]
+        records = []
+        for line in tail:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return {"decisions": records, "total": len(records)}
+    except Exception as e:
+        return {"decisions": [], "total": 0, "error": str(e)}
+
 # ─────────────────────────────────────────
 # GROUP: MODELS
 # ─────────────────────────────────────────

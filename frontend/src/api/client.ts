@@ -142,3 +142,63 @@ export async function fetchRiskLayers() {
     layer_logs: Array<{ timestamp: string; message: string; level: string }>
   }>('/risk/layers')
 }
+
+// ── Live intelligence (news sentiment + Fear&Greed + derivatives) ──
+
+export interface LiveIntelligenceEntry {
+  sentiment: {
+    score: number
+    label: string
+    confidence: number
+    headline_count: number
+    sources: string[]
+    recent_headlines: string[]
+  }
+  fear_greed: { value: number | null; signal: string | null }
+  funding_rate: number | null
+  open_interest_usd: number | null
+  put_call_ratio: number | null
+  macro_composite: string | null
+  macro_risk: number | null
+  timestamp: string
+}
+
+export async function fetchLiveIntelligence(): Promise<Record<string, LiveIntelligenceEntry> | null> {
+  return fetchJSON<Record<string, LiveIntelligenceEntry>>('/signals/live_intelligence')
+}
+
+// ── Decision audit log ──
+
+export interface DecisionRecord {
+  ts: string
+  asset: string
+  raw_signal: number
+  decision: {
+    direction: number
+    confidence: number
+    position_scale: number
+    consensus: string
+    veto: boolean
+    violations: string[]
+  }
+  sentiment: {
+    score: number
+    label: string | null
+    headline_count: number
+    recent_headlines: string[]
+    sources: string[]
+  }
+  macro: {
+    fear_greed: number | null
+    funding_rate: number | null
+    open_interest_usd: number | null
+    put_call_ratio: number | null
+    composite: string | null
+    macro_risk: number | null
+  }
+  agents: Record<string, { direction: number; confidence: number; veto: boolean; reasoning: string }>
+}
+
+export async function fetchRecentDecisions(limit = 50): Promise<{ decisions: DecisionRecord[]; total: number } | null> {
+  return fetchJSON<{ decisions: DecisionRecord[]; total: number }>(`/decisions/recent?limit=${limit}`)
+}

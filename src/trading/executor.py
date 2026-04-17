@@ -1459,14 +1459,16 @@ class TradingExecutor:
                         if isinstance(fng, dict) and 'value' in fng:
                             ext_feats['fear_greed_index'] = float(fng.get('value', 50))
                             ext_feats['fear_greed_signal'] = fng.get('signal', 'NEUTRAL')
-                    # Derivatives layer — funding rate + open interest
+                    # Derivatives layer — funding rate + OI live from Bybit/Binance
                     deriv = self._economic_intelligence._layers.get('derivatives')
                     if deriv is not None and hasattr(deriv, 'get_cached'):
                         d = deriv.get_cached() or {}
-                        if isinstance(d, dict):
-                            val = d.get('value', {}) if isinstance(d.get('value'), dict) else {}
-                            ext_feats['funding_rate'] = float(val.get('funding_rate', 0.0) or 0.0)
-                            ext_feats['open_interest'] = float(val.get('open_interest', 0.0) or 0.0)
+                        if isinstance(d, dict) and not d.get('stale', True):
+                            # Agent reads 'funding_rate' (fractional form)
+                            ext_feats['funding_rate'] = float(d.get('funding_rate', 0.0) or 0.0)
+                            # OI in USD notional for regime reasoning
+                            ext_feats['open_interest'] = float(d.get('open_interest_usd', 0.0) or 0.0)
+                            ext_feats['put_call_ratio'] = float(d.get('put_call_ratio', 1.0) or 1.0)
             except Exception as e:
                 logger.debug(f"[ECON] ext_feats build failed: {e}")
 
@@ -1494,6 +1496,25 @@ class TradingExecutor:
                 trade_history=[],
                 economic_data=economic_data,
             )
+
+            # ── Push live intelligence snapshot to DashboardState + audit log ──
+            try:
+                self._publish_live_intelligence(
+                    asset=asset,
+                    sentiment_data=sentiment_data,
+                    ext_feats=ext_feats,
+                    economic_data=economic_data,
+                )
+                self._log_decision_audit(
+                    asset=asset,
+                    raw_signal=raw_signal,
+                    decision=decision,
+                    sentiment_data=sentiment_data,
+                    ext_feats=ext_feats,
+                    economic_data=economic_data,
+                )
+            except Exception as e:
+                logger.debug(f"[AUDIT] publish/log failed: {e}")
 
             # ── Pass RAW agent outputs to LLM — LLM is the brain, not Python ──
             # No strategy filter, no Python voting — LLM sees everything and decides
@@ -1720,6 +1741,105 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     # Edge Positioning — load historical win/loss stats per asset
     # ------------------------------------------------------------------
+    def _publish_live_intelligence(self, asset, sentiment_data, ext_feats, economic_data):
+        """Push the live sentiment/macro snapshot to DashboardState.
+
+        Makes the data the agents just saw visible on the dashboard so
+        operators can verify real feeds are flowing (not stuck at defaults).
+        """
+        try:
+            from src.api.state import DashboardState
+        except Exception:
+            return
+        sd = sentiment_data or {}
+        ef = ext_feats or {}
+        ec = economic_data or {}
+        from datetime import datetime as _dt
+        snapshot = {
+            'sentiment': {
+                'score': float(sd.get('score', sd.get('aggregate_score', 0.0)) or 0.0),
+                'label': sd.get('label') or sd.get('aggregate_label') or 'NEUTRAL',
+                'confidence': float(sd.get('confidence', 0.0) or 0.0),
+                'headline_count': int(sd.get('headline_count', 0) or 0),
+                'sources': sd.get('sources', []),
+                'recent_headlines': sd.get('recent_headlines', [])[:5],
+            },
+            'fear_greed': {
+                'value': ef.get('fear_greed_index'),
+                'signal': ef.get('fear_greed_signal'),
+            },
+            'funding_rate': ef.get('funding_rate'),
+            'open_interest_usd': ef.get('open_interest'),
+            'put_call_ratio': ef.get('put_call_ratio'),
+            'macro_composite': ec.get('composite'),
+            'macro_risk': ec.get('macro_risk'),
+            'timestamp': _dt.utcnow().isoformat() + 'Z',
+        }
+        try:
+            DashboardState().update_live_intelligence(asset, snapshot)
+        except Exception:
+            pass
+
+    def _log_decision_audit(self, asset, raw_signal, decision, sentiment_data, ext_feats, economic_data):
+        """Append a full decision record to logs/trade_decisions.jsonl.
+
+        Each line is one cycle: the orchestrator's direction/confidence/veto,
+        the agent votes, and the news + macro context that produced them.
+        Lets you audit why a specific trade was taken or blocked.
+        """
+        import os, json
+        from datetime import datetime as _dt
+        try:
+            votes = {}
+            for name, vote in (decision.agent_votes or {}).items():
+                votes[name] = {
+                    'direction': vote.direction,
+                    'confidence': round(float(vote.confidence), 3),
+                    'veto': bool(vote.veto),
+                    'reasoning': (vote.reasoning or '')[:160],
+                }
+            sd = sentiment_data or {}
+            ef = ext_feats or {}
+            ec = economic_data or {}
+            record = {
+                'ts': _dt.utcnow().isoformat() + 'Z',
+                'asset': asset,
+                'raw_signal': int(raw_signal),
+                'decision': {
+                    'direction': int(decision.direction),
+                    'confidence': round(float(decision.confidence), 3),
+                    'position_scale': round(float(decision.position_scale), 3),
+                    'consensus': decision.consensus_level,
+                    'veto': bool(decision.veto),
+                    'violations': (decision.risk_params or {}).get('violations', []),
+                },
+                'sentiment': {
+                    'score': round(float(sd.get('score', sd.get('aggregate_score', 0.0)) or 0.0), 3),
+                    'label': sd.get('label') or sd.get('aggregate_label'),
+                    'headline_count': sd.get('headline_count', 0),
+                    'recent_headlines': sd.get('recent_headlines', [])[:5],
+                    'sources': sd.get('sources', []),
+                },
+                'macro': {
+                    'fear_greed': ef.get('fear_greed_index'),
+                    'funding_rate': ef.get('funding_rate'),
+                    'open_interest_usd': ef.get('open_interest'),
+                    'put_call_ratio': ef.get('put_call_ratio'),
+                    'composite': ec.get('composite'),
+                    'macro_risk': ec.get('macro_risk'),
+                },
+                'agents': votes,
+            }
+            log_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                'logs', 'trade_decisions.jsonl',
+            )
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, default=str) + '\n')
+        except Exception:
+            pass
+
     def _load_edge_stats(self):
         """Load win rate and expectancy from trade journal for position sizing."""
         for asset in self.assets:

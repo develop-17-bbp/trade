@@ -289,6 +289,25 @@ class DashboardState:
             s["sentiment"][asset] = data
         self._read_modify_write(_mod)
 
+    def update_live_intelligence(self, asset: str, data: Dict[str, Any]):
+        """Store live sentiment + macro snapshot for the frontend.
+
+        data shape:
+          {
+            'sentiment': {score, label, confidence, recent_headlines, sources, headline_count},
+            'fear_greed': {value, signal},
+            'funding_rate': float,
+            'open_interest_usd': float,
+            'put_call_ratio': float,
+            'macro_composite': str,
+            'timestamp': iso,
+          }
+        """
+        def _mod(s):
+            s.setdefault("live_intelligence", {})[asset] = data
+            s["last_update"] = datetime.now().isoformat()
+        self._read_modify_write(_mod)
+
     def update_l1_features(self, asset: str, data: Dict[str, Any]):
         def _mod(s):
             s["l1_features"][asset] = data

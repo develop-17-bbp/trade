@@ -4,6 +4,7 @@ import GlassCard from '../components/cards/GlassCard'
 import EquityCurve from '../components/charts/EquityCurve'
 import CandlestickChart from '../components/charts/CandlestickChart'
 import AgentVotePanel from '../components/ai/AgentVotePanel'
+import LiveIntelligencePanel from '../components/ai/LiveIntelligencePanel'
 import { useSystemState } from '../hooks/useSystemState'
 
 function fmtUsd(n: number) {
@@ -209,7 +210,7 @@ export default function Dashboard() {
 
           {/* Expanded panel content */}
           {panelOpen && (
-            <div className="grid grid-cols-4 gap-3 px-4 pb-3 max-h-[300px] overflow-y-auto">
+            <div className="grid grid-cols-5 gap-3 px-4 pb-3 max-h-[300px] overflow-y-auto">
               {/* Positions */}
               <GlassCard>
                 <h3 className="text-[10px] font-bold text-[#666] uppercase tracking-wider mb-2">Open Positions</h3>
@@ -299,6 +300,9 @@ export default function Dashboard() {
                   <div className="flex items-center justify-center h-32 text-[#666] text-xs">Waiting for trades</div>
                 )}
               </GlassCard>
+
+              {/* Live Intelligence — RSS sentiment + Fear&Greed + derivatives */}
+              <LiveIntelligencePanel />
             </div>
           )}
         </div>
