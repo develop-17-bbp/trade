@@ -28,24 +28,37 @@ try {
     }
 } catch {}
 
-# ── Compute intervals by GPU tier ──
-if ($gpuVRAM -ge 24) {
-    $adaptInterval = 1; $autoInterval = 0.5; $geneticInterval = 1; $geneticPop = 150
+# ── Compute intervals DYNAMICALLY from GPU compute power ──
+# Formula: compute_score = VRAM_GB * 2 + CPU_cores + RAM_GB/8
+# Intervals scale inversely: more power = shorter intervals
+# No hardcoded tiers — works from CPU-only to A100/H100+
+$computeScore = ($gpuVRAM * 2) + $cpuCores + [math]::Floor($ramGB / 8)
+# Score examples: RTX 5090 (32*2+16+8=88), A100 (80*2+64+64=272), RTX 3060 (12*2+8+4=40), CPU-only (0+8+4=12)
+
+# Adapt interval: 6h at score=10, 15min at score=200+
+$adaptInterval = [math]::Round([math]::Max(0.25, 6.0 / [math]::Max(1, $computeScore / 10)), 2)
+# Auto interval: half of adapt
+$autoInterval = [math]::Round([math]::Max(0.15, $adaptInterval / 2), 2)
+# Genetic interval: same as adapt (compute-heavy)
+$geneticInterval = [math]::Round([math]::Max(0.25, $adaptInterval), 2)
+# Population: scales linearly with compute score
+$geneticPop = [math]::Min(500, [math]::Max(10, [math]::Floor($computeScore * 2)))
+
+# Models: load more if VRAM allows
+if ($gpuVRAM -ge 40) {
+    # A100/H100+ : can run multiple large models simultaneously
+    $ollamaModels = @("mistral:latest", "llama3.2:latest", "neural-chat:latest", "codellama:latest")
+} elseif ($gpuVRAM -ge 16) {
+    $ollamaModels = @("mistral:latest", "llama3.2:latest", "neural-chat:latest")
+} elseif ($gpuVRAM -ge 8) {
     $ollamaModels = @("mistral:latest", "llama3.2:latest")
-    $tier = "HIGH-END"
-} elseif ($gpuVRAM -ge 12) {
-    $adaptInterval = 2; $autoInterval = 1; $geneticInterval = 2; $geneticPop = 75
-    $ollamaModels = @("mistral:latest", "llama3.2:latest")
-    $tier = "MID-RANGE"
-} elseif ($gpuVRAM -ge 6) {
-    $adaptInterval = 4; $autoInterval = 2; $geneticInterval = 4; $geneticPop = 30
+} elseif ($gpuVRAM -ge 4) {
     $ollamaModels = @("llama3.2:latest")
-    $tier = "ENTRY"
 } else {
-    $adaptInterval = 6; $autoInterval = 3; $geneticInterval = 6; $geneticPop = 15
     $ollamaModels = @("llama3.2:latest")
-    $tier = "CPU-ONLY"
 }
+
+$tier = "SCORE=$computeScore"
 
 # ── ASCII Art ──
 Write-Host ""
