@@ -237,8 +237,8 @@ Open `http://localhost:5173` in your browser.
 
 ```
 trade/
-├── START_ALL.ps1                  # Launch all 7 systems (PowerShell)
-├── START_ALL.bat                  # Windows CMD alternative
+├── START_ALL.ps1                  # Launch all 7 systems (universal — run from cmd or PowerShell)
+├── STOP_ALL.ps1                   # Shutdown all ACT processes
 ├── config.yaml                    # Main configuration
 ├── .env                           # API credentials (never commit)
 │

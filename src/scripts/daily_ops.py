@@ -57,7 +57,7 @@ DISK_SPACE_WARN_GB = 5          # Warn if less than 5GB free
 
 # Process definitions — what should be running
 # 'check' = substring to find in wmic command line output
-# 'start_cmd' = how START_ALL.bat actually launches (must match window titles for STOP_ALL)
+# 'start_cmd' = how START_ALL.ps1 actually launches (must match window titles for STOP_ALL.ps1)
 EXPECTED_PROCESSES = [
     {'name': 'Trading Bot', 'check': 'src.main', 'port': None,
      'window_title': 'ACTs - Trading Bot',
@@ -227,12 +227,12 @@ class DailyOps:
         return status
 
     def _restart_process(self, proc_def: Dict) -> bool:
-        """Attempt to restart a process using the same method as START_ALL.bat.
+        """Attempt to restart a process using the same method as START_ALL.ps1.
 
         Uses 'start "WindowTitle" /MIN cmd /k ...' so that:
-        - STOP_ALL.bat can find processes by window title
+        - STOP_ALL.ps1 can find processes by window title
         - Process runs in its own minimized window
-        - Matches exactly how START_ALL.bat launches components
+        - Matches exactly how START_ALL.ps1 launches components
         """
         try:
             title = proc_def.get('window_title', f'ACTs - {proc_def["name"]}')
