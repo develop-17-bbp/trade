@@ -1094,7 +1094,8 @@ class TradingBrainV2:
     Same interface as v2.0 — drop-in replacement.
     """
 
-    def __init__(self, ollama_base_url="http://localhost:11434", journal_path="logs/trading_journal.jsonl", exchange: str = "", config: dict = None):
+    def __init__(self, ollama_base_url="http://localhost:11434", journal_path="logs/trading_journal.jsonl", exchange: str = "", config: dict = None,
+                 economic_intelligence=None, llm_memory=None, finetune_enricher=None):
         self.config = config or {}
         self.exchange = exchange  # Exchange tag for filtering (e.g., 'bybit', 'delta')
         self.memory = TradeMemory(journal_path, exchange=exchange)
@@ -1106,10 +1107,21 @@ class TradingBrainV2:
         self.calibrator = ConfidenceCalibrator(journal_path, exchange=exchange)
         self.winner_dna = WinnerDNAExtractor(self.memory.trades)
 
+        # v8.0: Dynamic intelligence layers
+        self._economic_intelligence = economic_intelligence
+        self._llm_memory = llm_memory
+        self._finetune_enricher = finetune_enricher
+
         cal_report = self.calibrator.get_calibration_report()
         print(f"[BRAIN] TradingBrainV2.1 ACTIVE — 2-pass (Mistral=scanner + Llama=analyst)")
         print(f"[BRAIN] Confidence calibration: {cal_report}")
         print(f"[BRAIN] Winner DNA: {self.winner_dna.get_dna()[:120]}")
+        if self._economic_intelligence:
+            print(f"[BRAIN] v8.0: EconomicIntelligence connected (12 macro layers)")
+        if self._llm_memory:
+            print(f"[BRAIN] v8.0: LLM Memory connected (dynamic few-shot prompts)")
+        if self._finetune_enricher:
+            print(f"[BRAIN] v8.0: FinetuneEnricher connected (enriched training data)")
 
     def evaluate_trade(
         self, asset, signal, price, entry_score, slope_pct, min_trend_bars,
@@ -1190,6 +1202,31 @@ class TradingBrainV2:
             print(f"[BRAIN:{asset}] Cross-asset: {cross_asset_ctx[:80]}")
 
         # --- Step 3: TWO-PASS LLM evaluation ---
+        # v8.0: Inject memory + macro intelligence into prompts
+        _v8_context_block = ""
+        if self._finetune_enricher:
+            try:
+                _v8_ctx = {'asset': asset, 'regime': regime_name, 'direction': signal,
+                           'volatility': float(current_atr / price * 100) if price > 0 else 0.15}
+                _v8_context_block = self._finetune_enricher.build_enriched_prompt_block(_v8_ctx)
+            except Exception as _e:
+                logger.debug(f"[BRAIN] v8.0 enricher failed: {_e}")
+        elif self._economic_intelligence:
+            try:
+                _v8_context_block = self._economic_intelligence.get_llm_context_block()
+            except Exception:
+                pass
+        if self._llm_memory and not _v8_context_block:
+            try:
+                _sig = {'market_regime': regime_name, 'action_taken': signal}
+                _v8_context_block = self._llm_memory.build_dynamic_prompt_context(_sig)
+            except Exception:
+                pass
+
+        # Append v8.0 context to memory_summary so it flows into both prompts
+        if _v8_context_block:
+            memory_summary = (memory_summary or "") + "\n\n" + _v8_context_block
+
         # Pass 1: Mistral scans patterns
         scanner_prompt = build_pattern_scanner_prompt(
             asset=asset, signal=signal, price=price, entry_score=entry_score,

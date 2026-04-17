@@ -38,12 +38,24 @@ class SignalCombiner:
     And produces a final trade decision.
     """
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Optional[Dict] = None,
+                 accuracy_engine=None, economic_intelligence=None,
+                 sharpe_optimizer=None):
         cfg = config or {}
-        # Base weights (from architecture spec)
+        # Base weights (fallback — overridden by accuracy_engine if available)
         self.w_l1 = cfg.get('l1_weight', 0.50)
         self.w_l2 = cfg.get('l2_weight', 0.30)
         self.w_l3 = cfg.get('l3_weight', 0.20)
+
+        # v8.0 dynamic systems
+        self._accuracy_engine = accuracy_engine
+        self._economic_intelligence = economic_intelligence
+        self._sharpe_optimizer = sharpe_optimizer
+
+        # Track layer performance for dynamic weight learning
+        self._l1_outcomes: List[bool] = []  # was L1 direction correct?
+        self._l2_outcomes: List[bool] = []
+        self._l3_outcomes: List[bool] = []
 
         # L2 staleness decay rate — Fix A: faster decay so stale sentiment penalized harder
         self.l2_decay_rate = cfg.get('l2_decay_rate', 0.005)  # per second (was 0.002)
@@ -55,6 +67,38 @@ class SignalCombiner:
 
         # Agreement bonus: if L1 and L2 agree, boost signal
         self.agreement_bonus = cfg.get('agreement_bonus', 0.10)
+
+    def record_layer_outcome(self, l1_correct: bool, l2_correct: bool, l3_correct: bool):
+        """Record whether each layer's signal was correct after trade close.
+        Used to dynamically rebalance L1/L2/L3 weights."""
+        self._l1_outcomes.append(l1_correct)
+        self._l2_outcomes.append(l2_correct)
+        self._l3_outcomes.append(l3_correct)
+        # Keep last 100
+        self._l1_outcomes = self._l1_outcomes[-100:]
+        self._l2_outcomes = self._l2_outcomes[-100:]
+        self._l3_outcomes = self._l3_outcomes[-100:]
+
+    def _get_dynamic_weights(self) -> Tuple[float, float, float]:
+        """Compute L1/L2/L3 weights from actual accuracy. No hardcoded values.
+        Layers that have been more accurate recently get higher weight."""
+        min_samples = 10
+        if (len(self._l1_outcomes) < min_samples or
+            len(self._l2_outcomes) < min_samples or
+            len(self._l3_outcomes) < min_samples):
+            return self.w_l1, self.w_l2, self.w_l3  # not enough data yet
+
+        l1_acc = sum(self._l1_outcomes[-50:]) / len(self._l1_outcomes[-50:])
+        l2_acc = sum(self._l2_outcomes[-50:]) / len(self._l2_outcomes[-50:])
+        l3_acc = sum(self._l3_outcomes[-50:]) / len(self._l3_outcomes[-50:])
+
+        # Convert accuracy to raw weight (0.4 acc -> 0.0, 0.7 acc -> 1.0)
+        raw_l1 = max(0.05, (l1_acc - 0.35) / 0.35)
+        raw_l2 = max(0.05, (l2_acc - 0.35) / 0.35)
+        raw_l3 = max(0.05, (l3_acc - 0.35) / 0.35)
+
+        total = raw_l1 + raw_l2 + raw_l3
+        return raw_l1 / total, raw_l2 / total, raw_l3 / total
 
     def combine(self,
                 l1_signal: float,
@@ -97,6 +141,9 @@ class SignalCombiner:
         if l3_action_val in (RiskAction.VETO, RiskAction.EMERGENCY_EXIT):
             return self._vetoed_result(l3_evaluation)
 
+        # ---- v8.0: Use DYNAMIC weights learned from accuracy ----
+        dyn_l1, dyn_l2, dyn_l3 = self._get_dynamic_weights()
+
         # ---- Compute effective L2 weight with staleness decay ----
         l2_score = l2_sentiment.get('aggregate_score', 0.0)
         l2_confidence = l2_sentiment.get('confidence', 0.0)
@@ -111,12 +158,38 @@ class SignalCombiner:
         else:
             l2_decay = l2_freshness
 
-        # Effective L2 weight = base weight * decay * confidence
-        w_l2_effective = self.w_l2 * l2_decay * l2_confidence
+        # Effective L2 weight = DYNAMIC weight * decay * confidence
+        w_l2_effective = dyn_l2 * l2_decay * l2_confidence
 
         # Redistribute decayed L2 weight to L1
-        w_l1_effective = self.w_l1 + (self.w_l2 - w_l2_effective)
-        w_l3_effective = self.w_l3
+        w_l1_effective = dyn_l1 + (dyn_l2 - w_l2_effective)
+        w_l3_effective = dyn_l3
+
+        # ---- v8.0: Macro Intelligence overlay ----
+        macro_adjustment = 0.0
+        macro_info = ''
+        if self._economic_intelligence:
+            try:
+                macro = self._economic_intelligence.get_macro_summary()
+                if macro.get('crisis'):
+                    return self._vetoed_result({'reason': 'CRISIS: macro intelligence triggered halt',
+                                                'action': RiskAction.VETO, 'risk_score': 1.0})
+                if macro.get('composite_signal') == 'BULLISH':
+                    macro_adjustment = 0.05  # slight bullish boost
+                elif macro.get('composite_signal') == 'BEARISH':
+                    macro_adjustment = -0.05  # slight bearish drag
+                macro_info = f"macro={macro.get('composite_signal', '?')}"
+            except Exception:
+                pass
+
+        # ---- v8.0: Sharpe quality gate ----
+        sharpe_size_mult = 1.0
+        if self._sharpe_optimizer:
+            try:
+                adj = self._sharpe_optimizer.get_filter_adjustments()
+                sharpe_size_mult = adj.get('position_size_mult', 1.0)
+            except Exception:
+                pass
 
         # ---- L3 risk signal ----
         risk_score = l3_evaluation.get('risk_score', 0.0)
@@ -125,7 +198,8 @@ class SignalCombiner:
         # ---- Weighted combination ----
         raw_signal = (w_l1_effective * l1_signal
                       + w_l2_effective * l2_score
-                      + w_l3_effective * l3_signal)
+                      + w_l3_effective * l3_signal
+                      + macro_adjustment)  # v8.0: macro intelligence overlay
 
         # ---- Agreement bonus ----
         if l1_signal * l2_score > 0 and l2_decay > 0.5:
@@ -154,6 +228,16 @@ class SignalCombiner:
         adjusted_size = l3_evaluation.get('adjusted_size', 0.0)
         if l3_action_val == RiskAction.REDUCE:
             adjusted_size *= 0.5
+        # v8.0: Sharpe-adjusted sizing
+        adjusted_size *= sharpe_size_mult
+        # v8.0: Macro pre-event reduction
+        if self._economic_intelligence:
+            try:
+                macro = self._economic_intelligence.get_macro_summary()
+                if macro.get('pre_event_flag'):
+                    adjusted_size *= 0.6  # reduce 40% before high-impact events
+            except Exception:
+                pass
 
         # ---- Confidence (composite) ----
         # Fix B: weighted average instead of multiplicative (prevents collapse compounding)
@@ -184,6 +268,9 @@ class SignalCombiner:
                 'risk_score': risk_score,
             },
             'risk_status': l3_evaluation.get('reason', 'OK'),
+            'dynamic_weights': {'l1': round(dyn_l1, 3), 'l2': round(dyn_l2, 3), 'l3': round(dyn_l3, 3)},
+            'sharpe_size_mult': sharpe_size_mult,
+            'macro_adjustment': macro_adjustment,
         }
 
     def _vetoed_result(self, l3_evaluation: Dict) -> Dict:

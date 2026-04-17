@@ -39,10 +39,12 @@ REGIME_MULTIPLIERS = {
 class AgentCombiner:
     """Combines 10 analysis agent votes via confidence-weighted consensus."""
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: Optional[Dict] = None, accuracy_engine=None):
         cfg = config or {}
         self.consensus_threshold = cfg.get('consensus_threshold', 0.55)
         self.min_agents_for_trade = cfg.get('min_agents_for_trade', 4)
+        # v8.0: dynamic agent weights from accuracy engine
+        self._accuracy_engine = accuracy_engine
 
     def combine(self, votes: Dict[str, AgentVote], agents: Dict,
                 regime: str = 'sideways',
@@ -89,9 +91,13 @@ class AgentCombiner:
             if name in ('data_integrity', 'decision_auditor'):
                 continue  # Gate agents don't vote directionally
 
-            # Dynamic Bayesian weight from agent
+            # v8.0: Dynamic weight from AccuracyEngine (learned from outcomes)
+            # Falls back to agent's own weight if no accuracy data yet
             agent = agents.get(name)
-            w_i = agent.get_weight() if agent else 1.0
+            if self._accuracy_engine:
+                w_i = self._accuracy_engine.get_agent_dynamic_weight(name)
+            else:
+                w_i = agent.get_weight() if agent else 1.0
 
             # Regime-adaptive multiplier
             r_i = REGIME_MULTIPLIERS.get(name, {}).get(regime_key, 1.0)

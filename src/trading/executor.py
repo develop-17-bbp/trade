@@ -440,6 +440,58 @@ class TradingExecutor:
         # Journal
         self.journal = TradeJournal()
 
+        # ── v8.0: Initialize dynamic intelligence systems ──
+        self._economic_intelligence = None
+        self._accuracy_engine = None
+        self._sharpe_optimizer = None
+        self._llm_memory = None
+        self._finetune_enricher = None
+        try:
+            from src.data.economic_intelligence import EconomicIntelligence
+            self._economic_intelligence = EconomicIntelligence(config.get('economic_intelligence', {}))
+            self._economic_intelligence.start()
+            print(f"  [v8.0] EconomicIntelligence: 12 macro layers (background fetch)")
+        except Exception as e:
+            print(f"  [v8.0] EconomicIntelligence init failed: {e}")
+        try:
+            from src.optimization.sharpe_optimizer import SharpeOptimizer
+            self._sharpe_optimizer = SharpeOptimizer(config.get('sharpe', {}))
+            print(f"  [v8.0] SharpeOptimizer: target={self._sharpe_optimizer.target_sharpe}")
+        except Exception as e:
+            print(f"  [v8.0] SharpeOptimizer init failed: {e}")
+        try:
+            from src.learning.accuracy_engine import AccuracyEngine
+            self._accuracy_engine = AccuracyEngine(config.get('accuracy', {}))
+            print(f"  [v8.0] AccuracyEngine: dynamic weights + consistency guardian")
+        except Exception as e:
+            print(f"  [v8.0] AccuracyEngine init failed: {e}")
+        try:
+            from src.memory.llm_memory import LLMMemory
+            from src.memory.quant_memory import QuantMemory
+            self._llm_memory = LLMMemory('mistral_scanner')
+            self._quant_memories = {
+                'lgbm': QuantMemory('lgbm'),
+                'patchtst': QuantMemory('patchtst'),
+                'rl': QuantMemory('rl'),
+            }
+            print(f"  [v8.0] Memory: LLM + 3 quant models (persistent SQLite)")
+        except Exception as e:
+            self._llm_memory = None
+            self._quant_memories = {}
+            print(f"  [v8.0] Memory init failed: {e}")
+        try:
+            from src.learning.finetune_enricher import FinetuneEnricher
+            self._finetune_enricher = FinetuneEnricher(
+                econ_intel=self._economic_intelligence,
+                accuracy_engine=self._accuracy_engine,
+                sharpe_optimizer=self._sharpe_optimizer,
+                llm_memory=self._llm_memory,
+                quant_memories=self._quant_memories if hasattr(self, '_quant_memories') else {},
+            )
+            print(f"  [v8.0] FinetuneEnricher: macro+memory+accuracy in every LLM prompt")
+        except Exception as e:
+            print(f"  [v8.0] FinetuneEnricher init failed: {e}")
+
         # Trading Brain v2 — multi-model consensus (mistral + llama3.2), CoT, memory, regime, Kelly, session
         self._brain: Optional[TradingBrainV2] = None
         if BRAIN_V2_AVAILABLE:
@@ -450,6 +502,9 @@ class TradingExecutor:
                     journal_path=journal_path,
                     exchange=self._ex_tag.lower(),
                     config=config,
+                    economic_intelligence=self._economic_intelligence,
+                    llm_memory=self._llm_memory,
+                    finetune_enricher=self._finetune_enricher,
                 )
                 # Wire fine-tuning data collector into brain
                 try:
@@ -461,7 +516,7 @@ class TradingExecutor:
                     print(f"  [AI] Fine-tuning data collector ACTIVE")
                 except Exception:
                     self._training_collector = None
-                print(f"  [AI] Trading Brain v2 ACTIVE — multi-model (mistral+llama3.2), CoT, memory, regime, Kelly, session")
+                print(f"  [AI] Trading Brain v2 ACTIVE — multi-model + v8.0 intelligence")
             except Exception as e:
                 print(f"  [AI] Trading Brain v2 init failed ({e}) — using legacy LLM")
                 self._brain = None
@@ -7010,6 +7065,45 @@ class TradingExecutor:
                     print(f"  [LEARN] Genetic outcome: {active_dna} {pnl_pct:+.2f}%")
             except Exception as e:
                 logger.debug(f"[LEARN] genetic record failed: {e}")
+
+        # ── LEARNING HOOK 3 (v8.0): Feed outcome to ALL memory systems ──
+        _regime = pos.get('regime', 'unknown')
+        _won = pnl_pct > 0
+        _label = 'WIN' if _won else 'LOSS'
+        _confidence = pos.get('confidence', 0.5)
+        # Accuracy Engine: streak tracking + model outcomes
+        if self._accuracy_engine:
+            try:
+                self._accuracy_engine.record_trade_outcome(pnl_pct, pnl_usd)
+                print(f"  [v8.0] AccuracyEngine updated: {self._accuracy_engine._streak_type} x{self._accuracy_engine._streak_length}")
+            except Exception as e:
+                logger.debug(f"[v8.0] accuracy record failed: {e}")
+        # Sharpe Optimizer: rolling returns
+        if self._sharpe_optimizer:
+            try:
+                self._sharpe_optimizer.record_trade(pnl_pct, regime=_regime)
+                print(f"  [v8.0] Sharpe: mode={self._sharpe_optimizer.mode} rolling={self._sharpe_optimizer.get_rolling_sharpe()}")
+            except Exception as e:
+                logger.debug(f"[v8.0] sharpe record failed: {e}")
+        # LLM Memory: record decision outcome
+        if self._llm_memory:
+            try:
+                self._llm_memory.record_decision(
+                    prompt_hash=f"{asset}_{pos.get('entry_time', 0):.0f}",
+                    parsed_output={'proceed': True, 'confidence': _confidence},
+                    trade_outcome_pnl=pnl_pct, trade_outcome_label=_label,
+                    bear_veto_fired=False, actual_move_pct=pnl_pct, predicted_move_pct=0,
+                )
+            except Exception as e:
+                logger.debug(f"[v8.0] llm_memory record failed: {e}")
+        # Quant Memories: per-model outcomes
+        if hasattr(self, '_quant_memories') and self._quant_memories:
+            try:
+                for _model_name, _qm in self._quant_memories.items():
+                    _qm.record_prediction(asset, 'LONG', _confidence, [],
+                                          _regime, 0.5, 0.15, 'live', pnl_pct, _label)
+            except Exception as e:
+                logger.debug(f"[v8.0] quant_memory record failed: {e}")
 
         # ── MT5: Close mirrored/executed position (skip in paper mode) ──
         if self._mt5 and self._mt5.connected and not self._paper_mode:
