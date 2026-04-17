@@ -80,15 +80,63 @@ INDICATOR_GENES = {
 }
 
 ENTRY_TEMPLATES = [
+    # Original indicator-based entries
     'ema_cross', 'rsi_oversold_bounce', 'bb_lower_touch', 'momentum_surge',
     'trend_strength', 'breakout_volume', 'stoch_reversal', 'ema_bounce',
     'multi_ma_align', 'volatility_squeeze',
+    # v8.0: Pattern-based entries (from PDF strategies)
+    'ema400_two_candle',       # 400 EMA two-candle closure strategy
+    'three_candle_breakout',   # Three-candle formation breakout
+    'three_candle_retracement',# Three-candle retracement entry
+    'regime_mean_reversion',   # RSI + Bollinger in CHOP only
+    'liquidity_sweep_reversal',# Enter after failed breakout (sweep)
+    'double_bottom_rejection', # Double bottom pattern confirmation
+    # v8.0: Real-world data entries
+    'fear_greed_contrarian',   # Buy extreme fear, sell extreme greed
+    'usd_weakness_long',       # Go long when DXY falling
+    'macro_risk_off_skip',     # Skip entry when macro risk > 70
+    'funding_rate_contrarian', # Fade overleveraged funding rate
+    'vix_spike_pause',         # Pause entries when VIX > 30
+    'etf_inflow_confirmation', # Enter when BTC ETF inflows positive
+    'defi_tvl_expansion',      # Enter when DeFi TVL growing > 5%/week
+    'pre_event_skip',          # Skip before high-impact economic events
 ]
 
 EXIT_TEMPLATES = [
     'ema_flip', 'rsi_extreme', 'trailing_atr', 'time_decay',
     'profit_target', 'momentum_fade',
+    # v8.0: Trade-type specific exits (from PDF)
+    'scalp_be_trail',          # Scalp: BE after +0.3%, trail small increments
+    'intraday_ema21_trail',    # Intraday: trail via 21 EMA, exit on close against
+    'swing_ema50_trail',       # Swing: trail via 50 EMA on trend TF
+    # v8.0: Real-world exits
+    'news_flatten',            # Flatten before major scheduled news
+    'crisis_exit',             # Exit all when macro CRISIS flag active
+    'regime_change_exit',      # Exit when HMM regime changes against position
 ]
+
+# v8.0: Extended genes — patterns + macro + real-world factors
+PATTERN_GENES = {
+    'ema400_period': {'func': 'ema', 'param': 'period', 'range': (300, 500), 'default': 400},
+    'signal_candles': {'func': 'count', 'param': 'bars', 'range': (2, 5), 'default': 2},
+    'strong_body_mult': {'func': 'threshold', 'param': 'value', 'range': (1.0, 3.0), 'default': 1.5},
+    'sl_buffer_pct': {'func': 'threshold', 'param': 'value', 'range': (0.002, 0.008), 'default': 0.004},
+    'retest_allowed': {'func': 'bool', 'param': 'value', 'range': (0, 1), 'default': 1},
+}
+
+MACRO_GENES = {
+    'fear_greed_buy_below': {'func': 'threshold', 'param': 'value', 'range': (10, 30), 'default': 20},
+    'fear_greed_sell_above': {'func': 'threshold', 'param': 'value', 'range': (70, 90), 'default': 80},
+    'macro_risk_block_above': {'func': 'threshold', 'param': 'value', 'range': (50, 90), 'default': 70},
+    'vix_block_above': {'func': 'threshold', 'param': 'value', 'range': (20, 40), 'default': 30},
+    'funding_rate_fade_above': {'func': 'threshold', 'param': 'value', 'range': (0.05, 0.2), 'default': 0.1},
+    'dxy_strength_threshold': {'func': 'threshold', 'param': 'value', 'range': (0.5, 2.0), 'default': 1.0},
+    'pre_event_hours': {'func': 'threshold', 'param': 'value', 'range': (1, 6), 'default': 2},
+}
+
+# Merge all gene types into INDICATOR_GENES for backward compatibility
+INDICATOR_GENES.update(PATTERN_GENES)
+INDICATOR_GENES.update(MACRO_GENES)
 
 
 def _clamp_gene(name: str, value: float) -> float:
