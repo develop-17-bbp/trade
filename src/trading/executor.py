@@ -491,6 +491,18 @@ class TradingExecutor:
             print(f"  [v8.0] FinetuneEnricher: macro+memory+accuracy in every LLM prompt")
         except Exception as e:
             print(f"  [v8.0] FinetuneEnricher init failed: {e}")
+        self._dynamic_limits = None
+        try:
+            from src.risk.dynamic_position_limits import DynamicPositionLimits
+            self._dynamic_limits = DynamicPositionLimits(
+                config=config.get('position_limits', {}),
+                accuracy_engine=self._accuracy_engine,
+                sharpe_optimizer=self._sharpe_optimizer,
+            )
+            self._dynamic_limits.update_equity(self.initial_capital)
+            print(f"  [v8.0] DynamicPositionLimits: memory-driven sizing + leverage")
+        except Exception as e:
+            print(f"  [v8.0] DynamicPositionLimits init failed: {e}")
 
         # Trading Brain v2 — multi-model consensus (mistral + llama3.2), CoT, memory, regime, Kelly, session
         self._brain: Optional[TradingBrainV2] = None
@@ -683,14 +695,19 @@ class TradingExecutor:
         elif self._paper_mode:
             print(f"  [MT5] Skipped — paper mode (no real orders)")
 
-        # Set leverage to 1x (prevent amplified losses)
+        # v8.0: Dynamic leverage — learned from memory, not hardcoded 1x
         try:
             if self._exchange_client:
                 for asset in self.assets:
-                    sym = self._get_symbol(asset)  # Uses correct format per exchange
+                    sym = self._get_symbol(asset)
                     try:
-                        self._exchange_client.exchange.set_leverage(1, sym)
-                        print(f"  [{self._ex_tag}:{asset}] Leverage set to 1x on {self._exchange_name}")
+                        if self._dynamic_limits:
+                            _lev = self._dynamic_limits.get_optimal_leverage(
+                                asset=asset, exchange=self._exchange_name or 'robinhood')
+                        else:
+                            _lev = 1  # safe default
+                        self._exchange_client.exchange.set_leverage(int(_lev), sym)
+                        print(f"  [{self._ex_tag}:{asset}] Leverage set to {_lev}x on {self._exchange_name}")
                     except Exception:
                         pass
         except Exception:
@@ -7104,6 +7121,18 @@ class TradingExecutor:
                                           _regime, 0.5, 0.15, 'live', pnl_pct, _label)
             except Exception as e:
                 logger.debug(f"[v8.0] quant_memory record failed: {e}")
+
+        # v8.0: Dynamic position limits — learn from this trade
+        if self._dynamic_limits:
+            try:
+                self._dynamic_limits.update_equity(self.equity)
+                self._dynamic_limits.record_trade(
+                    asset=asset, size_pct=pos.get('size_pct', 1.0),
+                    leverage=pos.get('leverage', 1.0), pnl_pct=pnl_pct,
+                    regime=_regime,
+                )
+            except Exception as e:
+                logger.debug(f"[v8.0] dynamic_limits record failed: {e}")
 
         # ── MT5: Close mirrored/executed position (skip in paper mode) ──
         if self._mt5 and self._mt5.connected and not self._paper_mode:
