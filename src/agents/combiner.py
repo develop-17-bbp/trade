@@ -32,6 +32,7 @@ REGIME_MULTIPLIERS = {
     'portfolio_optimizer': {'crisis': 1.5, 'bull': 1.0, 'bear': 1.5, 'sideways': 1.0},
     'pattern_matcher': {'crisis': 0.5, 'bull': 1.5, 'bear': 1.2, 'sideways': 1.0},
     'loss_prevention': {'crisis': 2.5, 'bull': 0.8, 'bear': 2.0, 'sideways': 1.0},
+    'authority_compliance': {'crisis': 1.0, 'bull': 1.0, 'bear': 1.0, 'sideways': 1.0},
     'polymarket_arb': {'crisis': 1.0, 'bull': 0.8, 'bear': 0.8, 'sideways': 1.0},
 }
 
@@ -48,20 +49,41 @@ class AgentCombiner:
 
     def combine(self, votes: Dict[str, AgentVote], agents: Dict,
                 regime: str = 'sideways',
-                loss_guardian_vote: Optional[AgentVote] = None) -> EnhancedDecision:
+                loss_guardian_vote: Optional[AgentVote] = None,
+                authority_guardian_vote: Optional[AgentVote] = None) -> EnhancedDecision:
         """
         Combine all analysis agent votes into a single EnhancedDecision.
 
         Args:
-            votes: Dict of agent_name -> AgentVote (10 analysis agents)
+            votes: Dict of agent_name -> AgentVote (analysis agents)
             agents: Dict of agent_name -> BaseAgent (for getting dynamic weights)
             regime: Current HMM regime (bull/bear/crisis/sideways)
             loss_guardian_vote: LossPreventionGuardian's vote (checked for VETO)
+            authority_guardian_vote: AuthorityComplianceGuardian's vote (HIGHEST
+                priority VETO — non-negotiable authority PDF rules)
 
         Returns:
             EnhancedDecision with combined direction, confidence, position_scale
         """
-        # Check for Loss Prevention Guardian VETO first
+        # Authority VETO has highest priority — rules come from superiors
+        # and override every other agent including Loss Prevention.
+        if authority_guardian_vote and authority_guardian_vote.veto:
+            violations = authority_guardian_vote.metadata.get('violations', [])
+            return EnhancedDecision(
+                direction=0,
+                confidence=1.0,
+                position_scale=0.0,
+                consensus_level='VETOED',
+                agent_votes=votes,
+                veto=True,
+                risk_params={
+                    'reason': 'Authority Compliance VETO',
+                    'violations': violations,
+                    'violation_count': len(violations),
+                },
+            )
+
+        # Loss Prevention VETO (second priority — capital protection)
         if loss_guardian_vote and loss_guardian_vote.veto:
             return EnhancedDecision(
                 direction=0,
@@ -88,7 +110,7 @@ class AgentCombiner:
         strategy_rec = ''
 
         for name, vote in votes.items():
-            if name in ('data_integrity', 'decision_auditor'):
+            if name in ('data_integrity', 'decision_auditor', 'authority_compliance'):
                 continue  # Gate agents don't vote directionally
 
             # v8.0: Dynamic weight from AccuracyEngine (learned from outcomes)

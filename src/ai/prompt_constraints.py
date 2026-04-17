@@ -24,6 +24,8 @@ import logging
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 
+from src.ai.authority_rules import AUTHORITY_SYSTEM_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -228,13 +230,38 @@ class PromptConstraintEngine:
         self.config = config or {}
         self.custom_system_prompt = self.config.get('system_prompt', '')
         self.strict_mode = self.config.get('strict_mode', True)
+        # Lean mode = only inject authority directives + JSON schema.
+        # Use after LoRA fine-tune has internalized strategy/style so we don't
+        # duplicate knowledge the weights already carry.
+        # Enable via config: {'lean_prompt_mode': True} or env LLM_LEAN_PROMPT=1
+        import os
+        self.lean_prompt_mode = bool(
+            self.config.get('lean_prompt_mode', False)
+            or os.getenv('LLM_LEAN_PROMPT', '').lower() in ('1', 'true', 'yes')
+        )
 
     def get_system_prompt(self, task: str = 'trade_analysis') -> str:
         """
         Get the immutable system prompt for a given task.
-        Custom prompts are APPENDED, never replacing the safety base.
+
+        AUTHORITY_SYSTEM_PROMPT is always prepended — it is non-negotiable and
+        takes precedence over any other guidance. Custom prompts append.
+
+        Lean mode drops SYSTEM_PROMPT_BASE (strategy explanations, style rules,
+        examples) since LoRA fine-tuning should have internalized those. The
+        authority directives remain because hard constraints must stay in
+        prompt form for audit + deterministic enforcement.
         """
-        prompt = SYSTEM_PROMPT_BASE
+        if self.lean_prompt_mode:
+            # Minimal: authority rules + a terse JSON-only reminder.
+            prompt = (
+                AUTHORITY_SYSTEM_PROMPT
+                + "\n\n## OUTPUT: Return ONLY a JSON object matching the task schema. "
+                + "Cite every number as [METRIC=VALUE] from the VERIFIED QUANT DATA block."
+            )
+        else:
+            # Full: authority directives first, then base strategy/safety content.
+            prompt = AUTHORITY_SYSTEM_PROMPT + "\n\n" + SYSTEM_PROMPT_BASE
 
         if self.custom_system_prompt:
             prompt += f"\n\n## ADDITIONAL INSTRUCTIONS:\n{self.custom_system_prompt}"

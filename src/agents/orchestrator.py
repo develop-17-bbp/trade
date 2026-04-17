@@ -124,6 +124,12 @@ class AgentOrchestrator:
             logger.warning(f"[ORCHESTRATOR] loss_prevention agent import failed: {e}")
 
         try:
+            from src.agents.authority_compliance_guardian import AuthorityComplianceGuardian
+            agent_specs.append(('authority_compliance', AuthorityComplianceGuardian))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] authority_compliance agent import failed: {e}")
+
+        try:
             from src.agents.polymarket_agent import PolymarketArbitrageAgent
             agent_specs.append(('polymarket_arb', PolymarketArbitrageAgent))
         except Exception as e:
@@ -230,7 +236,7 @@ class AgentOrchestrator:
             'market_structure', 'regime_intelligence', 'mean_reversion',
             'trend_momentum', 'risk_guardian', 'sentiment_decoder',
             'trade_timing', 'portfolio_optimizer', 'pattern_matcher',
-            'loss_prevention', 'polymarket_arb',
+            'loss_prevention', 'authority_compliance', 'polymarket_arb',
         ]
 
         votes: Dict[str, AgentVote] = {}
@@ -288,11 +294,13 @@ class AgentOrchestrator:
             else sanitized_state.get('hmm_regime', 'sideways')
 
         loss_vote = debate_votes.get('loss_prevention')
+        authority_vote = debate_votes.get('authority_compliance')
         enhanced = self.combiner.combine(
             votes=debate_votes,
             agents=self.agents,
             regime=regime,
             loss_guardian_vote=loss_vote,
+            authority_guardian_vote=authority_vote,
         )
         enhanced.data_quality = quality_score
 
