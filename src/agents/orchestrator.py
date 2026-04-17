@@ -202,6 +202,18 @@ class AgentOrchestrator:
             'trade_history': trade_history or [],
         }
 
+        # Inject authority-relevant fields so AuthorityComplianceGuardian
+        # has real indicator data instead of defaulting to unknown.
+        try:
+            from src.ai.authority_context import build_authority_context
+            context.update(build_authority_context(
+                quant_state=quant_state,
+                ohlcv_data=ohlcv_data,
+                asset=asset,
+            ))
+        except Exception as e:
+            logger.warning(f"[ORCHESTRATOR] authority_context build failed: {e}")
+
         # ── STEP 1: Data Integrity Validation (pre-gate) ──
         validator = self.agents['data_integrity']
         integrity_vote = validator.analyze(quant_state, context)
