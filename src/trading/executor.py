@@ -1372,6 +1372,11 @@ class TradingExecutor:
         if not self._orchestrator or not self._math_injector:
             return None
 
+        # Phase 0: generate a ULID per decision cycle. Used for audit
+        # correlation today; Phase 1 wires it into OTel trace context.
+        from src.orchestration import new_decision_id
+        decision_id = new_decision_id()
+
         try:
             import numpy as np
 
@@ -1512,6 +1517,7 @@ class TradingExecutor:
                     sentiment_data=sentiment_data,
                     ext_feats=ext_feats,
                     economic_data=economic_data,
+                    decision_id=decision_id,
                 )
             except Exception as e:
                 logger.debug(f"[AUDIT] publish/log failed: {e}")
@@ -1780,16 +1786,27 @@ class TradingExecutor:
         except Exception:
             pass
 
-    def _log_decision_audit(self, asset, raw_signal, decision, sentiment_data, ext_feats, economic_data):
+    def _log_decision_audit(self, asset, raw_signal, decision, sentiment_data,
+                            ext_feats, economic_data, decision_id=None):
         """Append a full decision record to logs/trade_decisions.jsonl.
 
         Each line is one cycle: the orchestrator's direction/confidence/veto,
         the agent votes, and the news + macro context that produced them.
-        Lets you audit why a specific trade was taken or blocked.
+
+        Phase 0: adds decision_id (ULID) + trace_id (= decision_id until
+        Phase 1 wires OTel) + empty provenance block (Phase 1 fills).
+        If caller didn't pass decision_id, emit a `synth-audit-*` label
+        so the uniqueness test can ignore it — this shouldn't happen in
+        the normal flow (only one call site, executor.py:1509), but it's
+        defensive against future error-path callers.
         """
         import os, json
         from datetime import datetime as _dt
+        from src.orchestration.envelope import synthetic_decision_id
         try:
+            if not decision_id:
+                decision_id = synthetic_decision_id("audit_no_ctx")
+
             votes = {}
             for name, vote in (decision.agent_votes or {}).items():
                 votes[name] = {
@@ -1803,6 +1820,8 @@ class TradingExecutor:
             ec = economic_data or {}
             record = {
                 'ts': _dt.utcnow().isoformat() + 'Z',
+                'decision_id': decision_id,
+                'trace_id': decision_id,  # Phase 1 will replace with real OTel trace context
                 'asset': asset,
                 'raw_signal': int(raw_signal),
                 'decision': {
@@ -1829,6 +1848,16 @@ class TradingExecutor:
                     'macro_risk': ec.get('macro_risk'),
                 },
                 'agents': votes,
+                # Phase 0: provenance block present with empty strings.
+                # Phase 1 will populate data_snapshot_hash, prompt_hash,
+                # model_versions, authority_rules_version, config_hash.
+                'provenance': {
+                    'data_snapshot_hash': '',
+                    'prompt_hash': '',
+                    'model_versions': {},
+                    'authority_rules_version': '',
+                    'config_hash': '',
+                },
             }
             log_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
