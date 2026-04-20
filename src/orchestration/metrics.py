@@ -146,6 +146,27 @@ if _HAS_CLIENT:
         registry=REGISTRY,
     )
 
+    quarantine_state = Gauge(
+        "act_learner_quarantine_state",
+        "Learner quarantine state (0=active, 1=quarantined).",
+        labelnames=("learner",),
+        registry=REGISTRY,
+    )
+
+    signal_zscore = Gauge(
+        "act_learner_signal_zscore",
+        "Most recent z-score of a consumed cross-learner signal.",
+        labelnames=("producer", "signal"),
+        registry=REGISTRY,
+    )
+
+    coevolution_transfers_total = Counter(
+        "act_coevolution_transfer_count",
+        "Count of cross-learner signal transfers successfully applied.",
+        labelnames=("src", "dst"),
+        registry=REGISTRY,
+    )
+
 
 def start_exporter(port: Optional[int] = None) -> bool:
     """Start the Prometheus HTTP exporter. Idempotent + safe to call early.
@@ -286,6 +307,33 @@ def record_credit_r2(r2: float) -> None:
         return
     try:
         credit_regression_r2.set(float(r2))
+    except Exception:
+        pass
+
+
+def record_quarantine_state(learner: str, quarantined: bool) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        quarantine_state.labels(learner=learner).set(1 if quarantined else 0)
+    except Exception:
+        pass
+
+
+def record_signal_zscore(producer: str, signal: str, z: float) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        signal_zscore.labels(producer=producer, signal=signal).set(float(z))
+    except Exception:
+        pass
+
+
+def record_coevolution_transfer(src: str, dst: str) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        coevolution_transfers_total.labels(src=src, dst=dst).inc()
     except Exception:
         pass
 

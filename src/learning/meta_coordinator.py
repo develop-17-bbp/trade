@@ -146,16 +146,14 @@ class MetaCoordinator:
         else:
             credit = {k: 1.0 / len(component_actions) for k in component_actions}
 
-        # Curriculum — zero-out non-guardian credit for authority-violation trades.
+        # Phase 4.5c: authority compliance gate — if the decision violated
+        # authority rules, non-veto components get 0 credit no matter the PnL.
+        try:
+            from src.learning.safety import gate_credit_by_authority
+            credit = gate_credit_by_authority(credit, outcome.get("authority_violations") or [])
+        except Exception as e:
+            logger.debug("gate_credit_by_authority failed: %s", e)
         violations = outcome.get("authority_violations") or []
-        if violations:
-            total_guardian = credit.get("authority_guardian", 0.0) + credit.get("loss_prevention", 0.0)
-            if total_guardian > 0:
-                keep = {
-                    "authority_guardian": credit.get("authority_guardian", 0.0) / total_guardian,
-                    "loss_prevention": credit.get("loss_prevention", 0.0) / total_guardian,
-                }
-                credit = keep
 
         row = dict(outcome)
         row["credit_allocation"] = credit
