@@ -1,9 +1,0 @@
-{"timestamp": "2026-03-19T17:31:32.011552+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
-{"timestamp": "2026-03-19T17:32:00.929719+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
-{"timestamp": "2026-03-19T19:00:18.970449+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
-{"timestamp": "2026-03-19T19:13:52.218088+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
-{"timestamp": "2026-03-25T20:30:00.914500+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
-{"timestamp": "2026-03-25T22:00:18.571625+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
-{"timestamp": "2026-03-25T22:34:20.923555+00:00", "level": "CRITICAL", "title": "System Crash", "message": "Crash #1: [Errno 22] Invalid argument"}
-{"timestamp": "2026-03-25T22:42:33.557297+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}
-{"timestamp": "2026-03-25T23:29:37.765530+00:00", "level": "CRITICAL", "title": "System Shutdown", "message": "Trading system stopped via SIGINT"}

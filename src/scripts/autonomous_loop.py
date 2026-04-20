@@ -32,16 +32,19 @@ from typing import Dict, Any, Optional, List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from logging.handlers import RotatingFileHandler
+_AUTONOMY_LOG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'logs', 'autonomous_loop.log',
+)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [AUTONOMY] %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), 'logs', 'autonomous_loop.log'),
-            mode='a',
-        ),
+        # Rotate at 50 MB, keep 3 backups — prevents disk-full failure
+        # when long-running loops produce multi-GB logs.
+        RotatingFileHandler(_AUTONOMY_LOG, maxBytes=50 * 1024 * 1024, backupCount=3),
     ],
 )
 logger = logging.getLogger('autonomous_loop')

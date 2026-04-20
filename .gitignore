@@ -14,21 +14,35 @@ build/
 .env.*
 *.env
 
-# ── Runtime Data (now stored in ~/.trade/) ──
-# logs/*
+# ── Runtime Data ──
+# Logs: bot-generated, noisy, machine-specific. Keep folder via .gitkeep.
+logs/*
 !logs/.gitkeep
-authority_trade_summaries/
-# data/
-# memory/
-# models/*.txt
-# models/*.pt
-# models/*.pkl
-# models/*.json
 
-# # ── Databases ──
-# *.db
-# *.sqlite
-# *.sqlite3
+# Backtest cache: regenerable from parquet + code
+data/backtest_cache/
+
+# Runtime state JSON files the bot rewrites every cycle
+data/adaptation_context.json
+data/adaptive_state.json
+data/autonomous_state.json
+data/evolution_feedback.json
+data/evolution_state.json
+data/halt_signal.json
+data/ops_retry_tracker.json
+data/finetune/
+
+# Memory DBs — per-host runtime state, not versioned
+memory/*.db
+memory/*.db.bak
+memory/*.sqlite
+
+# LoRA adapter dirs (large, regenerable via lora_trainer)
+models/lora/
+models/*.bak.*
+
+authority_trade_summaries/
+reports/
 
 # ── OS ──
 .DS_Store

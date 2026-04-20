@@ -1,4 +1,0 @@
-{"timestamp": "2026-04-07T04:34:12.222164", "action": "OPEN", "asset": "BTC", "direction": "LONG", "price": 30.44, "lot": 1.0, "sl": 29.0, "comment": "TEST_FULL_BRIDGE", "mode": "execute"}
-{"timestamp": "2026-04-07T04:34:12.440606", "action": "OPEN", "asset": "ETH", "direction": "SHORT", "price": 19.89, "lot": 1.0, "sl": 21.0, "comment": "TEST_FULL_BRIDGE", "mode": "execute"}
-{"timestamp": "2026-04-07T04:34:14.871732", "action": "CLOSE", "asset": "BTC", "direction": "LONG", "price": 30.35, "lot": 1.0, "sl": 0, "comment": "TEST_CLOSE | PnL: -0.30%", "mode": "execute"}
-{"timestamp": "2026-04-07T04:34:15.088288", "action": "CLOSE", "asset": "ETH", "direction": "SHORT", "price": 19.92, "lot": 1.0, "sl": 0, "comment": "TEST_CLOSE | PnL: -0.15%", "mode": "execute"}

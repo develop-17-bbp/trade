@@ -50,15 +50,17 @@ def main():
     load_dotenv(env_path, override=True)
     print(f"  [ENV] Loaded {env_path}")
 
-    # Configure logging
+    # Configure logging with rotation (50 MB × 3 backups) so long-running
+    # paper trading doesn't fill the disk.
+    from logging.handlers import RotatingFileHandler
+    _sys_log = os.path.join(PROJECT_ROOT, 'logs', 'system_output.log')
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(
-                os.path.join(PROJECT_ROOT, 'logs', 'system_output.log'),
-                mode='a',
+            RotatingFileHandler(
+                _sys_log, maxBytes=50 * 1024 * 1024, backupCount=3,
                 encoding='utf-8',
             ),
         ],
