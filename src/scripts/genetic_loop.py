@@ -31,10 +31,23 @@ def run_evolution_cycle(population_size: int):
             with open(config_path) as f:
                 config = yaml.safe_load(f)
 
+        # Pull Robinhood round-trip spread from config if present; else default
+        # (engine falls back to SPREAD_PCT module constant when 0/missing)
+        spread_pct = 0.0
+        for ex in (config.get('exchanges') or []):
+            if ex.get('name') == 'robinhood':
+                spread_pct = float(ex.get('round_trip_spread_pct', 0.0) or 0.0)
+                break
+
         for asset in ['BTC', 'ETH']:
             logger.info(f"Evolving {asset} strategies (pop={population_size})...")
             try:
-                engine = GeneticStrategyEngine(config=config, population_size=population_size)
+                # GeneticStrategyEngine.__init__ only accepts spread_pct; population
+                # size is a parameter of evolve(), not the constructor.
+                if spread_pct > 0:
+                    engine = GeneticStrategyEngine(spread_pct=spread_pct)
+                else:
+                    engine = GeneticStrategyEngine()
                 engine.load_market_data(asset=asset, timeframe='4h')
 
                 # 10 generations x population_size strategies
