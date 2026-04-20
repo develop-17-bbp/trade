@@ -1503,6 +1503,9 @@ class TradingExecutor:
             )
 
             # ── Push live intelligence snapshot to DashboardState + audit log ──
+            # Each side is wrapped INDEPENDENTLY so a failure in live-intelligence
+            # push (dashboard state, non-critical) doesn't mask a failure in the
+            # audit-log write (Phase 0 soak gate depends on this).
             try:
                 self._publish_live_intelligence(
                     asset=asset,
@@ -1510,6 +1513,13 @@ class TradingExecutor:
                     ext_feats=ext_feats,
                     economic_data=economic_data,
                 )
+            except Exception as e:
+                logger.warning(
+                    f"[LIVE_INTEL] publish failed for {asset}: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+
+            try:
                 self._log_decision_audit(
                     asset=asset,
                     raw_signal=raw_signal,
@@ -1520,7 +1530,13 @@ class TradingExecutor:
                     decision_id=decision_id,
                 )
             except Exception as e:
-                logger.debug(f"[AUDIT] publish/log failed: {e}")
+                # Phase 0 gate depends on this log — surface loudly so we find
+                # the failing code path instead of silently dropping audit rows.
+                logger.warning(
+                    f"[AUDIT] decision-log write failed for {asset} "
+                    f"decision_id={decision_id}: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
 
             # ── Pass RAW agent outputs to LLM — LLM is the brain, not Python ──
             # No strategy filter, no Python voting — LLM sees everything and decides
@@ -1807,30 +1823,35 @@ class TradingExecutor:
             if not decision_id:
                 decision_id = synthetic_decision_id("audit_no_ctx")
 
+            # Defensive attr access — EnhancedDecision fields can be None on
+            # degraded-data cycles, and getattr shouldn't raise before we've
+            # composed a minimal audit row.
             votes = {}
-            for name, vote in (decision.agent_votes or {}).items():
+            agent_votes = getattr(decision, 'agent_votes', None) or {}
+            for name, vote in agent_votes.items():
                 votes[name] = {
-                    'direction': vote.direction,
-                    'confidence': round(float(vote.confidence), 3),
-                    'veto': bool(vote.veto),
-                    'reasoning': (vote.reasoning or '')[:160],
+                    'direction': getattr(vote, 'direction', 0),
+                    'confidence': round(float(getattr(vote, 'confidence', 0.0) or 0.0), 3),
+                    'veto': bool(getattr(vote, 'veto', False)),
+                    'reasoning': (getattr(vote, 'reasoning', '') or '')[:160],
                 }
             sd = sentiment_data or {}
             ef = ext_feats or {}
             ec = economic_data or {}
+            risk_params = getattr(decision, 'risk_params', None) or {}
             record = {
                 'ts': _dt.utcnow().isoformat() + 'Z',
                 'decision_id': decision_id,
                 'trace_id': decision_id,  # Phase 1 will replace with real OTel trace context
                 'asset': asset,
-                'raw_signal': int(raw_signal),
+                'raw_signal': int(raw_signal or 0),
                 'decision': {
-                    'direction': int(decision.direction),
-                    'confidence': round(float(decision.confidence), 3),
-                    'position_scale': round(float(decision.position_scale), 3),
-                    'consensus': decision.consensus_level,
-                    'veto': bool(decision.veto),
-                    'violations': (decision.risk_params or {}).get('violations', []),
+                    'direction': int(getattr(decision, 'direction', 0) or 0),
+                    'confidence': round(float(getattr(decision, 'confidence', 0.0) or 0.0), 3),
+                    'position_scale': round(float(getattr(decision, 'position_scale', 0.0) or 0.0), 3),
+                    'consensus': getattr(decision, 'consensus_level', 'UNKNOWN') or 'UNKNOWN',
+                    'veto': bool(getattr(decision, 'veto', False)),
+                    'violations': risk_params.get('violations', []) if isinstance(risk_params, dict) else [],
                 },
                 'sentiment': {
                     'score': round(float(sd.get('score', sd.get('aggregate_score', 0.0)) or 0.0), 3),
@@ -1866,8 +1887,17 @@ class TradingExecutor:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(record, default=str) + '\n')
-        except Exception:
-            pass
+        except Exception as e:
+            # Phase 0 gate depends on this log. Do NOT swallow silently.
+            # Re-raise so the caller's warning-level handler surfaces it with
+            # full traceback. Before Phase 0 this was `except: pass` and cost
+            # us 2 days of silent audit-log drops.
+            logger.warning(
+                f"[AUDIT] inner write failed decision_id={decision_id}: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise
 
     def _load_edge_stats(self):
         """Load win rate and expectancy from trade journal for position sizing."""

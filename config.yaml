@@ -1,176 +1,137 @@
-# ── General Settings ──
-mode: live                     # execution mode: 'live' (Robinhood real account)
-poll_interval: 60             # check every 60s — 4h/daily candles don't need fast polling
-
-# ── Exchange Configuration ──
+mode: live
+poll_interval: 60
 exchanges:
-  - name: robinhood
-    assets: [BTC, ETH]
-    spread_pct_per_side: 1.67        # Measured Robinhood spread per side
-    round_trip_spread_pct: 3.34      # Total cost to enter + exit
-    min_expected_move_pct: 5.0       # Lowered 7→5: catch more 5%+ swing moves
-    longs_only: true                 # No shorts on Robinhood spot
-    # ── Robinhood-Specific Trading Rules ──
-    min_profit_before_exit_pct: 5.0  # NO exit until 5% profit (spread=3.34%, need buffer)
-    min_hold_minutes: 1440           # Hold minimum 24 HOURS (let multi-day swings develop)
-    trailing_lock_pct: 50            # After 5%+ profit, trail SL at 50% of max profit
-    max_hold_days: 7                 # Hard exit after 7 days
-    trend_only: true                 # Disable mean-reversion/grid strategies (too small for spread)
-    tf_alignment_override: true      # When 1h+4h+1d agree, bypass agent FLAT votes
-    compound_pct: 50                 # Reinvest 50% of realized profits
-
-# Primary exchange
-exchange:
-  name: robinhood
-
-# ── Assets ──
-assets:
+- name: robinhood
+  assets:
   - BTC
   - ETH
-
+  spread_pct_per_side: 0.845
+  round_trip_spread_pct: 1.69
+  min_expected_move_pct: 3.0
+  longs_only: true
+  min_profit_before_exit_pct: 2.5
+  min_hold_minutes: 1440
+  trailing_lock_pct: 50
+  max_hold_days: 7
+  trend_only: true
+  tf_alignment_override: true
+  compound_pct: 50
+exchange:
+  name: robinhood
+assets:
+- BTC
+- ETH
 initial_capital: 100000.0
-
-# ── EMA Crossover Strategy (Robinhood Spread-Adapted) ──
-# Robinhood spread ~1.67% round-trip ~3.3% — need 5%+ moves to profit
-# Only trade 4h/1d signals — catch multi-day swings
 adaptive:
   ema_crossover_primary: true
-  ema_period: 8                                # EMA period (matches chart)
-  struct_window: 5                             # Structure points for SL (L1->L4)
-  min_entry_score: 4                           # Lowered 6→4: allow marginal setups to reach LLM (72h no trades — 2026-04-13)
-  max_entry_score: 15                          # Don't cap strong momentum (daily TF = bigger scores)
-  short_score_penalty: 4                       # SHORTs need score 10+ (6+4) — LONG bias in crypto
-  sr_assets: [ETH]                             # S/R levels for ETH only
-  signal_timeframes: [1h, 4h, 1d]              # Added 1h for more signal frequency while keeping swing focus
-
-# ── Risk (Robinhood Spread-Adapted) ──
-# Must overcome 3.3% round-trip spread cost
-# Wider everything: SL, TP, hold time, position size
+  ema_period: 8
+  struct_window: 5
+  min_entry_score: 4
+  max_entry_score: 15
+  short_score_penalty: 4
+  sr_assets:
+  - ETH
+  signal_timeframes:
+  - 1h
+  - 4h
+  - 1d
 risk:
-  daily_loss_limit_pct: 5.0                    # Swing trades need room
-  max_drawdown_pct: 15.0                       # Multi-day holds can swing
-  risk_per_trade_pct: 1.0                      # Conservative sizing until WR improves (was 2.0%)
-  atr_stop_mult: 8.0                           # Wide SL for Robinhood 3.34% spread (8×ATR ≈ 3.5% for BTC, survives noise)
-  atr_tp_mult: 25.0                            # TP = 25×ATR — target 10%+ moves, nets ~7% after 3.34% spread
-  hard_stop_pct: -12.0                         # Hard stop at -12% (3.34% spread + 8.66% real adverse move room)
-  min_exit_pnl_pct: 1.5                        # Min profit % before EMA reversal exit triggers (Robinhood spread ~1.67% per side)
-
-# ── AI / LLM ──
-# Bybit uses Ollama (mistral 7B), Delta uses Claude API (haiku)
-# llm_provider: 'auto' = Delta→Claude, Bybit→Ollama | 'claude' | 'ollama'
+  daily_loss_limit_pct: 5.0
+  max_drawdown_pct: 15.0
+  risk_per_trade_pct: 1.0
+  atr_stop_mult: 3.0
+  atr_tp_mult: 9.0
+  hard_stop_pct: -6.0
+  min_exit_pnl_pct: 2.5
 ai:
-  reasoning_provider: "auto"
-  reasoning_model: "act-scanner"            # QLoRA fine-tuned Mistral for pattern scanning (falls back to nexus-scanner → mistral:latest)
-  ollama_base_url: "http://localhost:11434"
-  llm_provider: "auto"            # auto: Delta=Claude, Bybit=Ollama
-  claude_model: "claude-haiku-4-5" # Cost-effective for trade decisions (~$0.001/call)
+  reasoning_provider: auto
+  reasoning_model: act-scanner
+  # Local Ollama on the same RTX 5090 host. Do not use trycloudflare quick-tunnels
+  # here — they expire without notice and silently kill the LLM brain.
+  ollama_base_url: http://localhost:11434
+  llm_provider: auto
+  claude_model: claude-haiku-4-5
   use_llm_trade_decider: true
-  llm_trade_decider_mode: "primary"
-  llm_trade_conf_threshold: 0.80               # Robinhood: only high-conviction (was 0.60)
+  llm_trade_decider_mode: primary
+  llm_trade_conf_threshold: 0.8
   rate_limit_calls_per_minute: 15
   fallback_on_quota_error: true
   use_local_on_failure: true
-  bear_agent_enabled: true        # Second LLM call to argue AGAINST the trade
-  bear_veto_threshold: 8          # Restored to 8 — threshold 6 vetoed every trade in ranging market
-  bear_reduce_threshold: 5        # Reduce at 5 — still cautious but allows risk=6 trades through
-  facilitator_enabled: true       # 3rd LLM call: evaluates bull vs bear, makes final call
-  risk_personas_enabled: true     # 3 risk perspectives: Aggressive/Neutral/Conservative
-  edge_positioning_enabled: true  # Dynamic sizing based on historical win rate
-  orchestrator_enabled: true      # 10 math agents + adversarial debate → feeds LLM
-
-# ── Auto-Healer Monitor (GPU LLM) ──
-# SAME model as trading (mistral) to avoid GPU model-swap thrashing
-# Ollama can only hold 1 model in VRAM — switching causes 5-10s delays + failures
+  bear_agent_enabled: true
+  bear_veto_threshold: 8
+  bear_reduce_threshold: 5
+  facilitator_enabled: true
+  risk_personas_enabled: true
+  edge_positioning_enabled: true
+  orchestrator_enabled: true
 monitor:
   enabled: true
-  ollama_url: "http://localhost:11434"
-  ollama_model: "mistral:latest"
-  scan_interval: 120              # Check logs every 2min (less frequent = less contention)
-  auto_fix: true                  # Apply safe fixes (null guards, type casts, defaults)
-  max_fixes_per_hour: 5           # Rate limit auto-fixes
-
-# ── Multi-Strategy Engine ──
-# Replaces EMA-only gatekeeper with 4 parallel strategies
-# Weights shift dynamically based on HMM regime + Hurst exponent
+  ollama_url: https://spas-inclusive-breaking-frontier.trycloudflare.com
+  ollama_model: mistral:latest
+  scan_interval: 120
+  auto_fix: true
+  max_fixes_per_hour: 5
 multi_strategy:
   enabled: true
-  # Custom weight overrides (optional — regime auto-adjusts if not set)
-  # weights:
-  #   ema_trend: 0.30
-  #   mean_reversion: 0.30
-  #   volatility_breakout: 0.20
-  #   trend_following: 0.20
-
-# ── Sniper Mode (Patient, High-Conviction Trading) ──
-# Waits for multi-confluence perfect setups, compounds profits into bigger positions
-# Designed for Robinhood's 1.67% spread: only trades when expected move >> spread cost
 sniper:
-  enabled: true                        # Default ON for Robinhood paper mode
-  min_confluence: 4                    # Lowered from 6→4: need signals to fire (Claude will monitor and tighten if losing)
-  min_score: 4                         # Lowered 8→6→4: FOMC pause then allow LLM to decide on marginal setups (2026-04-13)
-  min_expected_move_pct: 4.0           # Lowered from 5→4: still above spread, but catches more moves
-  compound_pct: 50.0                   # Reinvest 50% of realized profits into next trade
-  protect_principal: true              # After first win, only risk profits — never touch original capital extra
-
-# ── Time-Based Exits ──
-max_hold_minutes: 10080           # Hold up to 7 DAYS — let big moves develop (was 6 hrs)
-
-# ── MetaTrader 5 ──
-# Bridge to MT5 terminal for visual tracking and/or direct execution
-# Setup: Install MT5 from broker, enable Algo Trading, pip install MetaTrader5
+  enabled: true
+  min_confluence: 5
+  min_score: 6
+  min_expected_move_pct: 5.0
+  compound_pct: 50.0
+  protect_principal: true
+max_hold_minutes: 10080
 mt5:
   enabled: true
-  mode: execute                      # 'mirror' (visual only) or 'execute' (trade through MT5)
-  terminal_path: "C:/Program Files/MetaTrader 5/terminal64.exe"  # Auto-detect if omitted
-  login: ${MT5_LOGIN}       # MT5 account number (from .env)
-  password: ${MT5_PASSWORD} # MT5 password (from .env)
-  server: ${MT5_SERVER}     # Server name (from .env)
+  mode: execute
+  terminal_path: C:/Program Files/MetaTrader 5/terminal64.exe
+  login: ${MT5_LOGIN}
+  password: ${MT5_PASSWORD}
+  server: ${MT5_SERVER}
   symbol_map:
-    BTC: "BTC"                       # MetaQuotes-Demo: iShares Bitcoin Trust ETF
-    ETH: "ETH"                       # MetaQuotes-Demo: iShares Ethereum Trust ETF
+    BTC: BTC
+    ETH: ETH
   lot_size:
-    BTC: 1.0                         # Min lot for BTC ETF (1 share)
-    ETH: 1.0                         # Min lot for ETH ETF (1 share)
-  magic_number: 888888               # Unique EA ID for our trades
-
-# ── Robinhood Crypto (read-only paper tracking) ──
+    BTC: 1.0
+    ETH: 1.0
+  magic_number: 888888
 robinhood:
-  enabled: true                      # Robinhood Crypto API (read-only)
-  assets: [BTC, ETH]
-  poll_interval: 30                  # Price snapshot interval (seconds)
-
-# ── Order Execution ──
-# LIMIT preferred: places at best bid/ask for instant fill + slippage protection
-# Market orders pay the spread
+  enabled: true
+  assets:
+  - BTC
+  - ETH
+  poll_interval: 30
 execution:
-  entry_type: "limit"
-  exit_type: "limit"
-
-# ── Auto Hyperopt (Continuous Parameter Optimization) ──
-# Background Optuna optimizer: periodically backtests param combinations
-# and updates config.yaml when improvement exceeds threshold
+  entry_type: limit
+  exit_type: limit
 hyperopt:
   enabled: true
-  interval_hours: 4                  # Run optimization every 4 hours
-  n_trials: 30                       # Optuna trials per cycle
-  metric: "profit_factor"            # Metric to maximize (profit_factor, sharpe, sortino, total_pnl, calmar)
-  min_improvement_pct: 5.0           # Only update config if improvement > 5%
-
-# ── FreqAI Auto-Retrain ──
-# Continuous ML model retraining inspired by Freqtrade's FreqAI module
+  interval_hours: 4
+  n_trials: 30
+  metric: profit_factor
+  min_improvement_pct: 5.0
 freqai:
   enabled: true
-  retrain_every_trades: 20          # Retrain after N closed trades
-  retrain_every_hours: 4            # Retrain every N hours (whichever triggers first)
-  min_improvement_pct: 1.0          # New model must beat old by 1%+ to deploy
-  assets: [BTC, ETH]
-  spread_cost_pct: 3.34             # Robinhood round-trip spread (used in label generation)
-  lookback_bars: 1500               # ~250 days of 4h data
-  label_threshold: 0.01             # 1% move threshold for directional labels
-  optuna_trials: 40                 # Bayesian hyperparameter search trials
-  boost_rounds: 400                 # Max LightGBM boosting rounds
-  early_stopping_rounds: 30         # Early stopping patience
-  validation_pct: 0.15              # Walk-forward validation split
-  test_pct: 0.15                    # Held-out test split
-  longs_only: true                  # Robinhood: no shorts on spot
-  timeframe: "4h"                   # Training timeframe
+  retrain_every_trades: 20
+  retrain_every_hours: 4
+  min_improvement_pct: 1.0
+  assets:
+  - BTC
+  - ETH
+  spread_cost_pct: 1.69
+  lookback_bars: 1500
+  label_threshold: 0.01
+  optuna_trials: 40
+  boost_rounds: 400
+  early_stopping_rounds: 30
+  validation_pct: 0.15
+  test_pct: 0.15
+  longs_only: true
+  timeframe: 4h
+roi_table:
+  0: 6.0
+  30: 4.0
+  120: 3.0
+  360: 2.5
+  720: 2.0
+  1440: -1.0
