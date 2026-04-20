@@ -802,6 +802,45 @@ class MultiModelConsensus:
 
     def __init__(self, ollama_base_url: str = "http://localhost:11434"):
         self.ollama_base_url = ollama_base_url.rstrip("/")
+        # Cache of installed Ollama models — refreshed via /api/tags on demand.
+        # Using a 5-minute TTL so a mid-cycle `ollama pull` is picked up quickly
+        # without hammering the tags endpoint every call.
+        self._available_models: set = set()
+        self._available_models_ts: float = 0.0
+        self._AVAIL_TTL = 300
+
+    def _get_available_models(self) -> set:
+        """Return the set of model names Ollama currently has pulled.
+
+        Cached for 5 min. On failure (Ollama down), returns an empty set AND
+        sets the timestamp so callers fall through to try all models rather
+        than skipping everything. Result: cold-start still attempts every
+        model in the fallback chain instead of going silent.
+        """
+        import time as _t
+        now = _t.time()
+        if now - self._available_models_ts < self._AVAIL_TTL and self._available_models:
+            return self._available_models
+        try:
+            resp = requests.get(f"{self.ollama_base_url}/api/tags", timeout=3)
+            if resp.status_code == 200:
+                tags = resp.json().get("models", []) or []
+                self._available_models = {m.get("name", "") for m in tags if m.get("name")}
+                self._available_models_ts = now
+        except Exception:
+            # Leave cache untouched; next call retries
+            pass
+        return self._available_models
+
+    def _filter_available(self, chain: List[str]) -> List[str]:
+        """Drop model names Ollama doesn't have. If the tags endpoint is
+        unreachable we get an empty set back and fall through unchanged —
+        caller sees every model try once (and fail loudly) rather than
+        silently skipping all models."""
+        avail = self._get_available_models()
+        if not avail:
+            return chain                                  # unknown — try all
+        return [m for m in chain if m in avail] or chain  # if nothing matches, still try
 
     def query_two_pass(self, scanner_prompt: str, analyst_prompt_builder, **analyst_kwargs) -> Dict[str, Any]:
         """
@@ -812,7 +851,8 @@ class MultiModelConsensus:
         # PASS 1: Pattern scan with Mistral (try fine-tuned, fall back through chain)
         print(f"  [BRAIN:PASS1] Mistral scanning patterns...")
         pattern_result = None
-        for _model in [self.MODEL_SCANNER] + self.MODEL_SCANNER_FALLBACKS:
+        scanner_chain = self._filter_available([self.MODEL_SCANNER] + self.MODEL_SCANNER_FALLBACKS)
+        for _model in scanner_chain:
             try:
                 pattern_result = self._call_ollama(_model, scanner_prompt)
                 break
@@ -834,7 +874,8 @@ class MultiModelConsensus:
         print(f"  [BRAIN:PASS2] Llama analyzing risk + deciding...")
         analyst_prompt = analyst_prompt_builder(pattern_scan_result=pattern_result, **analyst_kwargs)
         decision_result = None
-        for _model in [self.MODEL_ANALYST] + self.MODEL_ANALYST_FALLBACKS:
+        analyst_chain = self._filter_available([self.MODEL_ANALYST] + self.MODEL_ANALYST_FALLBACKS)
+        for _model in analyst_chain:
             try:
                 decision_result = self._call_ollama(_model, analyst_prompt)
                 break
