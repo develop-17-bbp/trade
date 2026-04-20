@@ -216,6 +216,36 @@ if (-not (Get-Command "cloudflared" -ErrorAction SilentlyContinue)) {
     OK "cloudflared installed."
 }
 
+# ── Phase 1/2 observability stack (Docker) ─────────────────────────
+# Starts Redis, Prometheus, Grafana, Tempo, OTel Collector in WSL2 Docker
+# via docker-compose. Bot reads ACT_REDIS_URL + OTLP endpoint on localhost.
+# Skips cleanly if Docker Desktop isn't running — observability is optional;
+# the bot boots without it.
+CHECK "Starting observability stack (Grafana + Prometheus + Tempo + Redis + OTel)..."
+$composeFile = Join-Path $dir "infra\docker-compose.yml"
+$dockerOk = $false
+try {
+    docker info --format '{{.ServerVersion}}' 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $dockerOk = $true }
+} catch {}
+if ($dockerOk -and (Test-Path $composeFile)) {
+    try {
+        docker compose -f $composeFile up -d 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            # Give Grafana a moment to come up so the banner URL is actually live.
+            Start-Sleep 3
+            OK "Observability stack up. Grafana: http://localhost:3000  Prometheus: http://localhost:9090"
+        } else {
+            WARN "docker compose up returned non-zero — check 'docker compose logs' in infra/"
+        }
+    } catch {
+        WARN "docker compose failed: $_ — skipping observability."
+    }
+} else {
+    WARN "Docker not running (or compose file missing) — skipping Grafana/Prometheus stack."
+    WARN "  To enable: start Docker Desktop, then re-run START_ALL.ps1."
+}
+
 # ── Cleanup existing ──
 Write-Host ""
 Write-Host "[CLEANUP] Stopping existing ACT processes..." -ForegroundColor Yellow
@@ -296,8 +326,15 @@ Write-Host "   6  Frontend       BelowNormal   always    none" -ForegroundColor 
 Write-Host "   7  Tunnel         Idle          always    none" -ForegroundColor White
 Write-Host ""
 Write-Host "   VRAM: Ollama ~$([math]::Min($gpuVRAM-2, 12))GB | LoRA ~$([math]::Max(2, $gpuVRAM-14))GB | System ~2GB" -ForegroundColor Yellow
-Write-Host "   Dashboard: http://localhost:5173" -ForegroundColor Green
-Write-Host "   API: http://localhost:11007" -ForegroundColor Green
+Write-Host "   Dashboard:  http://localhost:5173" -ForegroundColor Green
+Write-Host "   API:        http://localhost:11007" -ForegroundColor Green
+if ($dockerOk) {
+    Write-Host "   Grafana:    http://localhost:3000  (login: admin / `$env:GRAFANA_ADMIN_PASSWORD)" -ForegroundColor Green
+    Write-Host "   Prometheus: http://localhost:9090  (localhost only — do NOT expose)" -ForegroundColor Green
+    Write-Host "   Tempo:      http://localhost:3200  (queried via Grafana)" -ForegroundColor DarkGray
+} else {
+    Write-Host "   Grafana:    (not started — start Docker Desktop + re-run to enable)" -ForegroundColor DarkYellow
+}
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Start-Sleep 10
