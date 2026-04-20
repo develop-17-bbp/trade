@@ -43,6 +43,39 @@ TIMEFRAME_HIERARCHY: Dict[str, Dict[str, str]] = {
 
 
 # ═══════════════════════════════════════════════════════════════
+# MAX-HOLD CAPS PER ASSET (hard exit regardless of PnL)
+# ═══════════════════════════════════════════════════════════════
+#
+# Derived from ASSET_TRADE_PERMISSIONS + TIMEFRAME_HIERARCHY top-bound:
+#   BTC can swing  → top bound = 10 days  (swing: 3-10 days)
+#   ETH/alts intraday only → top bound = 48h (intraday: 12-48h)
+#
+# The executor MUST close any position that exceeds this cap even if the
+# trade is profitable — otherwise an ETH position held 3 days is by
+# definition a swing trade on an asset that's banned from swinging.
+AUTHORITY_MAX_HOLD_HOURS: Dict[str, float] = {
+    'BTC':    240.0,   # 10 days
+    'BTCUSD': 240.0, 'BTC-USD': 240.0, 'BTCUSDT': 240.0,
+    'ETH':    48.0,    # 48 hours — intraday cap, never swing
+    'ETHUSD': 48.0, 'ETH-USD': 48.0, 'ETHUSDT': 48.0,
+}
+
+# Default for any unlisted alt — 48h, the intraday ceiling.
+DEFAULT_MAX_HOLD_HOURS: float = 48.0
+
+
+def get_max_hold_hours(asset: str) -> float:
+    """Return the authority-mandated max hold in hours for `asset`.
+
+    Unknown assets default to DEFAULT_MAX_HOLD_HOURS (intraday ceiling) so
+    the safest interpretation applies when a caller passes something like
+    SOL or ARB that hasn't been explicitly listed.
+    """
+    key = str(asset or '').upper().strip()
+    return AUTHORITY_MAX_HOLD_HOURS.get(key, DEFAULT_MAX_HOLD_HOURS)
+
+
+# ═══════════════════════════════════════════════════════════════
 # OFFICIAL STRATEGIES (authority-blessed — seed for genetic engine)
 # ═══════════════════════════════════════════════════════════════
 

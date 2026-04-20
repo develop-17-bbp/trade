@@ -167,6 +167,25 @@ if _HAS_CLIENT:
         registry=REGISTRY,
     )
 
+    data_layer_fresh = Gauge(
+        "act_data_layer_fresh",
+        "Data layer freshness (1=fresh, 0=stale). Label `critical=y` for decision-path layers.",
+        labelnames=("layer", "critical"),
+        registry=REGISTRY,
+    )
+
+    readiness_gate = Gauge(
+        "act_readiness_gate",
+        "Soak-window readiness gate (1=open/live-trade-allowed, 0=closed).",
+        registry=REGISTRY,
+    )
+
+    readiness_gate_failures = Gauge(
+        "act_readiness_gate_failures",
+        "How many soak-gate conditions are currently failing.",
+        registry=REGISTRY,
+    )
+
 
 def start_exporter(port: Optional[int] = None) -> bool:
     """Start the Prometheus HTTP exporter. Idempotent + safe to call early.
@@ -334,6 +353,25 @@ def record_coevolution_transfer(src: str, dst: str) -> None:
         return
     try:
         coevolution_transfers_total.labels(src=src, dst=dst).inc()
+    except Exception:
+        pass
+
+
+def record_data_layer_fresh(layer: str, fresh: bool, critical: bool = False) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        data_layer_fresh.labels(layer=layer, critical="y" if critical else "n").set(1 if fresh else 0)
+    except Exception:
+        pass
+
+
+def record_readiness_gate(open_: bool, failure_count: int = 0) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        readiness_gate.set(1 if open_ else 0)
+        readiness_gate_failures.set(int(failure_count))
     except Exception:
         pass
 

@@ -755,6 +755,80 @@ class TradingExecutor:
                 print("  [MESH] MetaCoordinator registered + scheduler started")
             except Exception as _e:
                 print(f"  [MESH] Phase 4.5a startup skipped: {_e}")
+
+        # Readiness-gate wrapper: on a live exchange, intercept every
+        # new-entry order and block it if the soak gate is closed. Closes
+        # (reduce_only=True) always pass — stuck positions must remain
+        # exitable. Paper mode skips the wrapper entirely so soak trades
+        # can accumulate in the warm store.
+        try:
+            if (not self._paper_mode
+                    and getattr(self, "price_source", None) is not None
+                    and hasattr(self.price_source, "place_order")):
+                _orig_place_order = self.price_source.place_order
+
+                def _gated_place_order(*args, **kwargs):
+                    if kwargs.get("reduce_only"):
+                        return _orig_place_order(*args, **kwargs)
+                    try:
+                        from src.orchestration.readiness_gate import (
+                            evaluate as _gate_eval,
+                        )
+                        state = _gate_eval()
+                        if not state.open_:
+                            print(
+                                "  [GATE] BLOCKED live entry — readiness gate closed "
+                                f"({len(state.reasons)} condition(s) failing). "
+                                f"Reasons: {state.reasons[:2]}"
+                            )
+                            return {
+                                "status": "blocked",
+                                "reason": "readiness_gate_closed",
+                                "failing": state.reasons,
+                            }
+                    except Exception:
+                        # Gate evaluation failure must not block trading —
+                        # default-allow so a broken metric path never jams
+                        # the execution engine.
+                        pass
+                    return _orig_place_order(*args, **kwargs)
+
+                self.price_source.place_order = _gated_place_order
+                print("  [GATE] Live-entry orders are gated by readiness_gate.evaluate()")
+        except Exception as _e:
+            print(f"  [GATE] live-entry wrapper skipped: {_e}")
+
+        # Pre-flight: data-layer freshness probe. Non-fatal; logs stale layers
+        # so the operator sees them before the first decision cycle.
+        try:
+            from src.data.health import probe_all, summary as _health_summary
+            if self._economic_intelligence is not None:
+                healths = probe_all(self._economic_intelligence)
+                s = _health_summary(healths)
+                if s["critical_stale"] > 0:
+                    print(f"  [HEALTH] ⚠ {s['critical_stale']} CRITICAL layer(s) stale: "
+                          f"{', '.join(s['critical_stale_names'])}")
+                else:
+                    print(f"  [HEALTH] {s['fresh']}/{s['total']} data layers fresh")
+        except Exception as _e:
+            print(f"  [HEALTH] pre-flight skipped: {_e}")
+
+        # Readiness gate: log whether the bot would currently be cleared
+        # to place real-capital orders. Never blocks boot — the per-order
+        # check in the order-placement path is what actually enforces this.
+        try:
+            from src.orchestration.readiness_gate import evaluate as _gate_eval
+            _gate = _gate_eval()
+            if _gate.open_:
+                print("  [GATE] Readiness gate OPEN — real-capital orders permitted")
+            else:
+                n = len(_gate.reasons)
+                print(f"  [GATE] Readiness gate CLOSED — {n} condition(s) failing "
+                      f"(paper-only until soak completes)")
+                for _r in _gate.reasons[:4]:
+                    print(f"          • {_r}")
+        except Exception as _e:
+            print(f"  [GATE] readiness evaluation skipped: {_e}")
         self.last_trade_time: Dict[str, float] = {}
         self.last_close_time: Dict[str, float] = {}
         self.last_signal_candle: Dict[str, float] = {}  # Track candle timestamp to avoid re-entry on same candle
@@ -6592,10 +6666,29 @@ class TradingExecutor:
                     self._close_position(asset, price, f"RH trailing exit (net={_rh_net_pnl:+.2f}% < trail={_trail_level:+.2f}%)")
                     return
 
-            # Fix 6: Max hold time exit (7 days)
-            if position_age_min > self._rh_max_hold_days * 1440:
-                print(f"  [{self._ex_tag}:{asset}] RH MAX HOLD EXIT: held {position_age_min/1440:.1f} days > {self._rh_max_hold_days}d max | P&L={pnl_pct:+.2f}% (net={_rh_net_pnl:+.2f}%)")
-                self._close_position(asset, price, f"RH max hold {self._rh_max_hold_days}d (net={_rh_net_pnl:+.2f}%)")
+            # Authority-mandated per-asset max hold (BTC=10d swing ceiling,
+            # ETH/alts=48h intraday ceiling). Overrides the legacy global
+            # _rh_max_hold_days when the authority cap is tighter — ETH can
+            # NEVER swing per the authority PDF, so this takes precedence.
+            try:
+                from src.ai.authority_rules import get_max_hold_hours
+                _authority_cap_hours = get_max_hold_hours(asset)
+            except Exception:
+                _authority_cap_hours = self._rh_max_hold_days * 24.0
+            _legacy_cap_hours = self._rh_max_hold_days * 24.0
+            _effective_cap_hours = min(_authority_cap_hours, _legacy_cap_hours)
+            _cap_source = "AUTHORITY" if _authority_cap_hours <= _legacy_cap_hours else "LEGACY"
+
+            if position_age_min > _effective_cap_hours * 60.0:
+                print(
+                    f"  [{self._ex_tag}:{asset}] MAX HOLD EXIT ({_cap_source}): "
+                    f"held {position_age_min/60.0:.1f}h > {_effective_cap_hours:.0f}h cap "
+                    f"| P&L={pnl_pct:+.2f}% (net={_rh_net_pnl:+.2f}%)"
+                )
+                self._close_position(
+                    asset, price,
+                    f"{_cap_source} max hold {_effective_cap_hours:.0f}h (net={_rh_net_pnl:+.2f}%)",
+                )
                 return
 
         # ── 2. HARD STOP: max loss — non-negotiable ──
