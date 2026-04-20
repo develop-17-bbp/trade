@@ -8,7 +8,11 @@ This package holds the cross-process plumbing for ACT's decision pipeline:
   - hot_state.py:         Redis TTL'd snapshots             (Phase 2)
   - circuit_breakers.py:  pybreaker registry                (Phase 2)
   - retries.py:           tenacity wrappers                 (Phase 2)
-  - scheduler.py / protocols.py / data_contract.py         (Phase 4)
+  - warm_store.py:        SQLite WAL durable tier           (Phase 3)
+  - cold_archive.py:      monthly parquet rollups           (Phase 3)
+  - checkpoint.py:        crash-resume snapshots            (Phase 3)
+  - scheduler.py:         PeriodicJob supervisor            (Phase 4)
+  - gpu_scheduler.py:     priority-aware GPU lease          (Phase 4)
 """
 
 from src.orchestration.envelope import Decision, new_decision_id

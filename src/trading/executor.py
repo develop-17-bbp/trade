@@ -729,6 +729,32 @@ class TradingExecutor:
         except Exception as _e:
             # Observability is best-effort — never block bot boot on it.
             print(f"  [OBS] Phase 1 init skipped: {_e}")
+
+        # Phase 3: crash-resume banner + seed checkpoint table. Soft-fail.
+        try:
+            from src.orchestration.checkpoint import log_startup_diagnostic
+            log_startup_diagnostic()
+        except Exception as _e:
+            print(f"  [CHECKPOINT] startup diag skipped: {_e}")
+
+        # Phase 4: seed GPU-lease metric at 0 so dashboards show a series.
+        try:
+            from src.orchestration.gpu_scheduler import init as _gpu_init
+            _gpu_init()
+        except Exception:
+            pass
+
+        # Phase 4.5a: register the meta-coordinator as a PeriodicJob and
+        # start the supervisor. Env-gated so we can A/B without a deploy.
+        if os.getenv("ACT_LEARNING_MESH_ENABLED", "1") == "1":
+            try:
+                from src.learning.meta_coordinator import register_scheduler_job
+                from src.orchestration.scheduler import get_scheduler
+                register_scheduler_job(interval_s=float(os.getenv("ACT_META_COORD_INTERVAL_S", "10")))
+                get_scheduler().start_all()
+                print("  [MESH] MetaCoordinator registered + scheduler started")
+            except Exception as _e:
+                print(f"  [MESH] Phase 4.5a startup skipped: {_e}")
         self.last_trade_time: Dict[str, float] = {}
         self.last_close_time: Dict[str, float] = {}
         self.last_signal_candle: Dict[str, float] = {}  # Track candle timestamp to avoid re-entry on same candle
@@ -1568,21 +1594,44 @@ class TradingExecutor:
             # Phase 2: publish decision envelope to the decision.cycle stream
             # for downstream learners. Soft-fail: a dead Redis returns None
             # and logs at debug level — decision path continues.
+            _decision_row = {
+                "decision_id": decision_id,
+                "trace_id": trace_id,
+                "symbol": asset,
+                "raw_signal": int(raw_signal or 0),
+                "direction": int(getattr(decision, "direction", 0) or 0),
+                "confidence": float(getattr(decision, "confidence", 0.0) or 0.0),
+                "consensus": getattr(decision, "consensus_level", "UNKNOWN") or "UNKNOWN",
+                "veto": bool(getattr(decision, "veto", False)),
+                "ts_ns": _time.time_ns(),
+            }
             try:
                 from src.orchestration import STREAM_DECISION_CYCLE, stream_publish
-                stream_publish(STREAM_DECISION_CYCLE, {
-                    "decision_id": decision_id,
-                    "trace_id": trace_id,
-                    "symbol": asset,
-                    "raw_signal": int(raw_signal or 0),
-                    "direction": int(getattr(decision, "direction", 0) or 0),
-                    "confidence": float(getattr(decision, "confidence", 0.0) or 0.0),
-                    "consensus": getattr(decision, "consensus_level", "UNKNOWN") or "UNKNOWN",
-                    "veto": bool(getattr(decision, "veto", False)),
-                    "ts_ns": _time.time_ns(),
-                })
+                stream_publish(STREAM_DECISION_CYCLE, _decision_row)
             except Exception:
                 pass
+
+            # Phase 3: durable warm-tier write + crash-resume checkpoint.
+            try:
+                from src.orchestration.warm_store import get_store
+                get_store().write_decision(_decision_row)
+            except Exception as _e:
+                logger.debug(f"[WARM] decision write failed: {_e}")
+            try:
+                from src.orchestration.checkpoint import checkpoint_cycle
+                checkpoint_cycle(
+                    decision_id=decision_id,
+                    trace_id=trace_id,
+                    symbol=asset,
+                    open_positions={k: {
+                        'direction': v.get('direction'),
+                        'entry_price': v.get('entry_price'),
+                        'size': v.get('size'),
+                    } for k, v in self.positions.items()},
+                    equity=self.equity,
+                )
+            except Exception as _e:
+                logger.debug(f"[CHECKPOINT] write failed: {_e}")
 
             # ── Pass RAW agent outputs to LLM — LLM is the brain, not Python ──
             # No strategy filter, no Python voting — LLM sees everything and decides
@@ -7474,34 +7523,42 @@ class TradingExecutor:
         # Phase 4.5a meta-coordinator can enrich it into an Experience. Fields
         # match what credit_assigner.py will expect — don't rename without
         # updating that consumer too.
+        entry_time = float(pos.get('entry_time', 0.0) or 0.0)
+        exit_time = time.time()
+        exit_reason = {
+            'sl': 'SL', 'stop': 'SL', 'tp': 'TP', 'target': 'TP',
+            'timeout': 'TIMEOUT', 'hold': 'TIMEOUT', 'manual': 'MANUAL',
+        }.get(str(reason).lower().split()[0] if reason else '', 'MANUAL')
+        _outcome_row = {
+            "asset": asset,
+            "symbol": asset,
+            "direction": pos.get('direction'),
+            "entry_price": float(pos.get('entry_price', 0.0) or 0.0),
+            "exit_price": float(price or 0.0),
+            "pnl_pct": float(pnl_pct),
+            "pnl_usd": float(pnl_usd),
+            "duration_s": max(0.0, exit_time - entry_time) if entry_time else 0.0,
+            "exit_reason": exit_reason,
+            "regime": _regime,
+            "won": bool(_won),
+            "confidence": float(_confidence),
+            "decision_id": pos.get('decision_id'),
+            "trace_id": pos.get('trace_id'),
+            "entry_ts": entry_time,
+            "exit_ts": exit_time,
+        }
         try:
             from src.orchestration import STREAM_TRADE_OUTCOME, stream_publish
-            entry_time = float(pos.get('entry_time', 0.0) or 0.0)
-            exit_time = time.time()
-            exit_reason = {
-                'sl': 'SL', 'stop': 'SL', 'tp': 'TP', 'target': 'TP',
-                'timeout': 'TIMEOUT', 'hold': 'TIMEOUT', 'manual': 'MANUAL',
-            }.get(str(reason).lower().split()[0] if reason else '', 'MANUAL')
-            stream_publish(STREAM_TRADE_OUTCOME, {
-                "asset": asset,
-                "symbol": asset,
-                "direction": pos.get('direction'),
-                "entry_price": float(pos.get('entry_price', 0.0) or 0.0),
-                "exit_price": float(price or 0.0),
-                "pnl_pct": float(pnl_pct),
-                "pnl_usd": float(pnl_usd),
-                "duration_s": max(0.0, exit_time - entry_time) if entry_time else 0.0,
-                "exit_reason": exit_reason,
-                "regime": _regime,
-                "won": bool(_won),
-                "confidence": float(_confidence),
-                "decision_id": pos.get('decision_id'),
-                "trace_id": pos.get('trace_id'),
-                "entry_ts": entry_time,
-                "exit_ts": exit_time,
-            })
+            stream_publish(STREAM_TRADE_OUTCOME, _outcome_row)
         except Exception as e:
             logger.debug(f"[PHASE2] trade.outcome publish failed: {e}")
+
+        # Phase 3: warm-tier durable outcome write.
+        try:
+            from src.orchestration.warm_store import get_store
+            get_store().write_outcome(_outcome_row)
+        except Exception as e:
+            logger.debug(f"[WARM] outcome write failed: {e}")
 
         # ── MT5: Close mirrored/executed position (skip in paper mode) ──
         if self._mt5 and self._mt5.connected and not self._paper_mode:

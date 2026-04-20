@@ -109,6 +109,43 @@ if _HAS_CLIENT:
         registry=REGISTRY,
     )
 
+    # ── Phase 4: scheduler + GPU lease metrics ──────────────────────────
+    job_runs_total = Counter(
+        "act_job_runs_total",
+        "PeriodicJob executions, split by success/failure.",
+        labelnames=("name", "result"),
+        registry=REGISTRY,
+    )
+
+    job_duration_seconds = Histogram(
+        "act_job_duration_seconds",
+        "Wall time of a PeriodicJob run.",
+        labelnames=("name",),
+        buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0, 120.0, 600.0),
+        registry=REGISTRY,
+    )
+
+    gpu_lease_holders = Gauge(
+        "act_gpu_lease_holders",
+        "Which priority lane currently holds the GPU lease (0 if free).",
+        labelnames=("device",),
+        registry=REGISTRY,
+    )
+
+    # ── Phase 4.5a: learning mesh metrics ───────────────────────────────
+    credit_allocation = Gauge(
+        "act_credit_allocation",
+        "Rolling credit weight assigned to each learning component.",
+        labelnames=("component",),
+        registry=REGISTRY,
+    )
+
+    credit_regression_r2 = Gauge(
+        "act_credit_regression_r2",
+        "Rolling R² of the credit-assigner regression (target > 0.4).",
+        registry=REGISTRY,
+    )
+
 
 def start_exporter(port: Optional[int] = None) -> bool:
     """Start the Prometheus HTTP exporter. Idempotent + safe to call early.
@@ -211,6 +248,44 @@ def record_stream_publish(stream: str, ok: bool) -> None:
         return
     try:
         stream_publish_total.labels(stream=stream, result="ok" if ok else "fail").inc()
+    except Exception:
+        pass
+
+
+def record_job_run(name: str, ok: bool, duration_s: float) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        job_runs_total.labels(name=name, result="ok" if ok else "fail").inc()
+        job_duration_seconds.labels(name=name).observe(max(0.0, duration_s))
+    except Exception:
+        pass
+
+
+def record_gpu_lease(device: str, holder_priority: int) -> None:
+    """holder_priority: 0 free, 1-4 P1..P4 holders."""
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        gpu_lease_holders.labels(device=device).set(int(holder_priority))
+    except Exception:
+        pass
+
+
+def record_credit_allocation(component: str, weight: float) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        credit_allocation.labels(component=component).set(float(weight))
+    except Exception:
+        pass
+
+
+def record_credit_r2(r2: float) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        credit_regression_r2.set(float(r2))
     except Exception:
         pass
 
