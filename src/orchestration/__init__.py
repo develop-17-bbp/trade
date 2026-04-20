@@ -1,22 +1,33 @@
 """Orchestration layer — decision envelope, structured state, scheduler.
 
 This package holds the cross-process plumbing for ACT's decision pipeline:
-  - envelope.py:   canonical Decision model that flows L1→L9 (Phase 0)
-  - metrics.py:    Prometheus registrars (Phase 1)
-  - tracing.py:    OpenTelemetry spans (Phase 1)
-  - circuit_breakers.py / retries.py / gpu_scheduler.py / task.py  (Phase 2)
-  - scheduler.py / protocols.py / data_contract.py  (Phase 4)
+  - envelope.py:          canonical Decision model L1→L9   (Phase 0)
+  - metrics.py:           Prometheus registrars             (Phase 1)
+  - tracing.py:           OpenTelemetry spans               (Phase 1)
+  - streams.py:           Redis Streams pub/sub             (Phase 2)
+  - hot_state.py:         Redis TTL'd snapshots             (Phase 2)
+  - circuit_breakers.py:  pybreaker registry                (Phase 2)
+  - retries.py:           tenacity wrappers                 (Phase 2)
+  - scheduler.py / protocols.py / data_contract.py         (Phase 4)
 """
 
 from src.orchestration.envelope import Decision, new_decision_id
 from src.orchestration.metrics import (
     record_agent_vote,
     record_authority_violation,
+    record_circuit_breaker_state,
+    record_circuit_breaker_trip,
     record_decision,
     record_llm_tokens,
+    record_stream_publish,
     set_equity,
     start_exporter,
     time_decision,
+)
+from src.orchestration.streams import (
+    STREAM_DECISION_CYCLE,
+    STREAM_TRADE_OUTCOME,
+    publish as stream_publish,
 )
 from src.orchestration.tracing import decision_span, init_tracer
 
@@ -30,8 +41,15 @@ __all__ = [
     "record_authority_violation",
     "record_llm_tokens",
     "set_equity",
+    "record_circuit_breaker_state",
+    "record_circuit_breaker_trip",
+    "record_stream_publish",
     "time_decision",
     # tracing
     "init_tracer",
     "decision_span",
+    # streams
+    "stream_publish",
+    "STREAM_DECISION_CYCLE",
+    "STREAM_TRADE_OUTCOME",
 ]

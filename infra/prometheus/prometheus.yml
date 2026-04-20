@@ -27,10 +27,21 @@ scrape_configs:
         labels:
           component: trading_bot
 
-  # Phase 2: add scraper jobs for Redis + OTel collector self-metrics.
+  # Phase 2: OTel collector self-metrics. Exposes its own pipeline health
+  # (queue depth, dropped spans, export errors) on :8888 by default — see
+  # infra/otel/otel-config.yaml's `service.telemetry.metrics` block.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]
+        labels:
+          component: otel_collector
+
+  # Phase 2: Redis is scraped via redis-exporter rather than the server
+  # directly (Redis doesn't speak the Prometheus exposition format). Add
+  # the exporter to docker-compose.yml when you need it; the job config
+  # is here so the scrape target is stable.
   # - job_name: redis
   #   static_configs:
-  #     - targets: ["redis:6379"]
-  # - job_name: otel-collector
-  #   static_configs:
-  #     - targets: ["otel-collector:8888"]
+  #     - targets: ["redis-exporter:9121"]
+  #       labels:
+  #         component: redis

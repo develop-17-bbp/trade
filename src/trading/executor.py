@@ -1565,6 +1565,25 @@ class TradingExecutor:
                     exc_info=True,
                 )
 
+            # Phase 2: publish decision envelope to the decision.cycle stream
+            # for downstream learners. Soft-fail: a dead Redis returns None
+            # and logs at debug level — decision path continues.
+            try:
+                from src.orchestration import STREAM_DECISION_CYCLE, stream_publish
+                stream_publish(STREAM_DECISION_CYCLE, {
+                    "decision_id": decision_id,
+                    "trace_id": trace_id,
+                    "symbol": asset,
+                    "raw_signal": int(raw_signal or 0),
+                    "direction": int(getattr(decision, "direction", 0) or 0),
+                    "confidence": float(getattr(decision, "confidence", 0.0) or 0.0),
+                    "consensus": getattr(decision, "consensus_level", "UNKNOWN") or "UNKNOWN",
+                    "veto": bool(getattr(decision, "veto", False)),
+                    "ts_ns": _time.time_ns(),
+                })
+            except Exception:
+                pass
+
             # ── Pass RAW agent outputs to LLM — LLM is the brain, not Python ──
             # No strategy filter, no Python voting — LLM sees everything and decides
             votes = decision.agent_votes if decision else {}
@@ -7450,6 +7469,39 @@ class TradingExecutor:
                 )
             except Exception as e:
                 logger.debug(f"[v8.0] dynamic_limits record failed: {e}")
+
+        # Phase 2: publish the outcome to the trade.outcome stream so the
+        # Phase 4.5a meta-coordinator can enrich it into an Experience. Fields
+        # match what credit_assigner.py will expect — don't rename without
+        # updating that consumer too.
+        try:
+            from src.orchestration import STREAM_TRADE_OUTCOME, stream_publish
+            entry_time = float(pos.get('entry_time', 0.0) or 0.0)
+            exit_time = time.time()
+            exit_reason = {
+                'sl': 'SL', 'stop': 'SL', 'tp': 'TP', 'target': 'TP',
+                'timeout': 'TIMEOUT', 'hold': 'TIMEOUT', 'manual': 'MANUAL',
+            }.get(str(reason).lower().split()[0] if reason else '', 'MANUAL')
+            stream_publish(STREAM_TRADE_OUTCOME, {
+                "asset": asset,
+                "symbol": asset,
+                "direction": pos.get('direction'),
+                "entry_price": float(pos.get('entry_price', 0.0) or 0.0),
+                "exit_price": float(price or 0.0),
+                "pnl_pct": float(pnl_pct),
+                "pnl_usd": float(pnl_usd),
+                "duration_s": max(0.0, exit_time - entry_time) if entry_time else 0.0,
+                "exit_reason": exit_reason,
+                "regime": _regime,
+                "won": bool(_won),
+                "confidence": float(_confidence),
+                "decision_id": pos.get('decision_id'),
+                "trace_id": pos.get('trace_id'),
+                "entry_ts": entry_time,
+                "exit_ts": exit_time,
+            })
+        except Exception as e:
+            logger.debug(f"[PHASE2] trade.outcome publish failed: {e}")
 
         # ── MT5: Close mirrored/executed position (skip in paper mode) ──
         if self._mt5 and self._mt5.connected and not self._paper_mode:

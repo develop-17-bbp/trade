@@ -87,6 +87,28 @@ if _HAS_CLIENT:
         registry=REGISTRY,
     )
 
+    # ── Phase 2: resilience metrics ─────────────────────────────────────
+    circuit_breaker_state = Gauge(
+        "act_circuit_breaker_state",
+        "Named circuit breaker state (0=closed, 1=half_open, 2=open).",
+        labelnames=("name",),
+        registry=REGISTRY,
+    )
+
+    circuit_breaker_trips_total = Counter(
+        "act_circuit_breaker_trips_total",
+        "Number of times a named circuit breaker has opened.",
+        labelnames=("name",),
+        registry=REGISTRY,
+    )
+
+    stream_publish_total = Counter(
+        "act_stream_publish_total",
+        "Redis stream publishes, split by success/failure.",
+        labelnames=("stream", "result"),
+        registry=REGISTRY,
+    )
+
 
 def start_exporter(port: Optional[int] = None) -> bool:
     """Start the Prometheus HTTP exporter. Idempotent + safe to call early.
@@ -156,6 +178,39 @@ def set_equity(asset: str, equity: float) -> None:
         return
     try:
         equity_usd.labels(asset=asset).set(float(equity))
+    except Exception:
+        pass
+
+
+# ── Phase 2 emitters ───────────────────────────────────────────────────
+
+_CB_STATE_CODE = {"closed": 0, "half_open": 1, "half-open": 1, "open": 2}
+
+
+def record_circuit_breaker_state(name: str, state: str) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        code = _CB_STATE_CODE.get(str(state).lower(), 0)
+        circuit_breaker_state.labels(name=name).set(code)
+    except Exception:
+        pass
+
+
+def record_circuit_breaker_trip(name: str) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        circuit_breaker_trips_total.labels(name=name).inc()
+    except Exception:
+        pass
+
+
+def record_stream_publish(stream: str, ok: bool) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        stream_publish_total.labels(stream=stream, result="ok" if ok else "fail").inc()
     except Exception:
         pass
 
