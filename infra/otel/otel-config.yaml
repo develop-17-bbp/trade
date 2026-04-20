@@ -1,0 +1,41 @@
+# OpenTelemetry Collector config — Phase 1 skeleton.
+# Receives OTLP spans + metrics from the Windows-host bot via gRPC/HTTP,
+# forwards traces to Tempo. Metrics path is owned by Prometheus (which
+# scrapes the bot directly) — OTel here is traces-only for now.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  # Phase 1: drop any span with sensitive fields in attributes.
+  # Placeholder — uncomment + populate if we start emitting PII.
+  # attributes:
+  #   actions:
+  #     - key: robinhood_api_key
+  #       action: delete
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: basic
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo]

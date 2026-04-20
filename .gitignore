@@ -44,6 +44,12 @@ models/*.bak.*
 authority_trade_summaries/
 reports/
 
+# ── Infra stack ──
+# Local service data (Prometheus TSDB, Grafana state, Redis AOF, Tempo blocks)
+infra/volumes/
+# Local Grafana password override (stored next to docker-compose.yml)
+infra/.env
+
 # ── OS ──
 .DS_Store
 # Thumbs.db

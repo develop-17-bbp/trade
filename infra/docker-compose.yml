@@ -1,0 +1,105 @@
+# ACT observability + state stack (runs in WSL2 on the Windows host)
+#
+# Scaffold for Phase 1-3. Nothing here is wired up yet — the bot still runs
+# natively on Windows and writes to logs/ on the host filesystem. This file
+# exists so Phase 1 can bring services up with a single `docker compose up -d`
+# instead of authoring the stack from scratch at kickoff.
+#
+# Host layout (Windows host runs the bot; WSL2 runs this stack):
+#   Windows host       →  bot (src/main.py), Ollama, LoRA training
+#   WSL2 Docker        →  Redis, Prometheus, Grafana, Tempo, OTel Collector
+#   Cloudflare tunnel  →  Grafana (:3000) public. Prometheus (:9090) stays local.
+#
+# Brought online phase-by-phase:
+#   Phase 1  → otel-collector, prometheus, grafana, tempo
+#   Phase 2  → redis
+#   Phase 3  → (redis already online; verify persistence)
+#   Later    → maybe a second grafana org for the team
+
+name: act
+
+services:
+
+  # ─── Phase 2: Redis Streams + hot state store ────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: act-redis
+    command:
+      - redis-server
+      - --appendonly=yes
+      - --appendfsync=everysec
+      - --save=""
+    ports:
+      - "127.0.0.1:6379:6379"     # localhost-only; bot on Windows host reaches
+                                  # via host.docker.internal or localhost
+    volumes:
+      - ./volumes/redis:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ─── Phase 1: OpenTelemetry collector (traces + metrics router) ──────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.107.0
+    container_name: act-otel
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/otel-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:4317:4317"     # OTLP gRPC — bot pushes spans here
+      - "127.0.0.1:4318:4318"     # OTLP HTTP
+    depends_on:
+      - tempo
+    restart: unless-stopped
+
+  # ─── Phase 1: Prometheus (scrapes bot's /metrics) ────────────────────
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: act-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./volumes/prometheus:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"     # localhost only — NEVER exposed via tunnel
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach Windows-host bot
+    restart: unless-stopped
+
+  # ─── Phase 1: Tempo (distributed tracing backend) ────────────────────
+  tempo:
+    image: grafana/tempo:2.6.0
+    container_name: act-tempo
+    command: ["-config.file=/etc/tempo.yml"]
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo.yml:ro
+      - ./volumes/tempo:/tmp/tempo
+    ports:
+      - "127.0.0.1:3200:3200"     # Tempo API (consumed by Grafana only)
+    restart: unless-stopped
+
+  # ─── Phase 1: Grafana (the only publicly-exposable service) ──────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: act-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-change-me-before-exposing}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=
+    ports:
+      - "3000:3000"               # Cloudflare tunnel points here (NOT :9090)
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./volumes/grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - tempo
+    restart: unless-stopped

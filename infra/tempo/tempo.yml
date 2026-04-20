@@ -1,0 +1,33 @@
+# Tempo config — Phase 1 skeleton. Single-binary, local filesystem storage.
+# Good for single-host dev; Phase 1 uses as-is. Scale-out path is object
+# storage (S3/GCS) via the `storage.trace.backend` field.
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  trace_idle_period: 10s
+  max_block_bytes: 1_000_000
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 168h       # 7 days — matches the Phase 0 soak window
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/blocks
+    wal:
+      path: /tmp/tempo/wal
