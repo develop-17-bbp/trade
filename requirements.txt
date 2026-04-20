@@ -34,6 +34,15 @@ pydantic==2.12.5
 # via lightgbm; pinned explicitly so Phase 4.5a has a hard guarantee.
 scikit-learn==1.8.0
 
+# Phase 1: observability stack. All three are SOFT deps in the orchestration
+# package — the bot still boots if they're missing, it just won't emit metrics
+# or spans. OTel 1.41+ is required for Python 3.14 (earlier versions pin
+# protobuf <5 which trips Python 3.14's stricter metaclass rules).
+prometheus-client==0.21.0
+opentelemetry-api==1.41.0
+opentelemetry-sdk==1.41.0
+opentelemetry-exporter-otlp-proto-grpc==1.41.0
+
 # Dashboard
 flask==3.1.3
 streamlit==1.55.0

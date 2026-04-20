@@ -718,6 +718,17 @@ class TradingExecutor:
         self.equity: float = self.initial_capital
         self.cash: float = self.initial_capital
         self.bar_count: int = 0
+
+        # Phase 1: observability — Prometheus exporter + OTel tracer. Both are
+        # idempotent and guarded by env vars (ACT_METRICS_ENABLED, ACT_TRACING_ENABLED).
+        try:
+            from src.orchestration import init_tracer, set_equity, start_exporter
+            start_exporter()
+            init_tracer()
+            set_equity("TOTAL", self.equity)
+        except Exception as _e:
+            # Observability is best-effort — never block bot boot on it.
+            print(f"  [OBS] Phase 1 init skipped: {_e}")
         self.last_trade_time: Dict[str, float] = {}
         self.last_close_time: Dict[str, float] = {}
         self.last_signal_candle: Dict[str, float] = {}  # Track candle timestamp to avoid re-entry on same candle
@@ -1372,10 +1383,25 @@ class TradingExecutor:
         if not self._orchestrator or not self._math_injector:
             return None
 
-        # Phase 0: generate a ULID per decision cycle. Used for audit
-        # correlation today; Phase 1 wires it into OTel trace context.
-        from src.orchestration import new_decision_id
+        # Phase 0: ULID per cycle. Phase 1: enter OTel span + Prometheus timer.
+        # We use manual __enter__/__exit__ (not a `with`) to avoid a 200-line
+        # re-indent of the existing method body. Every observability call is a
+        # no-op when deps aren't installed or ACT_{METRICS,TRACING}_ENABLED=0.
+        import time as _time
+        from src.orchestration import (
+            decision_span,
+            new_decision_id,
+            record_agent_vote,
+            record_authority_violation,
+            record_decision,
+        )
         decision_id = new_decision_id()
+        _span_cm = decision_span(decision_id=decision_id, symbol=asset)
+        _span_ctx = _span_cm.__enter__()
+        trace_id = _span_ctx.get("trace_id", decision_id)
+        _cycle_start = _time.perf_counter()
+        _cycle_action = "FLAT"
+        _cycle_consensus = "UNKNOWN"
 
         try:
             import numpy as np
@@ -1528,6 +1554,7 @@ class TradingExecutor:
                     ext_feats=ext_feats,
                     economic_data=economic_data,
                     decision_id=decision_id,
+                    trace_id=trace_id,
                 )
             except Exception as e:
                 # Phase 0 gate depends on this log — surface loudly so we find
@@ -1548,6 +1575,15 @@ class TradingExecutor:
                 agent_summary.append(
                     f"  {agent_name}: {dir_str} conf={vote.confidence:.0%} scale={vote.position_scale:.0%}{veto_str} | {vote.reasoning[:80]}"
                 )
+                record_agent_vote(agent=agent_name, direction=int(vote.direction or 0))
+
+            # Phase 1: emit authority violations (risk_params.violations) as counters.
+            try:
+                _viol = getattr(decision, "risk_params", None) or {}
+                for _rule in (_viol.get("violations", []) if isinstance(_viol, dict) else []):
+                    record_authority_violation(rule=str(_rule))
+            except Exception:
+                pass
 
             # Basic consensus for logging
             directions = [v.direction * v.confidence for v in votes.values()]
@@ -1556,6 +1592,13 @@ class TradingExecutor:
 
             consensus_dir = "CALL" if net > 0.15 else "PUT" if net < -0.15 else "FLAT"
             consensus = "STRONG" if abs(net) > 0.6 else "MODERATE" if abs(net) > 0.3 else "WEAK"
+
+            # Phase 1: expose final action + consensus on the span and queue
+            # them for the latency histogram emitted in the finally block.
+            _cycle_action = "LONG" if net > 0 else "SHORT" if net < 0 else "FLAT"
+            _cycle_consensus = consensus
+            _span_ctx["final_action"] = _cycle_action
+            _span_ctx["consensus"] = consensus
 
             print(f"  [{self._ex_tag}:{asset}] AGENTS RAW: {consensus_dir} {consensus} (net={net:+.2f}) | {len(votes)} agents | avg_conf={avg_conf:.2f}")
 
@@ -1578,8 +1621,30 @@ class TradingExecutor:
             }
 
         except Exception as e:
+            _span_ctx["error"] = f"{type(e).__name__}: {e}"
             logger.warning(f"[{asset}] Orchestrator failed (degraded): {e}")
             return None
+        finally:
+            # Phase 1: record latency + equity + close the span exactly once,
+            # on every exit path. Exceptions here must never mask the original.
+            try:
+                record_decision(
+                    symbol=asset,
+                    action=_cycle_action,
+                    consensus=_cycle_consensus,
+                    latency_s=_time.perf_counter() - _cycle_start,
+                )
+            except Exception:
+                pass
+            try:
+                from src.orchestration import set_equity as _set_equity
+                _set_equity("TOTAL", float(self.equity))
+            except Exception:
+                pass
+            try:
+                _span_cm.__exit__(None, None, None)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Strategy Filter — reinterpret agent votes for CALL/PUT trailing SL
@@ -1803,18 +1868,17 @@ class TradingExecutor:
             pass
 
     def _log_decision_audit(self, asset, raw_signal, decision, sentiment_data,
-                            ext_feats, economic_data, decision_id=None):
+                            ext_feats, economic_data, decision_id=None, trace_id=None):
         """Append a full decision record to logs/trade_decisions.jsonl.
 
         Each line is one cycle: the orchestrator's direction/confidence/veto,
         the agent votes, and the news + macro context that produced them.
 
-        Phase 0: adds decision_id (ULID) + trace_id (= decision_id until
-        Phase 1 wires OTel) + empty provenance block (Phase 1 fills).
-        If caller didn't pass decision_id, emit a `synth-audit-*` label
-        so the uniqueness test can ignore it — this shouldn't happen in
-        the normal flow (only one call site, executor.py:1509), but it's
-        defensive against future error-path callers.
+        Phase 0: added decision_id (ULID) + stubbed trace_id = decision_id.
+        Phase 1: trace_id now comes from the OTel span (hex-encoded 128-bit)
+        and lets Tempo cross-link the audit row. If the caller didn't pass
+        one (legacy callers, shutdown paths), we fall back to decision_id so
+        the JSONL schema stays stable.
         """
         import os, json
         from datetime import datetime as _dt
@@ -1822,6 +1886,8 @@ class TradingExecutor:
         try:
             if not decision_id:
                 decision_id = synthetic_decision_id("audit_no_ctx")
+            if not trace_id:
+                trace_id = decision_id
 
             # Defensive attr access — EnhancedDecision fields can be None on
             # degraded-data cycles, and getattr shouldn't raise before we've
@@ -1842,7 +1908,7 @@ class TradingExecutor:
             record = {
                 'ts': _dt.utcnow().isoformat() + 'Z',
                 'decision_id': decision_id,
-                'trace_id': decision_id,  # Phase 1 will replace with real OTel trace context
+                'trace_id': trace_id,  # Phase 1: real OTel hex trace_id from the cycle span
                 'asset': asset,
                 'raw_signal': int(raw_signal or 0),
                 'decision': {
