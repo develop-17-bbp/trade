@@ -24,12 +24,17 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from ulid import ULID
+
+# Stdlib-backed ULID implementation — no external dep. A previous version
+# imported `from ulid import ULID` (python-ulid package) which broke on the
+# GPU box because a conflicting PyPI package also named `ulid` was installed
+# as a single module without a ULID class → ImportError every cycle.
+from src.orchestration._ulid import new_ulid
 
 
 def new_decision_id() -> str:
     """Generate a fresh time-sortable ULID for one decision cycle."""
-    return str(ULID())
+    return new_ulid()
 
 
 FinalAction = Literal["LONG", "FLAT", "EXIT", "SHORT"]
