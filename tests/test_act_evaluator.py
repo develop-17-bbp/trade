@@ -119,19 +119,42 @@ def test_rolling_sharpe_on_35_trades(tmp_path):
 
 
 def test_component_state_reflects_env(monkeypatch):
+    """Kill switches (ACT_DISABLE_ML) display the FEATURE state — not the raw env.
+    ACT_DISABLE_ML=1 means kill switch on -> feature OFF."""
     from src.evaluation.act_evaluator import load_component_state
 
     monkeypatch.setenv("ACT_SAFE_ENTRIES", "1")
-    monkeypatch.setenv("ACT_DISABLE_ML", "1")
+    monkeypatch.setenv("ACT_DISABLE_ML", "1")         # kill switch ON
     monkeypatch.setenv("ACT_LGBM_DEVICE", "gpu")
     monkeypatch.delenv("ACT_META_SHADOW_MODE", raising=False)
 
     cs = load_component_state()
     by_name = {c["env"]: c for c in cs["components"]}
     assert by_name["ACT_SAFE_ENTRIES"]["is_on"] is True
-    assert by_name["ACT_DISABLE_ML"]["is_on"] is True  # kill switch on
-    assert by_name["ACT_LGBM_DEVICE"]["is_on"] is True  # GPU = on
-    assert by_name["ACT_META_SHADOW_MODE"]["is_on"] is False  # unset = off
+    # ACT_DISABLE_ML=1 inverts: feature (ML Gate) is OFF when var=1
+    assert by_name["ACT_DISABLE_ML"]["is_on"] is False
+    assert by_name["ACT_LGBM_DEVICE"]["is_on"] is True
+    assert by_name["ACT_META_SHADOW_MODE"]["is_on"] is False
+
+
+def test_ml_gate_on_when_kill_switch_unset(monkeypatch):
+    """ACT_DISABLE_ML unset -> kill switch OFF -> ML Gate feature ON."""
+    from src.evaluation.act_evaluator import load_component_state
+
+    monkeypatch.delenv("ACT_DISABLE_ML", raising=False)
+    cs = load_component_state()
+    by_name = {c["env"]: c for c in cs["components"]}
+    assert by_name["ACT_DISABLE_ML"]["is_on"] is True
+
+
+def test_ml_gate_on_when_kill_switch_zero(monkeypatch):
+    """ACT_DISABLE_ML=0 -> kill switch OFF -> ML Gate feature ON."""
+    from src.evaluation.act_evaluator import load_component_state
+
+    monkeypatch.setenv("ACT_DISABLE_ML", "0")
+    cs = load_component_state()
+    by_name = {c["env"]: c for c in cs["components"]}
+    assert by_name["ACT_DISABLE_ML"]["is_on"] is True
 
 
 def test_recommendations_fire_on_losing_bucket(tmp_path):

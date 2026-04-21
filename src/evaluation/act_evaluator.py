@@ -49,17 +49,20 @@ RECO_FLAT_SHARPE_LOW = 0.3      # rolling sharpe below this = flagged
 # COMPONENT STATE
 # ─────────────────────────────────────────────────────────────────────
 
-# Every toggleable subsystem. Maps display name -> dict of
-#   env var, what "on" means, current-value getter
+# Every toggleable subsystem. `invert=True` means the env var is a KILL switch
+# (var=1 -> feature OFF), so is_on is inverted after parsing. Default False
+# means regular enable-switch (var=1 -> feature ON).
 COMPONENTS: List[Dict[str, Any]] = [
-    {"name": "ML Gate (base)",        "env": "ACT_DISABLE_ML",       "on_when_unset": True,  "toggle_on": "0", "toggle_off": "1"},
-    {"name": "Safe-entries gate",     "env": "ACT_SAFE_ENTRIES",     "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
-    {"name": "Shadow-mode meta",      "env": "ACT_META_SHADOW_MODE", "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
-    {"name": "LightGBM GPU",          "env": "ACT_LGBM_DEVICE",      "on_when_unset": False, "toggle_on": "gpu", "toggle_off": "cpu"},
-    {"name": "Prometheus metrics",    "env": "ACT_METRICS_ENABLED",  "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
-    {"name": "OTel tracing",          "env": "ACT_TRACING_ENABLED",  "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
-    {"name": "Real-capital gate flag", "env": "ACT_REAL_CAPITAL_ENABLED", "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
-    {"name": "Rolling-Sharpe gate min", "env": "ACT_GATE_MIN_SHARPE", "on_when_unset": False, "toggle_on": "1.0", "toggle_off": "0"},
+    # ACT_DISABLE_ML is a kill switch — 1 disables ML. Feature "ML Gate" is ON
+    # when the kill switch is OFF (var unset or var=0).
+    {"name": "ML Gate (base)",        "env": "ACT_DISABLE_ML",       "invert": True,  "on_when_unset": True,  "toggle_on": "0", "toggle_off": "1"},
+    {"name": "Safe-entries gate",     "env": "ACT_SAFE_ENTRIES",     "invert": False, "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
+    {"name": "Shadow-mode meta",      "env": "ACT_META_SHADOW_MODE", "invert": False, "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
+    {"name": "LightGBM GPU",          "env": "ACT_LGBM_DEVICE",      "invert": False, "on_when_unset": False, "toggle_on": "gpu", "toggle_off": "cpu"},
+    {"name": "Prometheus metrics",    "env": "ACT_METRICS_ENABLED",  "invert": False, "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
+    {"name": "OTel tracing",          "env": "ACT_TRACING_ENABLED",  "invert": False, "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
+    {"name": "Real-capital gate flag", "env": "ACT_REAL_CAPITAL_ENABLED", "invert": False, "on_when_unset": False, "toggle_on": "1", "toggle_off": "0"},
+    {"name": "Rolling-Sharpe gate min", "env": "ACT_GATE_MIN_SHARPE", "invert": False, "on_when_unset": False, "toggle_on": "1.0", "toggle_off": "0"},
 ]
 
 
@@ -68,27 +71,38 @@ def load_component_state(root: Optional[Path] = None) -> Dict[str, Any]:
 
     Each entry:
         {name, env, value, is_on, toggle_cmd_on, toggle_cmd_off, description?}
+
+    `is_on` reflects the USER-VISIBLE FEATURE state, which for kill-switch vars
+    (invert=True) is the logical NOT of the raw env value.
     """
     out: List[Dict[str, Any]] = []
     for c in COMPONENTS:
         raw = os.environ.get(c["env"])
-        is_on: bool
+        invert = bool(c.get("invert", False))
+        # First: parse the raw env value into a "var is truthy" bool
+        var_truthy: bool
         if raw is None or raw == "":
+            # Unset — for kill switches, unset=0 (feature ON). For enable
+            # switches, unset=0 (feature OFF). on_when_unset captures both.
             is_on = bool(c.get("on_when_unset", False))
+            var_value = "(unset)"
         else:
             if c["env"] == "ACT_LGBM_DEVICE":
-                is_on = raw.strip().lower() == "gpu"
+                var_truthy = raw.strip().lower() == "gpu"
             elif c["env"] == "ACT_GATE_MIN_SHARPE":
                 try:
-                    is_on = float(raw) > 0.0
+                    var_truthy = float(raw) > 0.0
                 except Exception:
-                    is_on = False
+                    var_truthy = False
             else:
-                is_on = raw.strip().lower() in ("1", "true", "yes", "on")
+                var_truthy = raw.strip().lower() in ("1", "true", "yes", "on")
+            # Kill switches: feature is ON when the var is NOT truthy
+            is_on = (not var_truthy) if invert else var_truthy
+            var_value = raw
         out.append({
             "name": c["name"],
             "env": c["env"],
-            "value": raw if raw is not None else "(unset)",
+            "value": var_value,
             "is_on": is_on,
             "toggle_cmd_on": f'setx {c["env"]} {c["toggle_on"]}',
             "toggle_cmd_off": f'setx {c["env"]} {c["toggle_off"]}',
