@@ -48,6 +48,11 @@ def _tunables() -> Dict[str, float]:
         "MIN_CREDIT_R2": float(os.getenv("ACT_GATE_MIN_CREDIT_R2", "0.4")),
         "MAX_QUARANTINED": int(os.getenv("ACT_GATE_MAX_QUARANTINED", "0")),
         "MAX_VIOLATION_RATE": float(os.getenv("ACT_GATE_MAX_VIOLATION_RATE", "0.02")),
+        # Per-trade Sharpe floor on the last N outcomes. Enforces "positive PnL even
+        # at low WR" — a negative-mean / high-variance streak can't clear the soak
+        # regardless of trade count. Set to 0 to disable.
+        "MIN_ROLLING_SHARPE": float(os.getenv("ACT_GATE_MIN_SHARPE", "1.0")),
+        "SHARPE_WINDOW": int(os.getenv("ACT_GATE_SHARPE_WINDOW", "30")),
     }
 
 
@@ -183,6 +188,35 @@ def evaluate() -> GateState:
     details["quarantined_learners"] = q
     if q > t["MAX_QUARANTINED"]:
         reasons.append(f"{q} quarantined learners > ceiling {t['MAX_QUARANTINED']}")
+
+    # Rolling Sharpe on the last SHARPE_WINDOW trades from SafeEntryState. Gates
+    # against the "negative-EV or high-variance" pattern — paper soak can't complete
+    # with a −0.3 Sharpe even if trade count is met. Only enforced once MIN_TRADES
+    # warm-store outcomes are in AND SafeEntryState has at least SHARPE_WINDOW
+    # samples — avoids rejecting the gate when the state file is sparse or absent
+    # (e.g. warm_store seeded from backfill but SafeEntryState not populated yet).
+    sharpe = 0.0
+    sharpe_samples = 0
+    try:
+        from src.trading.safe_entries import SafeEntryState, default_state_path
+        state = SafeEntryState.load(default_state_path())
+        sharpe = state.combined_rolling_sharpe(n=int(t["SHARPE_WINDOW"]))
+        sharpe_samples = sum(len(a.trade_pnl_pcts) for a in state.assets.values())
+    except Exception:
+        pass
+    details["rolling_sharpe"] = round(sharpe, 4)
+    details["sharpe_window"] = int(t["SHARPE_WINDOW"])
+    details["sharpe_samples"] = sharpe_samples
+    if (
+        n >= t["MIN_TRADES"]
+        and sharpe_samples >= int(t["SHARPE_WINDOW"])
+        and t["MIN_ROLLING_SHARPE"] > 0
+        and sharpe < t["MIN_ROLLING_SHARPE"]
+    ):
+        reasons.append(
+            f"rolling Sharpe {sharpe:.2f} < required {t['MIN_ROLLING_SHARPE']:.2f}"
+            f" (window={int(t['SHARPE_WINDOW'])})"
+        )
 
     operator_flag = os.getenv(REAL_CAPITAL_FLAG, "0") == "1"
     details["operator_flag"] = operator_flag

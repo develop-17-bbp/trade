@@ -732,6 +732,27 @@ class TradingExecutor:
         self.cash: float = self.initial_capital
         self.bar_count: int = 0
 
+        # Safe-entries gate (ACT_SAFE_ENTRIES=1). Structural interventions for +EV /
+        # Sharpe ≥ 1.0 before readiness-gate soak can complete. See src/trading/safe_entries.py
+        # for the full rationale. When disabled, executor behaves identically to pre-change.
+        try:
+            from src.trading import safe_entries as _safe
+            self._safe_enabled = _safe.is_enabled(self.config)
+            self._safe_config = _safe.merged_config(self.config)
+            self._safe_state = _safe.SafeEntryState.load(_safe.default_state_path())
+            if self._safe_enabled:
+                print(f"  [SAFE] ACTIVE — risk_pct={self._safe_config['risk_pct']}% "
+                      f"min_rr={self._safe_config['min_rr']} "
+                      f"stop_atr_mult={self._safe_config['stop_atr_mult']}x "
+                      f"consec_halve/pause={self._safe_config['consec_losses_halve']}/"
+                      f"{self._safe_config['consec_losses_pause']}")
+        except Exception as _se:
+            self._safe_enabled = False
+            self._safe_config = {}
+            self._safe_state = None
+            if os.environ.get("ACT_SAFE_ENTRIES"):
+                print(f"  [SAFE] init failed: {_se}")
+
         # Phase 1: observability — Prometheus exporter + OTel tracer. Both are
         # idempotent and guarded by env vars (ACT_METRICS_ENABLED, ACT_TRACING_ENABLED).
         try:
@@ -5252,11 +5273,44 @@ class TradingExecutor:
         effective_min = min_entry_score
         if signal == "SELL":  # SHORT entry needs higher score
             effective_min += short_score_penalty
-        # SCORE: Advisory only — LLM + agents make final decision
+
+        # Safe-entries gate (B + D + F): hard veto LLM can't override, spread-aware
+        # bump on high-spread venues, consecutive-loss throttle that pauses after N.
+        if getattr(self, '_safe_enabled', False):
+            try:
+                from src.trading import safe_entries as _safe
+                rt_spread = float(self.config.get('exchanges', [{}])[0].get('round_trip_spread_pct', 0.1)
+                                  if isinstance(self.config.get('exchanges'), list) else 0.1)
+                effective_min = _safe.effective_min_score(effective_min, rt_spread, self._safe_config)
+                reject, reason = _safe.enforce_hard_score_veto(entry_score, effective_min)
+                if reject:
+                    print(f"  [{self._ex_tag}:{asset}] SAFE REJECT: {reason}")
+                    return
+                # Consec-loss throttle — may pause entirely
+                mult, throttle_reason = self._safe_state.size_multiplier_for(
+                    asset, self._safe_config,
+                )
+                if mult <= 0.0:
+                    print(f"  [{self._ex_tag}:{asset}] SAFE REJECT: {throttle_reason}")
+                    # Persist paused_until update
+                    try:
+                        self._safe_state.save(_safe.default_state_path())
+                    except Exception:
+                        pass
+                    return
+                if mult < 1.0:
+                    print(f"  [{self._ex_tag}:{asset}] SAFE SIZE x{mult}: {throttle_reason}")
+                    self._safe_size_mult = mult  # applied at position sizing
+                else:
+                    self._safe_size_mult = 1.0
+            except Exception as _se:
+                print(f"  [{self._ex_tag}:{asset}] SAFE check error: {_se}")
+
+        # SCORE: Advisory only (when safe-entries disabled) — LLM + agents make final decision
         if entry_score < effective_min:
             math_filter_warnings.append(f"LOW SCORE: {entry_score}/{effective_min} — weak setup, LLM should be cautious")
             print(f"  [{self._ex_tag}:{asset}] SCORE ADVISORY: {entry_score}/{effective_min} ({', '.join(score_reasons)}) — LOW but LLM decides")
-            # DON'T return — let LLM see everything
+            # DON'T return — let LLM see everything (fallback path only)
         if entry_score > max_entry_score:
             math_filter_warnings.append(f"HIGH SCORE: {entry_score}>{max_entry_score} — possible momentum trap")
             print(f"  [{self._ex_tag}:{asset}] SCORE ADVISORY: {entry_score}>{max_entry_score} (momentum trap warning)")
@@ -6427,6 +6481,37 @@ class TradingExecutor:
                 if 0.3 <= ob_dist_pct <= 2.0 and ob_sl < sl_price:
                     sl_price = ob_sl
                     sl_source = f"OB_ASK_WALL@${ask_wall:,.2f}"
+
+        # Safe-entries gate (A + C): widen SL to floor + enforce min R:R.
+        if getattr(self, '_safe_enabled', False):
+            try:
+                from src.trading import safe_entries as _safe
+                rt_spread = float(self.config.get('exchanges', [{}])[0].get('round_trip_spread_pct', 0.1)
+                                  if isinstance(self.config.get('exchanges'), list) else 0.1)
+                # A: widen if inside spread
+                new_sl, floor_reason = _safe.apply_stop_floor(
+                    entry=price,
+                    sl_price=sl_price,
+                    direction=action,
+                    atr=float(init_atr),
+                    rt_spread_pct=rt_spread,
+                    config=self._safe_config,
+                )
+                if floor_reason != "floor_ok":
+                    print(f"  [{self._ex_tag}:{asset}] SAFE SL {floor_reason}: ${sl_price:.2f} -> ${new_sl:.2f}")
+                    sl_price = new_sl
+                    sl_source = f"SAFE_FLOOR({floor_reason})"
+                # C: enforce min R:R — synthesize TP at min_rr × risk
+                min_rr = float(self._safe_config.get('min_rr', 2.0))
+                tp_target = _safe.synthesize_tp(price, sl_price, action, min_rr)
+                ok, rr, rr_reason = _safe.check_rr(price, sl_price, tp_target, action, min_rr)
+                if not ok:
+                    print(f"  [{self._ex_tag}:{asset}] SAFE REJECT: {rr_reason} (tp=${tp_target:.2f})")
+                    return
+                print(f"  [{self._ex_tag}:{asset}] SAFE R:R={rr:.2f} tp_target=${tp_target:.2f}")
+                self._safe_tp_target = tp_target  # stored for partial-take trigger
+            except Exception as _se:
+                print(f"  [{self._ex_tag}:{asset}] SAFE SL check error: {_se}")
 
         imb = ob_levels.get('imbalance', 0)
         print(f"  [{self._ex_tag}:{asset}] ORDER OK [{chosen_tf}]: {order_id} | SL L1=${sl_price:,.2f} ({sl_source}) | OB imbalance={imb:+.2f}")
@@ -7794,6 +7879,17 @@ class TradingExecutor:
                 self.edge_stats[asset]['losses'] += 1
             s = self.edge_stats[asset]
             s['win_rate'] = s['wins'] / s['total'] if s['total'] > 0 else 0.5
+
+        # Safe-entries: record outcome for consecutive-loss throttle + rolling Sharpe.
+        # Always records even when the gate is disabled, so turning it on later has
+        # historical trade distribution to reason about.
+        try:
+            if getattr(self, '_safe_state', None) is not None:
+                self._safe_state.record_outcome(asset, pnl_pct=float(pnl_pct), won=(pnl_pct > 0))
+                from src.trading.safe_entries import default_state_path as _ssp
+                self._safe_state.save(_ssp())
+        except Exception:
+            pass
 
         # Update per-timeframe performance (LLM learns which TFs profit)
         trade_tf = pos.get('trade_timeframe', '5m')
