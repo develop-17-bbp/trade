@@ -1,0 +1,45 @@
+# Cloudflare Tunnel config — named tunnel for the ACT GPU box
+# =============================================================
+# Copy this to `config.yml` and fill in:
+#   * tunnel UUID            (from `cloudflared tunnel create act-gpu`)
+#   * credentials-file path  (usually printed by that command)
+#   * DOMAIN                 (your Cloudflare-managed root, e.g. example.com)
+#
+# Run `infra/cloudflared/setup_tunnel.ps1` to do all of the above interactively.
+#
+# Design decisions:
+#   * Only Grafana (:3000) and the API server (:11007) are exposed.
+#   * Prometheus (:9090), Tempo (:3200), Redis (:6379), OTel (:4317/:4318)
+#     stay localhost-only by design. They are consumed BY Grafana and the bot,
+#     not by remote operators. Exposing them would turn internal telemetry into
+#     a credential/data harvest surface.
+#   * The catch-all 404 at the end is MANDATORY — cloudflared rejects configs
+#     without one.
+#   * Every public hostname MUST sit behind Cloudflare Access (Zero Trust) as
+#     a defense-in-depth layer. See setup_tunnel.ps1 for the manual steps.
+
+tunnel: REPLACE_ME_TUNNEL_UUID
+credentials-file: REPLACE_ME_CREDENTIALS_PATH
+
+# Connection tuning — the defaults are fine for 1-bot traffic.
+# protocol: auto
+# retries: 5
+
+ingress:
+  # ── Grafana (dashboards) ──
+  - hostname: grafana.REPLACE_ME_DOMAIN
+    service: http://localhost:3000
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 10s
+
+  # ── ACT API (process monitor, portfolio, trades, health) ──
+  - hostname: api.REPLACE_ME_DOMAIN
+    service: http://localhost:11007
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 10s
+      httpHostHeader: localhost
+
+  # ── Catch-all (REQUIRED) ──
+  - service: http_status:404

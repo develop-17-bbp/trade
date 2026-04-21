@@ -50,6 +50,10 @@ infra/volumes/
 # Local Grafana password override (stored next to docker-compose.yml)
 infra/.env
 
+# Cloudflare tunnel — generated config holds tunnel UUID + credentials path
+infra/cloudflared/config.yml
+infra/cloudflared/*.json
+
 # ── OS ──
 .DS_Store
 # Thumbs.db

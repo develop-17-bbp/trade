@@ -304,11 +304,30 @@ Start-Sleep 3
 OK "Frontend PID=$($p6.Id)"
 
 # ── 7: Tunnel (Idle) ──
+# Prefer the named tunnel at infra/cloudflared/config.yml (persistent hostnames,
+# runs as a service, sits behind Cloudflare Access). Fall back to the legacy
+# quick tunnel only for dev — quick tunnels rotate URL every restart and have
+# NO AUTH. See infra/cloudflared/README.md for setup.
 STEP 7 "Cloudflare Tunnel [Idle priority]"
-$p7 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Tunnel && cloudflared tunnel --url http://localhost:5173" -PassThru
-try { $p7.PriorityClass = "Idle" } catch {}
-Start-Sleep 2
-OK "Tunnel PID=$($p7.Id)"
+$tunnelCfg = Join-Path $PSScriptRoot "infra\cloudflared\config.yml"
+$namedTunnelService = Get-Service cloudflared -ErrorAction SilentlyContinue
+if ($namedTunnelService -and $namedTunnelService.Status -eq 'Running') {
+    OK "Named tunnel already running as a Windows service (preferred)"
+    $p7 = $null
+} elseif (Test-Path $tunnelCfg) {
+    OK "Named tunnel config found at $tunnelCfg — launching via config"
+    $p7 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Tunnel (named) && cloudflared --config `"$tunnelCfg`" tunnel run" -PassThru
+    try { $p7.PriorityClass = "Idle" } catch {}
+    Start-Sleep 2
+    OK "Named tunnel PID=$($p7.Id). Install as service for persistence: ./infra/cloudflared/setup_tunnel.ps1 -Domain <your-domain>"
+} else {
+    WARN "No named-tunnel config at $tunnelCfg — using QUICK tunnel (URL rotates on restart, NO AUTH)."
+    WARN "Set up a named tunnel with: ./infra/cloudflared/setup_tunnel.ps1 -Domain <your-domain>"
+    $p7 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Tunnel (quick) && cloudflared tunnel --url http://localhost:5173" -PassThru
+    try { $p7.PriorityClass = "Idle" } catch {}
+    Start-Sleep 2
+    OK "Quick tunnel PID=$($p7.Id)"
+}
 
 # ── Summary ──
 Write-Host ""
@@ -334,6 +353,12 @@ if ($dockerOk) {
     Write-Host "   Tempo:      http://localhost:3200  (queried via Grafana)" -ForegroundColor DarkGray
 } else {
     Write-Host "   Grafana:    (not started — start Docker Desktop + re-run to enable)" -ForegroundColor DarkYellow
+}
+Write-Host "   Proc mon:   http://localhost:11007/api/v1/system/processes  (via tunnel once set up)" -ForegroundColor Green
+if (Test-Path (Join-Path $PSScriptRoot "infra\cloudflared\config.yml")) {
+    Write-Host "   Tunnel:     named tunnel active — see infra/cloudflared/README.md for hostnames" -ForegroundColor Green
+} else {
+    Write-Host "   Tunnel:     QUICK tunnel only (no auth, rotates URL). Run setup_tunnel.ps1 to upgrade." -ForegroundColor Yellow
 }
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan

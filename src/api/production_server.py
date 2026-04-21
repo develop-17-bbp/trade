@@ -109,21 +109,22 @@ def _load_robinhood_paper_trades() -> list:
         return []
 
 # -- Auth --
-API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
-_DEV_MODE = os.environ.get("TRADE_API_DEV_MODE", "").lower() in ("1", "true", "yes")
-
-# Auto-enable dev mode if no API key is configured (local development)
-if not API_KEY and not _DEV_MODE:
-    _DEV_MODE = True
-    logger.info("[API] No DASHBOARD_API_KEY set — auto-enabling dev mode")
+# Read on every call so rotating DASHBOARD_API_KEY / toggling TRADE_API_DEV_MODE
+# doesn't need an API-server restart. Module-level caching was a footgun when the
+# tunnel went live and ops needed to rotate the key without downtime.
 
 def _require_api_key(x_api_key: Optional[str] = Header(default=None)):
-    if not API_KEY:
-        if _DEV_MODE:
-            return True  # Explicit dev-mode opt-in only
+    api_key = os.environ.get("DASHBOARD_API_KEY", "")
+    dev_mode = os.environ.get("TRADE_API_DEV_MODE", "").lower() in ("1", "true", "yes")
+    if not api_key:
+        # No key configured at all: require explicit dev-mode opt-in or reject.
+        # This closes the "empty-key-accepts-everything" footgun that would
+        # expose the tunnel publicly if DASHBOARD_API_KEY got unset.
+        if dev_mode:
+            return True
         raise HTTPException(status_code=403,
                             detail="DASHBOARD_API_KEY not configured. Set env var or enable TRADE_API_DEV_MODE=1")
-    if x_api_key != API_KEY:
+    if x_api_key != api_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return True
 
@@ -181,6 +182,129 @@ async def component_health(_=Depends(_require_api_key)):
         return ComponentRegistry.get().health_report()
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/api/v1/system/processes", tags=["System"])
+async def system_processes(_=Depends(_require_api_key)):
+    """Remote-ops snapshot for Cloudflare-tunneled monitoring — consolidates
+    everything useful for 'is the GPU box healthy and what is it doing?'
+    into a single auth-gated response:
+
+      • processes: list of Python / cloudflared / docker processes with
+        PID, RSS MB, CPU%, elapsed seconds, and the cmdline that started them
+      • safe_entries: consecutive-loss counts per asset, rolling Sharpe,
+        pause state — the risk gate's view
+      • readiness_gate: evaluated state (open/closed + reasons + details)
+      • paper_state: current paper equity + stats
+      • recent_trades: count over the last 24h from the paper journal
+
+    Shape is stable; callers can poll this once a minute via the tunnel.
+    """
+    out: dict = {"timestamp": datetime.utcnow().isoformat() + "Z"}
+
+    # ── Processes (psutil — optional dep; gracefully degrade) ──
+    try:
+        import psutil  # type: ignore
+        procs = []
+        me = os.getpid()
+        interesting = ("python", "cloudflared", "ollama", "docker", "grafana", "prometheus")
+        for p in psutil.process_iter(["pid", "name", "memory_info", "cpu_percent", "create_time", "cmdline"]):
+            try:
+                info = p.info
+                name = (info.get("name") or "").lower()
+                cmd_list = info.get("cmdline") or []
+                cmd = " ".join(cmd_list)[:240]
+                if not any(tag in name for tag in interesting) and not any(tag in cmd.lower() for tag in interesting):
+                    continue
+                rss_mb = round((info.get("memory_info").rss / (1024 * 1024)) if info.get("memory_info") else 0, 1)
+                elapsed_s = int(max(0, datetime.utcnow().timestamp() - (info.get("create_time") or 0)))
+                procs.append({
+                    "pid": info.get("pid"),
+                    "name": info.get("name"),
+                    "rss_mb": rss_mb,
+                    "cpu_pct": round(info.get("cpu_percent") or 0.0, 1),
+                    "elapsed_s": elapsed_s,
+                    "cmd": cmd,
+                    "is_self": info.get("pid") == me,
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+                continue
+        # Sort: biggest RSS first so the resource hogs are at the top of any UI
+        procs.sort(key=lambda x: x.get("rss_mb", 0), reverse=True)
+        out["processes"] = procs[:50]
+    except ImportError:
+        out["processes"] = {"error": "psutil not installed"}
+    except Exception as e:
+        out["processes"] = {"error": str(e)}
+
+    # ── SafeEntryState (risk gate memory) ──
+    try:
+        from src.trading.safe_entries import SafeEntryState, default_state_path
+        state = SafeEntryState.load(default_state_path(os.path.join(PROJECT_ROOT, "logs")))
+        out["safe_entries"] = {
+            "assets": {
+                k: {
+                    "consecutive_losses": v.consecutive_losses,
+                    "paused_until": v.paused_until,
+                    "n_trades_windowed": len(v.trade_pnl_pcts),
+                    "rolling_sharpe_30": round(state.rolling_sharpe(k, n=30), 3),
+                }
+                for k, v in state.assets.items()
+            },
+            "combined_rolling_sharpe_30": round(state.combined_rolling_sharpe(n=30), 3),
+        }
+    except Exception as e:
+        out["safe_entries"] = {"error": str(e)}
+
+    # ── Readiness gate ──
+    try:
+        from src.orchestration.readiness_gate import evaluate as _eval_gate
+        gate = _eval_gate()
+        out["readiness_gate"] = gate.to_dict()
+    except Exception as e:
+        out["readiness_gate"] = {"error": str(e)}
+
+    # ── Paper state + recent trade count ──
+    try:
+        paper = _load_robinhood_paper_state()
+        out["paper_state"] = {
+            "equity": paper.get("equity"),
+            "peak_equity": paper.get("peak_equity"),
+            "initial_capital": paper.get("initial_capital"),
+            "total_pnl_usd": (paper.get("stats") or {}).get("total_pnl_usd"),
+            "wins": (paper.get("stats") or {}).get("wins"),
+            "losses": (paper.get("stats") or {}).get("losses"),
+            "positions_open": len(paper.get("positions") or {}),
+        }
+    except Exception as e:
+        out["paper_state"] = {"error": str(e)}
+
+    # ── Recent trade count (last 24h from paper journal) ──
+    try:
+        import time as _time
+        jl_path = os.path.join(PROJECT_ROOT, "logs", "robinhood_paper.jsonl")
+        recent = 0
+        cutoff = _time.time() - 24 * 3600
+        if os.path.exists(jl_path):
+            with open(jl_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        row = json.loads(line)
+                        if row.get("event") != "EXIT":
+                            continue
+                        # Parse timestamp if present; skip on error
+                        ts = row.get("timestamp", "")
+                        if ts:
+                            t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            if t.timestamp() >= cutoff:
+                                recent += 1
+                    except Exception:
+                        continue
+        out["recent_trades_24h"] = recent
+    except Exception as e:
+        out["recent_trades_24h"] = {"error": str(e)}
+
+    return out
 
 # ─────────────────────────────────────────
 # GROUP: PORTFOLIO & P&L
