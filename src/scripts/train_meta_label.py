@@ -75,31 +75,32 @@ def _simulate_forward(
 ) -> Tuple[int, float, str]:
     """Walk forward and return (exit_idx, pnl_pct, reason).
 
+    v2 (2026-04-22): the original 3:1 R:R exits produced a 6.7% label WR on BTC
+    because prices rarely move 5% in 60 5m bars. Now SL is still honored (the
+    safe-entries floor protects against tail loss), but TP is NOT — trades exit
+    only on SL hit or the time cap. Label = final pnl sign after spread, which
+    matches how the live executor actually closes most positions (trailing SL
+    ratchet or time-based exit near entry).
+
     Exits on first of:
       * SL hit (low<=sl for LONG, high>=sl for SHORT) -> reason="sl"
-      * TP hit (high>=tp for LONG, low<=tp for SHORT) -> reason="tp"
       * Bar `entry_idx + max_bars` -> reason="time"; uses close price
     """
+    # tp_price kept in signature for backwards compat; intentionally ignored here.
+    _ = tp_price
     end = min(entry_idx + 1 + max_bars, len(closes) - 1)
     for j in range(entry_idx + 1, end + 1):
         hi = float(highs[j])
         lo = float(lows[j])
-        cl = float(closes[j])
         if direction == "LONG":
             if lo <= sl_price:
                 pnl_pct = (sl_price - entry_price) / entry_price * 100.0
                 return j, pnl_pct, "sl"
-            if hi >= tp_price:
-                pnl_pct = (tp_price - entry_price) / entry_price * 100.0
-                return j, pnl_pct, "tp"
         else:
             if hi >= sl_price:
                 pnl_pct = (entry_price - sl_price) / entry_price * 100.0
                 return j, pnl_pct, "sl"
-            if lo <= tp_price:
-                pnl_pct = (entry_price - tp_price) / entry_price * 100.0
-                return j, pnl_pct, "tp"
-    # Timed out
+    # Timed out — use close price of the last bar in the window
     cl = float(closes[end])
     if direction == "LONG":
         pnl_pct = (cl - entry_price) / entry_price * 100.0

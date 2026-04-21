@@ -20,20 +20,20 @@ import pytest
 # Forward simulation
 # ---------------------------------------------------------------------------
 
-def test_simulate_forward_long_tp_hit():
+def test_simulate_forward_long_no_sl_hit_times_out_positive():
+    """v2 sim has no hard TP — a steadily rising price must exit on the time cap
+    with a positive PnL, since SL below entry never gets hit."""
     from src.scripts.train_meta_label import _simulate_forward
 
-    # Price rises from 100 -> 104; TP=102 should hit around bar 5
     closes = np.linspace(100, 104, 20)
     highs = closes + 0.2
     lows = closes - 0.2
     exit_idx, pnl, reason = _simulate_forward(
         closes, highs, lows, entry_idx=0, direction="LONG",
-        entry_price=100.0, sl_price=99.0, tp_price=102.0,
+        entry_price=100.0, sl_price=99.0, tp_price=102.0, max_bars=15,
     )
-    assert reason == "tp"
-    assert pnl > 0
-    assert 0 < exit_idx <= 20
+    assert reason == "time", f"expected time-exit (no TP in v2), got {reason}"
+    assert pnl > 0, f"rising price must yield positive PnL at time-exit, got {pnl}"
 
 
 def test_simulate_forward_short_sl_hit():
