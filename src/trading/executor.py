@@ -5399,7 +5399,22 @@ class TradingExecutor:
                     ml_context['meta_prob'] = round(_meta_prob, 3)
                     ml_context['meta_take_threshold'] = _take_thresh
                     ml_context['meta_decision'] = 'SKIP' if _veto else 'TAKE'
-                    if _veto:
+                    ml_context['meta_prob_raw'] = round(_meta_prob_raw, 4)
+                    ml_context['meta_features_snapshot'] = _feat.flatten().tolist()  # for shadow log
+                    # Shadow mode (ACT_META_SHADOW_MODE=1): log prediction, DO NOT veto.
+                    # Shadow veto decisions accumulate on disk; retrain uses them as
+                    # ground-truth training data once enough trades settle.
+                    try:
+                        from src.ml.shadow_log import is_enabled as _shadow_on
+                        _shadow_mode = _shadow_on()
+                    except Exception:
+                        _shadow_mode = False
+                    if _shadow_mode:
+                        ml_context['meta_shadow'] = True
+                        score_reasons.append(f"meta_SHADOW({_meta_prob:.2f},would_{'VETO' if _veto else 'TAKE'})")
+                        print(f"  [{self._ex_tag}:{asset}] META[shadow]: prob={_meta_prob:.2f} "
+                              f"take={_take_thresh:.2f} would_{'VETO' if _veto else 'TAKE'} — NOT applied")
+                    elif _veto:
                         _veto_delta = -3  # Strong push below effective_min
                         entry_score += _veto_delta
                         score_reasons.append(f"meta_VETO({_meta_prob:.2f}<{_take_thresh:.2f})")
@@ -6720,8 +6735,33 @@ class TradingExecutor:
             'rl_state': ml_context.get('_rl_state', None),        # RL state at entry (for learning)
             'rl_action_idx': ml_context.get('_rl_action_idx', 0),  # RL action chosen at entry
             'ml_predictions': _ml_predictions_snapshot,           # Model Accuracy telemetry
+            # Shadow-mode: features + meta_prob captured at entry so shadow_retrain
+            # can join on outcome later. Kept on the position object so the exit
+            # path can write the matching outcome record without re-computing.
+            'shadow_features': ml_context.get('meta_features_snapshot'),
+            'shadow_meta_prob_raw': ml_context.get('meta_prob_raw'),
+            'shadow_meta_prob_cal': ml_context.get('meta_prob'),
+            'shadow_meta_threshold': ml_context.get('meta_take_threshold'),
         }
         self.last_trade_time[asset] = time.time()
+
+        # Shadow-log the prediction alongside this new position. Guarded internally
+        # by is_enabled() so it's a no-op unless ACT_META_SHADOW_MODE=1.
+        try:
+            from src.ml import shadow_log as _slog
+            _feats = ml_context.get('meta_features_snapshot') or []
+            _p_raw = ml_context.get('meta_prob_raw')
+            _p_cal = ml_context.get('meta_prob')
+            _thr = ml_context.get('meta_take_threshold')
+            if _feats and _p_raw is not None and _p_cal is not None and _thr is not None:
+                _slog.log_predict(
+                    trade_id=str(order_id), asset=asset, direction=action,
+                    entry_price=float(price), entry_score=int(entry_score),
+                    meta_prob_raw=float(_p_raw), meta_prob_cal=float(_p_cal),
+                    take_threshold=float(_thr), features=_feats,
+                )
+        except Exception:
+            pass
         print(f"  [{self._ex_tag}:{asset}] POSITION STORED: {action} {qty:.6f} @ ${price:,.2f} | positions={list(self.positions.keys())}")
 
         # ── Persist position for crash recovery ──
@@ -8079,6 +8119,27 @@ class TradingExecutor:
                 self._safe_state.record_outcome(asset, pnl_pct=float(pnl_pct), won=(pnl_pct > 0))
                 from src.trading.safe_entries import default_state_path as _ssp
                 self._safe_state.save(_ssp())
+        except Exception:
+            pass
+
+        # Shadow-mode: append outcome to logs/meta_shadow.jsonl so shadow_retrain
+        # can join it against the entry-time prediction by trade_id. Guarded by
+        # is_enabled() — no-op unless ACT_META_SHADOW_MODE=1.
+        try:
+            from src.ml import shadow_log as _slog
+            _trade_id = str(pos.get('order_id') or '')
+            if _trade_id:
+                _entry_t = float(pos.get('entry_time', 0) or 0)
+                _now_t = time.time()
+                _bars_held = int(max(0, (_now_t - _entry_t) / 60.0)) if _entry_t else 0
+                _slog.log_outcome(
+                    trade_id=_trade_id,
+                    pnl_pct=float(pnl_pct),
+                    pnl_usd=float(pnl_usd),
+                    exit_price=float(price),
+                    bars_held=_bars_held,
+                    exit_reason=str(reason)[:100] if reason else "",
+                )
         except Exception:
             pass
 

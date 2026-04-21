@@ -9,6 +9,7 @@ from .calibration import (
 )
 from .champion_gate import evaluate_and_gate, save_challenger
 from .gpu import lgbm_device_params, describe_device
+from . import shadow_log
 
 __all__ = [
     "fit_calibration",
