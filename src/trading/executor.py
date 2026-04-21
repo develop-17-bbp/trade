@@ -650,6 +650,8 @@ class TradingExecutor:
         self._lgbm = None
         self._lgbm_raw = {}  # Per-asset raw trained binary models
         self._lgbm_calibration = {}  # Per-asset CalibrationBundle (isotonic + score-delta lookup)
+        if os.environ.get('ACT_DISABLE_ML', '').strip().lower() in ('1', 'true', 'yes', 'on'):
+            print(f"  [ML] DISABLED via ACT_DISABLE_ML=1 — LightGBM gate skipped, rule-only entries")
         if LIGHTGBM_AVAILABLE:
             try:
                 self._lgbm = LightGBMClassifier(config={
@@ -4841,8 +4843,24 @@ class TradingExecutor:
         # If LightGBM says HIGH probability of L1 death, skip before wasting LLM call
         lgbm_prediction = None
         lgbm_confidence = 0.0
-        # Try per-asset binary model first (trained on 30 strategy features)
-        _lgbm_raw = self._lgbm_raw.get(asset) if hasattr(self, '_lgbm_raw') else None
+        # Kill switch — set ACT_DISABLE_ML=1 to skip the entire ML gate (raw + wrapper).
+        # Added 2026-04-22 after a backtest showed ML-on losing $330 more than ML-off
+        # and flipping Sharpe from +0.09 to -0.29. Keeps the model files on disk for
+        # future diagnosis while preventing them from touching live decisions. Soft
+        # dep: also silences the Category B ML boosting logic downstream because that
+        # branch only fires when lgbm_prediction is set.
+        import os as _mlos
+        _ml_kill = (_mlos.environ.get('ACT_DISABLE_ML') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        if _ml_kill:
+            ml_context['lgbm_direction'] = 'DISABLED'
+            ml_context['lgbm_confidence'] = 0.0
+            ml_context['lgbm_raw_prob'] = 0.0
+            ml_context['lgbm_calibrated'] = False
+            # Do not populate _lgbm_raw predictions at all — skip the whole block
+            _lgbm_raw = None
+        else:
+            # Try per-asset binary model first (trained on 30 strategy features)
+            _lgbm_raw = self._lgbm_raw.get(asset) if hasattr(self, '_lgbm_raw') else None
         if _lgbm_raw and len(closes) >= 55:
             try:
                 from src.scripts.train_all_models import compute_strategy_features
@@ -4920,7 +4938,10 @@ class TradingExecutor:
                 logger.debug(f"LightGBM binary prediction error for {asset}: {e}")
 
         # Fallback: old LightGBM wrapper with generic features
-        elif self._lgbm and len(closes) >= 55:
+        # (also gated by ACT_DISABLE_ML — the wrapper feeds the same LightGBM model
+        # through a different feature path and produces the same problematic boost/
+        # penalty deltas)
+        elif self._lgbm and len(closes) >= 55 and not _ml_kill:
             try:
                 # Build Category B enriched external features
                 _catb_external = {
