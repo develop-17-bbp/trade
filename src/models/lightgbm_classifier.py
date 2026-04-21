@@ -606,6 +606,15 @@ class LightGBMClassifier:
             _logger.info(f"[LGB-TRAIN] Dropping {len(zero_cols)} all-zero columns: {zero_cols[:5]}...")
             X_arr = X_arr.drop(columns=zero_cols)
 
+        # Guard degenerate shapes that LightGBM rejects with cryptic errors:
+        # "Forced splits file includes feature index 0, but maximum feature index is -1"
+        # happens when every feature column ended up all-zero (e.g. empty trade log with
+        # a schema of zero-valued defaults). Catch it explicitly so tests/dev environments
+        # don't crash during the normal no-data path.
+        if X_arr.shape[1] == 0:
+            _logger.info(f"[LGB-TRAIN] All {len(zero_cols)} feature columns were zero — skipping retrain")
+            return
+
         X_arr = X_arr.values
         y_arr = np.array(y)
 

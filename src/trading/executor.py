@@ -6506,7 +6506,24 @@ class TradingExecutor:
                 tp_target = _safe.synthesize_tp(price, sl_price, action, min_rr)
                 ok, rr, rr_reason = _safe.check_rr(price, sl_price, tp_target, action, min_rr)
                 if not ok:
+                    # synthesize_tp guarantees rr==min_rr, so this branch should only
+                    # fire on a pathological SL (NaN, wrong-side). In LIVE mode the
+                    # entry order has already been placed — we must unwind it via a
+                    # reduce_only close to avoid an orphan position. In paper mode
+                    # no real order exists so a plain return is safe.
                     print(f"  [{self._ex_tag}:{asset}] SAFE REJECT: {rr_reason} (tp=${tp_target:.2f})")
+                    if not self._paper_mode:
+                        try:
+                            symbol = self._get_symbol(asset)
+                            close_side = 'sell' if action == 'LONG' else 'buy'
+                            self._api_call(
+                                self.price_source.place_order,
+                                symbol=symbol, side=close_side, amount=qty,
+                                order_type='market', price=None, reduce_only=True,
+                            )
+                            print(f"  [{self._ex_tag}:{asset}] SAFE UNWIND: reduce_only close emitted on SAFE REJECT")
+                        except Exception as _ue:
+                            logger.warning(f"[{asset}] SAFE unwind failed: {_ue} (manual intervention may be needed)")
                     return
                 print(f"  [{self._ex_tag}:{asset}] SAFE R:R={rr:.2f} tp_target=${tp_target:.2f}")
                 self._safe_tp_target = tp_target  # stored for partial-take trigger
@@ -6579,6 +6596,9 @@ class TradingExecutor:
             'hurst': hurst_value,
             'hurst_regime': hurst_regime,
             'breakeven_moved': False,
+            # Safe-entries partial-take state: True once we've closed 50% at +1R
+            # and moved SL to breakeven. Prevents retriggers on the same position.
+            'partialled': False,
             'is_reversal': is_reversal_signal,
             'trade_timeframe': chosen_tf,   # LLM chose this TF
             'agent_votes': orch_result.get('agent_votes', {}) if orch_result else {},
@@ -6751,6 +6771,69 @@ class TradingExecutor:
         # On high-spread exchanges, ratchet levels must reflect TRUE profit after spread
         _spread_adj = self._round_trip_spread if hasattr(self, '_round_trip_spread') and self._round_trip_spread > 0.5 else 0
         ratchet_pnl = pnl_pct - _spread_adj  # True PnL after spread cost
+
+        # ── Safe-entries partial-take at +1R (intervention G) ──
+        # Close 50% of the position when reward equals the initial risk, and move
+        # SL to breakeven on the remainder. Raises realized Sharpe by capping the
+        # left tail on trades that move then reverse, while leaving the runner.
+        # Fires at most once per position via pos['partialled'].
+        if getattr(self, '_safe_enabled', False) and not pos.get('partialled', False):
+            try:
+                from src.trading import safe_entries as _safe
+                take = _safe.maybe_partial_take(
+                    entry=entry, current_price=price, sl=sl,
+                    direction=direction,
+                    already_partialled=False,
+                    config=self._safe_config,
+                )
+                if take is not None:
+                    new_sl_be, fraction, take_reason = take
+                    partial_qty = pos['qty'] * float(fraction)
+                    close_side = 'sell' if direction == 'LONG' else 'buy'
+                    # Paper mode: adjust pos['qty'] in-memory; paper fill tracker will
+                    # record the realized PnL on next tick. Live mode: reduce_only order.
+                    ok = True
+                    if not self._paper_mode:
+                        try:
+                            symbol = self._get_symbol(asset)
+                            result = self._api_call(
+                                self.price_source.place_order,
+                                symbol=symbol, side=close_side, amount=partial_qty,
+                                order_type='market', price=None, reduce_only=True,
+                            )
+                            ok = (result.get('status') == 'success')
+                            if not ok:
+                                logger.warning(f"[{asset}] SAFE partial-take order failed: {result.get('message','')}")
+                        except Exception as _pe:
+                            ok = False
+                            logger.warning(f"[{asset}] SAFE partial-take exception: {_pe}")
+                    if ok:
+                        realized_pnl_pct = ((price - entry) / entry * 100.0) if direction == 'LONG' \
+                                           else ((entry - price) / entry * 100.0)
+                        realized_usd = partial_qty * abs(price - entry) * (1 if realized_pnl_pct > 0 else -1)
+                        pos['qty'] -= partial_qty
+                        pos['partialled'] = True
+                        if new_sl_be > 0:
+                            # Move SL to breakeven; ratchet will keep tightening from here
+                            pos['sl'] = new_sl_be
+                            sl = new_sl_be  # local variable used below must reflect the new SL
+                            pos['breakeven_moved'] = True
+                        print(f"  [{self._ex_tag}:{asset}] SAFE PARTIAL-TAKE ({take_reason}): "
+                              f"closed {fraction*100:.0f}% ({partial_qty:.6f}) @ ${price:,.2f} "
+                              f"PnL={realized_pnl_pct:+.2f}% ~${realized_usd:+.2f}, SL->BE=${new_sl_be:,.2f}")
+                        # Log to paper tracker if in paper mode so it shows up in the journal
+                        if self._paper_mode and self._paper:
+                            try:
+                                self._paper.record_partial_exit(
+                                    asset=asset, direction=direction,
+                                    entry_price=entry, exit_price=price,
+                                    qty_closed=partial_qty, pnl_pct=realized_pnl_pct,
+                                    reason=f"safe_{take_reason}",
+                                ) if hasattr(self._paper, 'record_partial_exit') else None
+                            except Exception:
+                                pass
+            except Exception as _se:
+                logger.debug(f"[{asset}] safe-entries partial-take error: {_se}")
 
         # OB imbalance — tracked for display
         ob_imbalance = ob_levels.get('imbalance', 0)

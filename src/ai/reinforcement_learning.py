@@ -329,6 +329,25 @@ class EMAStrategyRL:
         if action.get('wait_bars', 0) > 0:
             reasoning_parts.append(f"WAIT {action['wait_bars']} bars")
 
+        # Phase 4.5b: publish value estimate + policy entropy to the signal bus so
+        # the meta-coordinator's co-evolution transfers can actually flow. Soft-fail
+        # on any error — dead Redis must not break the RL decision path.
+        try:
+            from src.learning.signal_bus import publish_rl_value
+            # Softmax over Q-values → policy distribution → entropy
+            q_arr = np.asarray(q_values, dtype=float)
+            q_max = float(q_arr.max()) if q_arr.size else 0.0
+            exp_q = np.exp(q_arr - q_max)
+            probs = exp_q / max(exp_q.sum(), 1e-12)
+            entropy = float(-(probs * np.log(probs + 1e-12)).sum())
+            publish_rl_value(
+                state_key=str(state_key),
+                v=float(q_values[action_idx]),
+                entropy=entropy,
+            )
+        except Exception:
+            pass
+
         return RLDecision(
             enter_trade=action['enter'],
             quality_score=float(np.clip(q_values[action_idx], 0, 1)),
@@ -455,10 +474,30 @@ class EMAStrategyRL:
         self.replay_buffer.append((state_key, action_idx, reward, next_state_key))
 
     def replay_learn(self):
-        """Experience replay — sample random batch and update Q-values."""
+        """Experience replay — sample random batch and update Q-values.
+
+        Wrapped in a P2 GPU lease so when the RL upgrade from Q-table to
+        DQN lands (needs CUDA forward/backward), the scheduler already
+        enforces priority. For the CPU Q-table this is a cheap no-op that
+        preserves protocol correctness.
+        """
         if len(self.replay_buffer) < self.batch_size:
             return
 
+        try:
+            from src.orchestration import gpu_scheduler as _gs
+            # wait_s=0 — if P1 decision is holding, skip this cycle and retry next
+            try:
+                with _gs.lease(priority=_gs.P2, wait_s=0.0):
+                    self._do_replay()
+            except _gs.LeaseNotAcquired:
+                # Someone higher-priority holds; we'll pick up next cycle
+                return
+        except Exception:
+            # Scheduler unavailable — run unguarded (CPU-only Q-table is fine)
+            self._do_replay()
+
+    def _do_replay(self):
         indices = np.random.choice(len(self.replay_buffer), self.batch_size, replace=False)
         for idx in indices:
             s, a, r, ns = self.replay_buffer[idx]

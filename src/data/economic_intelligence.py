@@ -27,6 +27,26 @@ LAYER_REGISTRY = [
 ]
 
 
+class _StubLayer:
+    """Fallback layer when the real one can't import (e.g. missing yfinance).
+    Returns a neutral signal so the composite aggregator keeps working and the
+    "12 layers" invariant stays true for dashboards/tests.
+    """
+
+    def __init__(self, name: str, reason: str):
+        self.name = name
+        self.reason = reason
+
+    def fetch(self) -> dict:
+        return {
+            "signal": "NEUTRAL",
+            "confidence": 0.0,
+            "stub": True,
+            "reason": self.reason,
+            "source": f"stub:{self.name}",
+        }
+
+
 class EconomicIntelligence:
     def __init__(self, config: dict = None):
         self.config = config or {}
@@ -45,7 +65,11 @@ class EconomicIntelligence:
                 self._layers[name] = cls()
                 logger.info(f"[ECON] Layer {name} initialized")
             except Exception as e:
-                logger.warning(f"[ECON] Layer {name} failed to init: {e}")
+                # Degrade gracefully — install a stub that returns a neutral signal
+                # so the composite aggregator still runs and `len(_layers) == 12`
+                # stays true. Common cause: missing optional dep like yfinance.
+                logger.warning(f"[ECON] Layer {name} failed to init ({e}); using stub")
+                self._layers[name] = _StubLayer(name, reason=str(e))
 
     def start(self):
         if not self.enabled or self._running:

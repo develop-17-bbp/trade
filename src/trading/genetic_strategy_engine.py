@@ -824,6 +824,25 @@ class GeneticStrategyEngine:
         self.hall_of_fame.sort(key=lambda d: d.fitness, reverse=True)
         self.hall_of_fame = self.hall_of_fame[:max_size]
 
+        # Phase 4.5b: publish the top-K DNA fingerprints so the meta-coordinator
+        # can transfer them across learners. Soft-fail on any error.
+        try:
+            from src.learning.signal_bus import publish_genetic_top_k
+            top_k_payload = []
+            for dna in self.hall_of_fame[:min(max_size, 5)]:
+                top_k_payload.append({
+                    "name": getattr(dna, "name", ""),
+                    "fitness": float(getattr(dna, "fitness", 0.0)),
+                    "total_pnl": float(getattr(dna, "total_pnl", 0.0)),
+                    "win_rate": float(getattr(dna, "win_rate", 0.0)),
+                    "n_trades": int(getattr(dna, "n_trades", 0)),
+                    "regime": getattr(dna, "regime", "unknown"),
+                })
+            regime = top_k_payload[0]["regime"] if top_k_payload else "unknown"
+            publish_genetic_top_k(dna_list=top_k_payload, regime=regime)
+        except Exception:
+            pass
+
     # ── Live Trade Feedback ──────────────────────────────────────
 
     def record_live_outcome(self, dna_name: str, pnl_pct: float, win: bool,

@@ -147,13 +147,49 @@ class LoRATrainer:
         if not dataset_path:
             return {'status': 'error', 'message': 'No training data'}
 
+        # Acquire a P3 GPU lease so LoRA training gets bumped by RL (P2) but
+        # beats meta-coordinator (P3.5) and default (P4). wait_s=60 — we'll
+        # wait up to a minute for a higher-priority learner to release before
+        # giving up on this retrain cycle.
+        _leased = False
+        _lease_cm = None
         try:
-            return self._train_unsloth(dataset_path, epochs, batch_size,
-                                       learning_rate, gradient_accumulation)
-        except ImportError:
-            logger.info("[TRAINER] unsloth not available, using standard HuggingFace")
-            return self._train_hf(dataset_path, epochs, batch_size,
-                                  learning_rate, gradient_accumulation)
+            from src.orchestration import gpu_scheduler as _gs
+            _lease_cm = _gs.lease(priority=_gs.P3, wait_s=60.0)
+            _lease_cm.__enter__()
+            _leased = True
+        except Exception as _le:
+            logger.info(f"[TRAINER] GPU lease unavailable ({_le}); training without lease")
+
+        try:
+            try:
+                result = self._train_unsloth(dataset_path, epochs, batch_size,
+                                             learning_rate, gradient_accumulation)
+            except ImportError:
+                logger.info("[TRAINER] unsloth not available, using standard HuggingFace")
+                result = self._train_hf(dataset_path, epochs, batch_size,
+                                        learning_rate, gradient_accumulation)
+        finally:
+            if _leased and _lease_cm is not None:
+                try:
+                    _lease_cm.__exit__(None, None, None)
+                except Exception:
+                    pass
+
+        # Phase 4.5b: publish LoRA training metrics so the meta-coordinator can
+        # factor them into credit / transfer decisions. Soft-fail on any error.
+        try:
+            from src.learning.signal_bus import publish_lora_logprob
+            final_loss = float(result.get('final_loss', result.get('train_loss', 0.0)) or 0.0)
+            publish_lora_logprob(
+                prompt_hash=f"epoch{epochs}_{self.model_type}",
+                direction="TRAIN",
+                logprob=-final_loss,  # log-prob approximation: -loss
+                loss=final_loss,
+            )
+        except Exception:
+            pass
+        return result
 
     def _train_unsloth(self, dataset_path: str, epochs: int,
                        batch_size: int, lr: float, grad_accum: int) -> Dict:
