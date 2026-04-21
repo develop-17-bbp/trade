@@ -23,6 +23,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = REPO_ROOT / "models"
 CONFIG_PATH = REPO_ROOT / "config.yaml"
 
+# Make `python scripts/<name>.py` work from any CWD.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 # Authority-permissioned universe (from src/ai/authority_rules.py). Assets not
 # on this list cannot be traded regardless of model availability.
 AUTHORITY_ASSETS = [

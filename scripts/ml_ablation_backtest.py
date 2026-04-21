@@ -21,6 +21,14 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+# Make `python scripts/<name>.py` work from any CWD by injecting the repo root
+# onto sys.path. Also cd to repo root so the subprocess backtest can find
+# data/*.parquet and models/*.txt relative paths.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+os.chdir(_REPO_ROOT)
+
 
 def run_backtest(asset: str, bars: int, ml_on: bool, out_csv: str) -> int:
     """Run the backtest harness; returns exit code."""

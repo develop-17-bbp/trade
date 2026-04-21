@@ -12,8 +12,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+from pathlib import Path
 from typing import Dict
+
+# Running as `python scripts/data_health_check.py` doesn't put the repo root on
+# sys.path, so `import src.data...` fails with ModuleNotFoundError. Inject the
+# parent directory explicitly so the script works from any CWD.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 # Quiet the noisy per-layer warnings during init — we'll summarize them ourselves.
 logging.basicConfig(level=logging.ERROR, format="%(levelname)s: %(name)s: %(message)s")
