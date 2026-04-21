@@ -225,9 +225,20 @@ def train(
     longs_only: bool,
     spread_pct: float,
     models_dir: str,
+    force: bool = False,
 ) -> Dict:
     from src.backtesting.data_loader import fetch_backtest_data
     from src.scripts.train_all_models import compute_strategy_features
+
+    # --force wipes the incumbent + its calibration so champion gate promotes freely.
+    # Rationale: prior bad-label runs leave a worse-than-nothing F1 that blocks future
+    # attempts with different labeling schemes. We only force-delete when explicitly asked.
+    if force:
+        for suffix in ('meta.txt', 'meta_calibration.json', 'meta_thresholds.json'):
+            stale = os.path.join(models_dir, f"lgbm_{asset.lower()}_{suffix}")
+            if os.path.exists(stale):
+                os.remove(stale)
+                logger.info(f"--force: removed stale {stale}")
 
     logger.info(f"Fetching {days}d of {asset} @ {primary_tf}...")
     data = fetch_backtest_data(asset=asset, days=days, primary_tf=primary_tf, local_only=False)
@@ -420,8 +431,14 @@ def main() -> int:
     ap.add_argument("--min-score", type=int, default=MIN_ENTRY_SCORE)
     ap.add_argument("--longs-only", action="store_true", default=True)
     ap.add_argument("--allow-shorts", dest="longs_only", action="store_false")
-    ap.add_argument("--spread-pct", type=float, default=1.69,
-                    help="Round-trip spread cost deducted from label (Robinhood=1.69)")
+    ap.add_argument("--spread-pct", type=float, default=0.0,
+                    help="Round-trip spread deducted from label (default 0 — model predicts "
+                         "signal direction-correctness; spread is an EXIT-strategy concern, "
+                         "not a signal-quality concern). Pass 1.69 for Robinhood-realistic net-profit labeling.")
+    ap.add_argument("--force", action="store_true",
+                    help="Delete the incumbent lgbm_{asset}_meta.txt before training, so the "
+                         "champion gate promotes the new model unconditionally. Use when a prior "
+                         "bad-label training left a stale model blocking fresh attempts.")
     ap.add_argument("--models-dir", default="models")
     args = ap.parse_args()
 
@@ -431,6 +448,7 @@ def main() -> int:
             asset=args.asset, days=args.days, primary_tf=args.primary_tf,
             min_score=args.min_score, longs_only=args.longs_only,
             spread_pct=args.spread_pct, models_dir=args.models_dir,
+            force=args.force,
         )
     except Exception as e:
         logger.error(f"Training failed: {type(e).__name__}: {e}")

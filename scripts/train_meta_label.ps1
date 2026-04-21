@@ -12,7 +12,13 @@ param(
     [int]$Days = 180,
     [string]$PrimaryTf = "5m",
     [int]$MinScore = 4,
-    [string[]]$Assets = @("BTC","ETH")
+    [string[]]$Assets = @("BTC","ETH"),
+    # Wipe the existing meta model first so the champion gate promotes freely.
+    # Useful when prior label-schema changes left a stale low-F1 incumbent.
+    [switch]$Force,
+    # Spread-pct deducted from label. Default 0 - ML predicts direction-correctness;
+    # spread is handled by the executor's exit strategy, not the model.
+    [double]$SpreadPct = 0.0
 )
 
 $ErrorActionPreference = "Continue"
@@ -28,9 +34,14 @@ Write-Host "  Primary TF      = $PrimaryTf"
 Write-Host "  Min score       = $MinScore"
 Write-Host "  Assets          = $Assets"
 
+$forceFlag = if ($Force) { "--force" } else { "" }
+
 foreach ($asset in $Assets) {
-    Section "Training meta-label model for $asset ($Days days, $PrimaryTf)"
-    python -m src.scripts.train_meta_label --asset $asset --days $Days --primary-tf $PrimaryTf --min-score $MinScore
+    Section "Training meta-label model for $asset ($Days days, $PrimaryTf, spread=$SpreadPct)"
+    $args = @("-m","src.scripts.train_meta_label","--asset",$asset,"--days",$Days,
+              "--primary-tf",$PrimaryTf,"--min-score",$MinScore,"--spread-pct",$SpreadPct)
+    if ($Force) { $args += "--force" }
+    & python @args
     if ($LASTEXITCODE -ne 0) {
         WARN "$asset meta training failed or rejected by champion gate"
     } else {
