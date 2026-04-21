@@ -121,7 +121,7 @@ def _harvest_rule_signals(
 ) -> List[Dict]:
     """Walk bars and emit a record per bar where the rule strategy would enter."""
     from src.backtesting.signal_generator import compute_tf_signal, compute_entry_score, compute_indicator_context
-    from src.indicators.core import atr as _atr_fn, ema as _ema_fn
+    from src.indicators.indicators import atr as _atr_fn, ema as _ema_fn
 
     n = len(closes)
     out: List[Dict] = []
