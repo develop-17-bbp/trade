@@ -4,7 +4,7 @@
 # modules depend on.
 #
 # Usage (on the GPU box, in any PowerShell):
-#     ./scripts/install_lora_deps.ps1
+#     powershell -ExecutionPolicy Bypass -File .\scripts\install_lora_deps.ps1
 
 $ErrorActionPreference = "Continue"
 
@@ -18,12 +18,12 @@ python -m pip install --upgrade pip
 
 Section "Core LoRA stack (peft + bitsandbytes + accelerate)"
 python -m pip install peft bitsandbytes accelerate
-if ($LASTEXITCODE -eq 0) { OK "LoRA core installed" } else { WARN "LoRA core failed — check GPU/CUDA match" }
+if ($LASTEXITCODE -eq 0) { OK "LoRA core installed" } else { WARN "LoRA core failed - check GPU/CUDA match" }
 
-Section "Unsloth (optional but preferred — 2x training speed, 60% less VRAM)"
+Section "Unsloth (optional but preferred - 2x training speed, 60 pct less VRAM)"
 python -m pip install "unsloth[cu121-torch241] @ git+https://github.com/unslothai/unsloth.git" 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    WARN "unsloth install failed — trainer will fall back to standard HuggingFace (slower but works)"
+    WARN "unsloth install failed - trainer will fall back to standard HuggingFace (slower but works)"
 } else {
     OK "unsloth installed"
 }
@@ -35,16 +35,15 @@ if ($LASTEXITCODE -eq 0) { OK "yfinance installed" } else { WARN "yfinance faile
 Section "Verification"
 python -c "
 import importlib
-checks = [('peft','PEFT'),('bitsandbytes','bnb'),('accelerate','accelerate'),
-          ('yfinance','yfinance'),('unsloth','unsloth (optional)')]
+checks = [('peft','PEFT'),('bitsandbytes','bnb'),('accelerate','accelerate'),('yfinance','yfinance'),('unsloth','unsloth (optional)')]
 for mod, label in checks:
     try:
         importlib.import_module(mod)
-        print(f'  [OK] {label}')
+        print('  [OK] ' + label)
     except Exception as e:
-        print(f'  [MISS] {label}: {e}')
+        print('  [MISS] ' + label + ': ' + str(e))
 "
 
 Section "Done"
-Write-Host "  If any [MISS] above — it's the thing still needed. Otherwise the LoRA" -ForegroundColor Gray
+Write-Host "  If any [MISS] above - that is what is still needed. Otherwise the LoRA" -ForegroundColor Gray
 Write-Host "  trainer will now run cleanly next cycle." -ForegroundColor Gray
