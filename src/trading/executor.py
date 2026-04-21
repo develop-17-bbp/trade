@@ -650,6 +650,13 @@ class TradingExecutor:
         self._lgbm = None
         self._lgbm_raw = {}  # Per-asset raw trained binary models
         self._lgbm_calibration = {}  # Per-asset CalibrationBundle (isotonic + score-delta lookup)
+        # Meta-label model (López de Prado style): trained ONLY on rule-signaled bars
+        # labeled by actual forward-simulated SL/TP outcome. Consulted AFTER the rule
+        # strategy says "enter", as a veto-only gate. Separate from _lgbm_raw so
+        # both can coexist and fall back to each other.
+        self._lgbm_meta = {}            # Per-asset Booster
+        self._lgbm_meta_calibration = {}  # Per-asset CalibrationBundle
+        self._lgbm_meta_threshold = {}  # Per-asset TAKE cutoff from thresholds JSON
         if os.environ.get('ACT_DISABLE_ML', '').strip().lower() in ('1', 'true', 'yes', 'on'):
             print(f"  [ML] DISABLED via ACT_DISABLE_ML=1 — LightGBM gate skipped, rule-only entries")
         if LIGHTGBM_AVAILABLE:
@@ -680,6 +687,36 @@ class TradingExecutor:
                         if _bundle is not None:
                             self._lgbm_calibration[_asset] = _bundle
                             print(f"  [ML] LightGBM ({_asset}) calibrated — base_wr={_bundle.baseline_win_rate:.3f} deltas={_bundle.deltas}")
+
+                    # Meta-label model (rule-conditional). Loaded separately — present
+                    # only if `src/scripts/train_meta_label.py` has been run. When
+                    # present, executor decision path uses it AFTER rule signals fire
+                    # as a veto-only gate (can subtract score, never add).
+                    _meta_path = _os.path.join(_models_root, f'lgbm_{_asset.lower()}_meta.txt')
+                    if _os.path.exists(_meta_path):
+                        try:
+                            import lightgbm as _lgb
+                            self._lgbm_meta[_asset] = _lgb.Booster(model_file=_meta_path)
+                            print(f"  [ML] LightGBM ({_asset}) META model loaded (rule-conditional, veto-only)")
+                        except Exception as _me:
+                            print(f"  [ML] LightGBM ({_asset}) meta load failed: {_me}")
+                        # Meta calibration (separate file from the base calibration)
+                        if _calib_mod is not None:
+                            _meta_cal_path = _os.path.join(_models_root, f'lgbm_{_asset.lower()}_meta_calibration.json')
+                            _meta_bundle = _calib_mod.load_calibration(_meta_cal_path)
+                            if _meta_bundle is not None:
+                                self._lgbm_meta_calibration[_asset] = _meta_bundle
+                                print(f"  [ML] META ({_asset}) calibrated — base_wr={_meta_bundle.baseline_win_rate:.3f} deltas={_meta_bundle.deltas}")
+                        # Meta threshold (TAKE cutoff) from json
+                        _thresh_path = _os.path.join(_models_root, f'lgbm_{_asset.lower()}_meta_thresholds.json')
+                        if _os.path.exists(_thresh_path):
+                            try:
+                                import json as _json
+                                with open(_thresh_path, 'r', encoding='utf-8') as _fh:
+                                    _tj = _json.load(_fh)
+                                self._lgbm_meta_threshold[_asset] = float(_tj.get('take_threshold', 0.5))
+                            except Exception:
+                                self._lgbm_meta_threshold[_asset] = 0.5
                 # Also load generic model for backward compat
                 model_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models', 'lgbm_latest.txt')
                 if _os.path.exists(model_path):
@@ -5326,6 +5363,56 @@ class TradingExecutor:
                     self._safe_size_mult = 1.0
             except Exception as _se:
                 print(f"  [{self._ex_tag}:{asset}] SAFE check error: {_se}")
+
+        # ── META-LABEL VETO GATE (rule-conditional) ──
+        # Fires ONLY when the rule score already passes effective_min (i.e. the
+        # rule strategy wants to enter). The meta model — trained on rule-signaled
+        # bars labeled by forward-simulated win/loss — says TAKE or SKIP. It can
+        # only SUBTRACT from score (never add), so it can veto rule-approved
+        # trades but can never take trades the rules didn't already approve.
+        # Honors ACT_DISABLE_ML — set that to bypass this gate too.
+        _ml_kill_meta = (os.environ.get('ACT_DISABLE_ML') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        _meta_booster = getattr(self, '_lgbm_meta', {}).get(asset) if not _ml_kill_meta else None
+        if (_meta_booster is not None
+                and entry_score >= effective_min
+                and len(closes) >= 55):
+            try:
+                from src.scripts.train_all_models import compute_strategy_features as _csf
+                import numpy as _np
+                _opens = ohlcv.get('opens', closes)
+                _nf = _meta_booster.num_feature()
+                _X, _ = _csf(closes, highs, lows, _opens, volumes, seq_len=1,
+                             n_features=max(_nf, 50))
+                if _X is not None and len(_X) > 0:
+                    _feat = _X[-1].reshape(1, -1)[:, :_nf]
+                    _meta_prob_raw = float(_meta_booster.predict(_feat)[0])
+                    # Apply calibration if present so probability reflects actual
+                    # per-bucket win rate from the training holdout.
+                    _meta_bundle = getattr(self, '_lgbm_meta_calibration', {}).get(asset)
+                    try:
+                        from src.ml.calibration import apply_calibration as _ac
+                        _meta_prob = float(_ac(_meta_bundle, _meta_prob_raw))
+                    except Exception:
+                        _meta_prob = _meta_prob_raw
+                    _take_thresh = float(self._lgbm_meta_threshold.get(asset, 0.5))
+                    _veto = _meta_prob < _take_thresh
+                    ml_context['meta_prob'] = round(_meta_prob, 3)
+                    ml_context['meta_take_threshold'] = _take_thresh
+                    ml_context['meta_decision'] = 'SKIP' if _veto else 'TAKE'
+                    if _veto:
+                        _veto_delta = -3  # Strong push below effective_min
+                        entry_score += _veto_delta
+                        score_reasons.append(f"meta_VETO({_meta_prob:.2f}<{_take_thresh:.2f})")
+                        math_filter_warnings.append(
+                            f"META VETO: rule-conditional model predicts "
+                            f"{_meta_prob:.0%} win prob < {_take_thresh:.0%} threshold"
+                        )
+                        print(f"  [{self._ex_tag}:{asset}] META VETO: prob={_meta_prob:.2f} < take={_take_thresh:.2f} — score -> {entry_score}")
+                    else:
+                        score_reasons.append(f"meta_TAKE({_meta_prob:.2f})")
+                        print(f"  [{self._ex_tag}:{asset}] META TAKE: prob={_meta_prob:.2f} >= take={_take_thresh:.2f}")
+            except Exception as _me:
+                logger.debug(f"meta-label veto error for {asset}: {_me}")
 
         # SCORE: Advisory only (when safe-entries disabled) — LLM + agents make final decision
         if entry_score < effective_min:
