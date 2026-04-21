@@ -373,22 +373,60 @@ def step4_retrain_models():
             ve = int(len(X)*0.85)
             td = lgb.Dataset(X[:te], label=y[:te])
             vd = lgb.Dataset(X[te:ve], label=y[te:ve], reference=td)
+            try:
+                from src.ml.gpu import lgbm_device_params as _lgbm_dev
+                _dev = _lgbm_dev()
+            except Exception:
+                _dev = {}
             params = {'objective':'binary','metric':'binary_logloss','num_leaves':31,
                       'learning_rate':0.05,'feature_fraction':0.8,'bagging_fraction':0.8,
-                      'bagging_freq':5,'verbose':-1,'feature_pre_filter':False,'min_data_in_leaf':5}
+                      'bagging_freq':5,'verbose':-1,'feature_pre_filter':False,'min_data_in_leaf':5,
+                      **_dev}
             model = lgb.train(params, td, num_boost_round=300, valid_sets=[vd],
                               callbacks=[lgb.early_stopping(30), lgb.log_evaluation(0)])
 
-            preds = (model.predict(X[ve:]) > 0.5).astype(int)
+            probs = np.asarray(model.predict(X[ve:]), dtype=float)
+            preds = (probs > 0.5).astype(int)
             acc = np.mean(preds == y[ve:])
             print(f"  {asset}: Accuracy={acc:.4f}")
 
-            if acc > 0.55 and acc < 0.99:  # Not trivial
-                model.save_model(os.path.join(PROJECT_ROOT, f'models/lgbm_{asset.lower()}_trained.txt'))
-                model.save_model(os.path.join(PROJECT_ROOT, f'models/lgbm_{asset.lower()}.txt'))
-                print(f"  {asset}: DEPLOYED (non-trivial, acc={acc:.4f})")
-            else:
-                print(f"  {asset}: NOT deployed (acc={acc:.4f} — {'trivial' if acc>0.99 else 'too low'})")
+            if not (0.55 < acc < 0.99):
+                print(f"  {asset}: NOT deployed (acc={acc:.4f} — {'trivial' if acc>=0.99 else 'too low'})")
+                continue
+
+            trained_path = os.path.join(PROJECT_ROOT, f'models/lgbm_{asset.lower()}_trained.txt')
+
+            # Champion / challenger — don't overwrite the incumbent unless we're at
+            # least as good on the same holdout (tolerance 1pp in F1).
+            from src.ml.champion_gate import evaluate_and_gate
+            gate = evaluate_and_gate(model, trained_path, X[ve:], y[ve:])
+            print(f"  {asset}: Gate {'PROMOTED' if gate.promoted else 'REJECTED'} — {gate.reason}")
+
+            if not gate.promoted:
+                print(f"  {asset}: Kept incumbent; challenger archived to {gate.challenger_path}")
+                continue
+
+            model.save_model(trained_path)
+            model.save_model(os.path.join(PROJECT_ROOT, f'models/lgbm_{asset.lower()}.txt'))
+
+            # Fit calibration so the executor can convert raw probabilities into
+            # data-driven entry_score deltas.
+            try:
+                from src.ml import calibration as _calib
+                bundle = _calib.fit_calibration(
+                    raw_probs=list(probs), y_true=list(y[ve:]), asset=asset,
+                )
+                if bundle is not None:
+                    _calib.save_calibration(
+                        bundle, _calib.calibration_path_for(os.path.join(PROJECT_ROOT, 'models'), asset),
+                    )
+                    print(f"  {asset}: Calibrated — buckets={bundle.buckets} deltas={bundle.deltas} base_wr={bundle.baseline_win_rate:.3f}")
+                else:
+                    print(f"  {asset}: Calibration skipped (degenerate holdout)")
+            except Exception as _e:
+                print(f"  {asset}: Calibration error: {_e}")
+
+            print(f"  {asset}: DEPLOYED (non-trivial, acc={acc:.4f})")
 
         return True
     except Exception as e:

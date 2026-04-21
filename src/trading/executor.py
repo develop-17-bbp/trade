@@ -649,6 +649,7 @@ class TradingExecutor:
         # ── LightGBM Binary Classifier (SKIP/TRADE pre-filter gate) ──
         self._lgbm = None
         self._lgbm_raw = {}  # Per-asset raw trained binary models
+        self._lgbm_calibration = {}  # Per-asset CalibrationBundle (isotonic + score-delta lookup)
         if LIGHTGBM_AVAILABLE:
             try:
                 self._lgbm = LightGBMClassifier(config={
@@ -656,8 +657,13 @@ class TradingExecutor:
                 })
                 import os as _os
                 # Load per-asset BINARY trained models (trained on 30 strategy features)
+                _models_root = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models')
+                try:
+                    from src.ml import calibration as _calib_mod
+                except Exception:
+                    _calib_mod = None
                 for _asset in self.config.get('assets', ['BTC', 'ETH']):
-                    asset_model_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models', f'lgbm_{_asset.lower()}_trained.txt')
+                    asset_model_path = _os.path.join(_models_root, f'lgbm_{_asset.lower()}_trained.txt')
                     if _os.path.exists(asset_model_path):
                         try:
                             import lightgbm as _lgb
@@ -665,6 +671,13 @@ class TradingExecutor:
                             print(f"  [ML] LightGBM ({_asset}) ACTIVE — binary SKIP/TRADE model loaded")
                         except Exception as e2:
                             print(f"  [ML] LightGBM ({_asset}) raw load failed: {e2}")
+                    # Load calibration bundle (optional — falls back to hand-tuned deltas if absent)
+                    if _calib_mod is not None:
+                        _cal_path = _calib_mod.calibration_path_for(_models_root, _asset)
+                        _bundle = _calib_mod.load_calibration(_cal_path)
+                        if _bundle is not None:
+                            self._lgbm_calibration[_asset] = _bundle
+                            print(f"  [ML] LightGBM ({_asset}) calibrated — base_wr={_bundle.baseline_win_rate:.3f} deltas={_bundle.deltas}")
                 # Also load generic model for backward compat
                 model_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), 'models', 'lgbm_latest.txt')
                 if _os.path.exists(model_path):
@@ -4819,37 +4832,69 @@ class TradingExecutor:
                 X_seq, _ = compute_strategy_features(closes, highs, lows, opens_list, volumes, seq_len=1, n_features=max(_model_n_features, 50))
                 if X_seq is not None and len(X_seq) > 0:
                     feat = X_seq[-1].reshape(1, -1)[:, :_model_n_features]  # Match model's expected features
-                    trade_prob = _lgbm_raw.predict(feat)[0]  # Binary: probability of TRADE class
-                    trade_conf = float(trade_prob)
-                    is_trade = trade_conf > 0.5
+                    trade_prob_raw = float(_lgbm_raw.predict(feat)[0])  # Binary: raw probability of TRADE class
 
+                    # Apply isotonic calibration + data-driven entry_score delta if a
+                    # calibration bundle was loaded at init. Falls back to hand-tuned
+                    # thresholds when no bundle exists (i.e. first boot after deploy).
+                    try:
+                        from src.ml import calibration as _calib_mod
+                        _bundle = getattr(self, '_lgbm_calibration', {}).get(asset)
+                        score_delta, trade_conf = _calib_mod.score_delta_for(_bundle, trade_prob_raw)
+                        _calibrated = _bundle is not None
+                    except Exception:
+                        _bundle = None
+                        _calibrated = False
+                        trade_conf = trade_prob_raw
+                        score_delta = None
+
+                    is_trade = trade_conf > 0.5
                     ml_context['lgbm_direction'] = 'TRADE' if is_trade else 'SKIP'
                     ml_context['lgbm_confidence'] = round(trade_conf if is_trade else (1 - trade_conf), 2)
+                    ml_context['lgbm_calibrated'] = bool(_calibrated)
+                    ml_context['lgbm_raw_prob'] = round(trade_prob_raw, 4)
                     lgbm_prediction = 1 if is_trade else 0
                     lgbm_confidence = ml_context['lgbm_confidence']
 
-                    # Binary gate: TRADE boosts, SKIP penalizes or HARD BLOCKS
-                    if is_trade and trade_conf > 0.60:
-                        entry_score += 2
-                        score_reasons.append(f"lgbm_TRADE({trade_conf:.0%})")
-                    elif is_trade and trade_conf > 0.45:
-                        entry_score += 1
-                        score_reasons.append(f"lgbm_trade_weak({trade_conf:.0%})")
-                    elif not is_trade and (1 - trade_conf) > 0.75:
-                        # Advisory: ML is very confident this setup dies at L1 — LLM decides
-                        entry_score -= 3
-                        score_reasons.append(f"lgbm_HARD_SKIP({1-trade_conf:.0%})")
-                        math_filter_warnings.append(f"LGBM STRONG SKIP: {1-trade_conf:.0%} confidence L1 death — LLM should be very cautious")
-                        print(f"  [{self._ex_tag}:{asset}] LGBM ADVISORY: conf={1-trade_conf:.0%} ML predicts L1 death — LLM will decide")
-                    elif not is_trade and (1 - trade_conf) > 0.60:
-                        entry_score -= 2
-                        score_reasons.append(f"lgbm_SKIP({1-trade_conf:.0%})")
-                        math_filter_warnings.append(f"LGBM: SKIP signal ({1-trade_conf:.0%}) — L1 death predicted by ML")
-                    elif not is_trade and (1 - trade_conf) > 0.45:
-                        entry_score -= 1
-                        score_reasons.append(f"lgbm_skip_weak({1-trade_conf:.0%})")
+                    if score_delta is not None and _calibrated:
+                        # Data-driven path: delta came from fit_calibration's bucket-winrate map.
+                        if score_delta != 0:
+                            entry_score += int(score_delta)
+                            tag = 'TRADE' if score_delta > 0 else 'SKIP'
+                            score_reasons.append(f"lgbm_cal_{tag}({trade_conf:.0%},Δ{score_delta:+d})")
+                            if score_delta <= -3:
+                                math_filter_warnings.append(
+                                    f"LGBM STRONG SKIP (calibrated {trade_conf:.0%}) — L1 death predicted"
+                                )
+                            elif score_delta <= -2:
+                                math_filter_warnings.append(
+                                    f"LGBM SKIP (calibrated {trade_conf:.0%}) — L1 death predicted by ML"
+                                )
+                        else:
+                            score_reasons.append(f"lgbm_abstain({trade_conf:.0%})")
+                    else:
+                        # Fallback: historical hand-tuned thresholds on raw probability.
+                        if is_trade and trade_conf > 0.60:
+                            entry_score += 2
+                            score_reasons.append(f"lgbm_TRADE({trade_conf:.0%})")
+                        elif is_trade and trade_conf > 0.45:
+                            entry_score += 1
+                            score_reasons.append(f"lgbm_trade_weak({trade_conf:.0%})")
+                        elif not is_trade and (1 - trade_conf) > 0.75:
+                            entry_score -= 3
+                            score_reasons.append(f"lgbm_HARD_SKIP({1-trade_conf:.0%})")
+                            math_filter_warnings.append(f"LGBM STRONG SKIP: {1-trade_conf:.0%} confidence L1 death — LLM should be very cautious")
+                            print(f"  [{self._ex_tag}:{asset}] LGBM ADVISORY: conf={1-trade_conf:.0%} ML predicts L1 death — LLM will decide")
+                        elif not is_trade and (1 - trade_conf) > 0.60:
+                            entry_score -= 2
+                            score_reasons.append(f"lgbm_SKIP({1-trade_conf:.0%})")
+                            math_filter_warnings.append(f"LGBM: SKIP signal ({1-trade_conf:.0%}) — L1 death predicted by ML")
+                        elif not is_trade and (1 - trade_conf) > 0.45:
+                            entry_score -= 1
+                            score_reasons.append(f"lgbm_skip_weak({1-trade_conf:.0%})")
 
-                    print(f"  [{self._ex_tag}:{asset}] LGBM: {ml_context['lgbm_direction']} conf={ml_context['lgbm_confidence']:.2f} | score now={entry_score}")
+                    _cal_tag = 'cal' if _calibrated else 'raw'
+                    print(f"  [{self._ex_tag}:{asset}] LGBM[{_cal_tag}]: {ml_context['lgbm_direction']} conf={ml_context['lgbm_confidence']:.2f} | score now={entry_score}")
             except Exception as e:
                 logger.debug(f"LightGBM binary prediction error for {asset}: {e}")
 

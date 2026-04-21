@@ -52,6 +52,14 @@ try:
 except ImportError:
     HAS_OPTUNA = False
 
+# GPU device selection (OpenCL 'gpu' backend on RTX 5090; falls back to CPU on CI).
+try:
+    from src.ml.gpu import lgbm_device_params, describe_device
+    _LGBM_DEVICE = lgbm_device_params()
+    logger.info(f"LightGBM device: {describe_device()}")
+except Exception:
+    _LGBM_DEVICE = {}
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -257,11 +265,17 @@ def build_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
         feat['hour'] = df['timestamp'].dt.hour
         feat['dow'] = df['timestamp'].dt.dayofweek
 
-    # Labels: forward return direction
+    # Labels: forward return direction, threshold scaled by realized volatility (atr_pct).
+    # A fixed ±0.1% threshold collapsed ~65% of retrains to `flat_acc=0.0` because in
+    # high-vol regimes virtually nothing lands inside the flat band, and in low-vol
+    # regimes almost everything does. An ATR-scaled threshold gives flat a roughly
+    # regime-constant share of the data so the model actually learns it.
     future_ret = close.shift(-4) / close - 1
+    # Floor protects the threshold in extreme-low-vol windows so flat doesn't absorb everything.
+    flat_band = np.maximum(0.25 * feat['atr_pct'], LABEL_THRESHOLD)
     labels = pd.Series(1, index=df.index)  # Default: FLAT (mapped to 1)
-    labels[future_ret > LABEL_THRESHOLD] = 2   # LONG
-    labels[future_ret < -LABEL_THRESHOLD] = 0  # SHORT
+    labels[future_ret > flat_band] = 2   # LONG
+    labels[future_ret < -flat_band] = 0  # SHORT
 
     # Drop warmup rows
     warmup = 55
@@ -280,10 +294,26 @@ def build_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
 # TRAINING ENGINE
 # ============================================================================
 
+def _class_sample_weights(y: np.ndarray, n_classes: int = 3) -> np.ndarray:
+    """Inverse-frequency sample weights so the minority class isn't ignored by the loss."""
+    total = len(y)
+    counts = np.bincount(y.astype(int), minlength=n_classes).astype(float)
+    counts = np.maximum(counts, 1.0)  # avoid div-by-zero for absent classes
+    per_class = total / (n_classes * counts)
+    return per_class[y.astype(int)]
+
+
 def train_single_model(X_train: np.ndarray, y_train: np.ndarray,
                        X_val: np.ndarray, y_val: np.ndarray,
                        use_optuna: bool = True) -> Tuple[lgb.Booster, Dict, float]:
-    """Train a single LightGBM model, optionally with Optuna."""
+    """Train a single LightGBM model, optionally with Optuna.
+
+    Uses inverse-frequency sample weights so the flat class — even when it holds a
+    majority of samples — doesn't dominate the loss and collapse the model to
+    predict-flat-always.
+    """
+    w_train = _class_sample_weights(y_train)
+    w_val = _class_sample_weights(y_val)
 
     if use_optuna and HAS_OPTUNA:
         optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -293,6 +323,7 @@ def train_single_model(X_train: np.ndarray, y_train: np.ndarray,
                 'objective': 'multiclass',
                 'num_class': 3,
                 'verbosity': -1,
+                **_LGBM_DEVICE,
                 'num_leaves': trial.suggest_int('num_leaves', 15, 127),
                 'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.15, log=True),
                 'max_depth': trial.suggest_int('max_depth', 3, 12),
@@ -303,8 +334,8 @@ def train_single_model(X_train: np.ndarray, y_train: np.ndarray,
                 'reg_lambda': trial.suggest_float('reg_lambda', 1e-4, 5.0, log=True),
             }
 
-            dtrain = lgb.Dataset(X_train, label=y_train)
-            dval = lgb.Dataset(X_val, label=y_val, reference=dtrain)
+            dtrain = lgb.Dataset(X_train, label=y_train, weight=w_train)
+            dval = lgb.Dataset(X_val, label=y_val, weight=w_val, reference=dtrain)
 
             model = lgb.train(
                 params, dtrain,
@@ -333,17 +364,19 @@ def train_single_model(X_train: np.ndarray, y_train: np.ndarray,
         }
         val_acc = 0.0
 
-    # Train final model on train+val
+    # Train final model on train+val with the same inverse-frequency weighting.
     full_params = {
         'objective': 'multiclass',
         'num_class': 3,
         'verbosity': -1,
+        **_LGBM_DEVICE,
         **best_params,
     }
 
     X_full = np.vstack([X_train, X_val])
     y_full = np.concatenate([y_train, y_val])
-    dtrain = lgb.Dataset(X_full, label=y_full)
+    w_full = _class_sample_weights(y_full)
+    dtrain = lgb.Dataset(X_full, label=y_full, weight=w_full)
 
     model = lgb.train(full_params, dtrain, num_boost_round=BOOST_ROUNDS)
 
@@ -550,6 +583,16 @@ def train_symbol_timeframe(symbol: str, timeframe: str, data_dir: str,
     X = features.values
     y = labels.values
 
+    # Log class distribution — previously missing, which is why flat-class collapse
+    # went undiagnosed for weeks. See session_2026_04_21_rollout.md §known-unknowns.
+    class_counts = np.bincount(y.astype(int), minlength=3)
+    class_pct = class_counts / max(1, len(y))
+    logger.info(
+        f"  Label balance: SHORT={class_counts[0]} ({class_pct[0]:.1%}) | "
+        f"FLAT={class_counts[1]} ({class_pct[1]:.1%}) | "
+        f"LONG={class_counts[2]} ({class_pct[2]:.1%})"
+    )
+
     # 3. Walk-forward split
     train_end = int(len(X) * (1 - VALIDATION_PCT - 0.10))
     val_end = int(len(X) * (1 - 0.10))
@@ -568,16 +611,46 @@ def train_symbol_timeframe(symbol: str, timeframe: str, data_dir: str,
     metrics = evaluate_model(model, X_test, y_test)
     logger.info(f"  Test accuracy:      {metrics['accuracy']:.4f}")
     logger.info(f"  High-conf accuracy: {metrics['high_conf_accuracy']:.4f}")
+    metrics['label_distribution'] = {
+        'short': int(class_counts[0]),
+        'flat': int(class_counts[1]),
+        'long': int(class_counts[2]),
+    }
 
-    # 6. Save
+    # 6. Save (with champion/challenger gating so a regressed retrain doesn't
+    #    silently replace a good incumbent)
     os.makedirs(model_dir, exist_ok=True)
-    model.save_model(model_path)
-    logger.info(f"  Model saved: {model_path}")
+    promote = True
+    if os.path.exists(model_path):
+        try:
+            incumbent = lgb.Booster(model_file=model_path)
+            inc_preds = np.argmax(incumbent.predict(X_test), axis=1)
+            inc_acc = float(np.mean(inc_preds == y_test))
+            # 1pp tolerance: new accuracy must be >= incumbent - 0.01 to promote
+            if metrics['accuracy'] + 0.01 < inc_acc:
+                promote = False
+                logger.warning(
+                    f"  Gate REJECTED — new_acc={metrics['accuracy']:.4f} < incumbent_acc={inc_acc:.4f} - 0.01"
+                )
+                ch_dir = os.path.join(model_dir, 'challengers')
+                os.makedirs(ch_dir, exist_ok=True)
+                stamp = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+                ch_path = os.path.join(ch_dir, model_name.replace('.txt', f'_{stamp}.txt'))
+                model.save_model(ch_path)
+                logger.info(f"  Challenger archived to {ch_path}")
+            else:
+                logger.info(f"  Gate PROMOTED — new_acc={metrics['accuracy']:.4f} vs incumbent_acc={inc_acc:.4f}")
+        except Exception as _e:
+            logger.warning(f"  Incumbent unreadable ({_e}); promoting new model")
 
-    # Also save optimized version for core symbols
-    if symbol in CORE_SYMBOLS and timeframe == '1h':
-        opt_path = model_path.replace('.txt', '_optimized.txt')
-        model.save_model(opt_path)
+    if promote:
+        model.save_model(model_path)
+        logger.info(f"  Model saved: {model_path}")
+
+        # Also save optimized version for core symbols (only on successful promotion)
+        if symbol in CORE_SYMBOLS and timeframe == '1h':
+            opt_path = model_path.replace('.txt', '_optimized.txt')
+            model.save_model(opt_path)
 
     # Save feature importance
     importance = model.feature_importance(importance_type='gain')

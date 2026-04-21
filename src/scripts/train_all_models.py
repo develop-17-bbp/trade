@@ -1396,6 +1396,11 @@ def train_lightgbm(data, asset='BTC', all_data=None):
         dtrain = lgb.Dataset(X_train, label=y_train, weight=sample_w, feature_name=feature_names)
         dtest = lgb.Dataset(X_test, label=y_test, feature_name=feature_names, reference=dtrain)
 
+        try:
+            from src.ml.gpu import lgbm_device_params as _lgbm_dev
+            _dev = _lgbm_dev()
+        except Exception:
+            _dev = {}
         params = {
             'objective': 'binary',
             'metric': 'binary_logloss',
@@ -1410,6 +1415,7 @@ def train_lightgbm(data, asset='BTC', all_data=None):
             'bagging_freq': 5,
             'is_unbalance': True,
             'verbose': -1,
+            **_dev,
         }
 
         model = lgb.train(params, dtrain, num_boost_round=1000,
@@ -1455,15 +1461,41 @@ def train_lightgbm(data, asset='BTC', all_data=None):
         print(f"  Top features: {[f'{nm}={v:.0f}' for nm, v in top]}")
 
         os.makedirs('models', exist_ok=True)
-        model.save_model(f'models/lgbm_{asset.lower()}_trained.txt')
+        incumbent_path = f'models/lgbm_{asset.lower()}_trained.txt'
+
+        # Champion / challenger gate — keep the incumbent if the new model isn't at least
+        # as good as (incumbent F1 − 1pp) on the same held-out tail used for training.
+        from src.ml.champion_gate import evaluate_and_gate
+        gate = evaluate_and_gate(model, incumbent_path, X_test, y_test, threshold=best_thresh)
+        print(f"  Gate: {'PROMOTED' if gate.promoted else 'REJECTED'} — {gate.reason}")
+
+        if not gate.promoted:
+            print(f"  Kept incumbent at {incumbent_path}; challenger archived to {gate.challenger_path}")
+            return True
+
+        model.save_model(incumbent_path)
         model.save_model('models/lgbm_latest.txt')
+
+        # Fit isotonic calibration + data-driven entry_score deltas on the same holdout.
+        # The executor will read this JSON at startup and apply it to raw predict() output.
+        from src.ml import calibration as _calib
+        bundle = _calib.fit_calibration(
+            raw_probs=list(y_prob),
+            y_true=list(y_test),
+            asset=asset,
+        )
+        if bundle is not None:
+            _calib.save_calibration(bundle, _calib.calibration_path_for('models', asset))
+            print(f"  Calibration: buckets={bundle.buckets} deltas={bundle.deltas} base_wr={bundle.baseline_win_rate:.3f}")
+        else:
+            print(f"  Calibration: skipped (sklearn missing or degenerate holdout)")
 
         import json
         thresh_info = {'trade_threshold': float(best_thresh), 'trade_f1': float(best_f1)}
         with open(f'models/lgbm_{asset.lower()}_thresholds.json', 'w') as f:
             json.dump(thresh_info, f)
 
-        print(f"  Saved: models/lgbm_{asset.lower()}_trained.txt + thresholds")
+        print(f"  Saved: {incumbent_path} + thresholds + calibration")
         return True
     except Exception as e:
         print(f"  LightGBM error: {e}")
