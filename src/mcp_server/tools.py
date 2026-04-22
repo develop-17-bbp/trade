@@ -10,15 +10,67 @@ testable without the full MCP runtime.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from threading import Lock
+from typing import Any, Callable, Dict, List, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Audit log — one JSONL line per tool invocation
+# ─────────────────────────────────────────────────────────────────────
+
+_AUDIT_PATH = REPO_ROOT / "logs" / "mcp_audit.jsonl"
+_audit_lock = Lock()
+
+
+def _audit(tool_name: str, duration_ms: int, success: bool, error: Optional[str] = None) -> None:
+    """Append one line to logs/mcp_audit.jsonl. Never raises."""
+    try:
+        _AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        rec = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tool": tool_name,
+            "duration_ms": duration_ms,
+            "success": success,
+        }
+        if error:
+            rec["error"] = str(error)[:200]
+        with _audit_lock:
+            with open(_AUDIT_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+    except Exception:
+        pass  # audit failures cannot break tool calls
+
+
+def audited(fn: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
+    """Decorator that appends an audit-log entry per call."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        t0 = time.time()
+        err = None
+        try:
+            result = fn(*args, **kwargs)
+            success = not (isinstance(result, dict) and "error" in result)
+            if not success:
+                err = result.get("error")
+            return result
+        except Exception as e:
+            err = str(e)[:200]
+            success = False
+            raise
+        finally:
+            _audit(fn.__name__, int((time.time() - t0) * 1000), success, err)
+    return wrapper
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -36,6 +88,7 @@ def mutations_allowed() -> bool:
 # Read-only tools
 # ─────────────────────────────────────────────────────────────────────
 
+@audited
 def status() -> Dict[str, Any]:
     """One-shot system status — bot uptime, equity, positions, readiness gate.
 
@@ -76,6 +129,7 @@ def status() -> Dict[str, Any]:
     return out
 
 
+@audited
 def evaluator_report() -> Dict[str, Any]:
     """Full JSON evaluation report (same data as `python scripts/evaluate_act.py --json`)."""
     try:
@@ -89,6 +143,7 @@ def evaluator_report() -> Dict[str, Any]:
         return {"error": f"evaluator_failed: {e}"}
 
 
+@audited
 def component_state() -> Dict[str, Any]:
     """Current ON/OFF state of every toggleable component + exact setx cmd to flip each."""
     try:
@@ -98,6 +153,7 @@ def component_state() -> Dict[str, Any]:
         return {"error": f"component_state_failed: {e}"}
 
 
+@audited
 def paper_state() -> Dict[str, Any]:
     """Paper-trading equity + stats + open positions."""
     try:
@@ -109,6 +165,7 @@ def paper_state() -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+@audited
 def shadow_stats() -> Dict[str, Any]:
     """Meta-model shadow-log stats (predictions + outcomes)."""
     try:
@@ -128,6 +185,7 @@ def shadow_stats() -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+@audited
 def readiness_gate() -> Dict[str, Any]:
     """Readiness-gate evaluation — is the bot allowed to place real-capital orders?"""
     try:
@@ -137,6 +195,7 @@ def readiness_gate() -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+@audited
 def tail_log(log_name: str = "autonomous_loop.log", lines: int = 100) -> Dict[str, Any]:
     """Return the last `lines` lines of a log file under logs/.
 
@@ -162,6 +221,7 @@ def tail_log(log_name: str = "autonomous_loop.log", lines: int = 100) -> Dict[st
         return {"error": str(e)}
 
 
+@audited
 def list_logs() -> Dict[str, Any]:
     """Available log files under logs/ with sizes."""
     logs_dir = REPO_ROOT / "logs"
@@ -182,6 +242,7 @@ def list_logs() -> Dict[str, Any]:
     return {"logs": out}
 
 
+@audited
 def recent_trades(limit: int = 20) -> Dict[str, Any]:
     """Last N completed trades from robinhood_paper.jsonl as structured records."""
     try:
@@ -194,6 +255,7 @@ def recent_trades(limit: int = 20) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+@audited
 def git_status() -> Dict[str, Any]:
     """Current git state — HEAD, branch, uncommitted files."""
     try:
@@ -219,6 +281,35 @@ def git_status() -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+@audited
+def audit_log(limit: int = 50) -> Dict[str, Any]:
+    """Return the last `limit` entries from logs/mcp_audit.jsonl.
+
+    Lets the operator see what MCP tools Claude has called recently,
+    when, how long each took, and whether they succeeded — from inside
+    Claude Code without leaving the session.
+    """
+    limit = max(1, min(int(limit), 500))
+    if not _AUDIT_PATH.exists():
+        return {"total": 0, "entries": []}
+    try:
+        with open(_AUDIT_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        recs = []
+        for line in lines[-limit:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                recs.append(json.loads(line))
+            except Exception:
+                continue
+        return {"total": len(lines), "returned": len(recs), "entries": recs}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@audited
 def env_flags() -> Dict[str, Any]:
     """Current env flag state for all ACT_* variables the bot reads."""
     keys = [
@@ -241,6 +332,7 @@ def env_flags() -> Dict[str, Any]:
 # Mutating tools (gated by ACT_MCP_ALLOW_MUTATIONS=1)
 # ─────────────────────────────────────────────────────────────────────
 
+@audited
 def restart_bot() -> Dict[str, Any]:
     """Run STOP_ALL.ps1 then START_ALL.ps1. Requires ACT_MCP_ALLOW_MUTATIONS=1."""
     if not mutations_allowed():
@@ -267,6 +359,7 @@ def restart_bot() -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+@audited
 def trigger_retrain(asset: str = "BTC") -> Dict[str, Any]:
     """Fire train_all_models.py for the specified asset. Requires ACT_MCP_ALLOW_MUTATIONS=1."""
     if not mutations_allowed():

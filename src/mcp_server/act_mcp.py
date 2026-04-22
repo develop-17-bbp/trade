@@ -168,6 +168,12 @@ def build_server():
         """Current ACT_* env variable state. Secret values (tokens, API keys) redacted."""
         return _tools.env_flags()
 
+    @mcp.tool()
+    def audit_log(limit: int = 50) -> dict:
+        """Last N MCP tool invocations — timestamp, tool, duration_ms, success.
+        Reads from logs/mcp_audit.jsonl which is appended on every tool call."""
+        return _tools.audit_log(limit=limit)
+
     # ── Mutating tools (gated) ──────────────────────────────────────
     @mcp.tool()
     def restart_bot() -> dict:
