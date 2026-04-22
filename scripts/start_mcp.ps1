@@ -17,7 +17,9 @@
 [CmdletBinding()]
 param(
     [int]$Port = 9100,
-    [string]$Host = "127.0.0.1",
+    # Renamed from $Host - PowerShell's $Host is a read-only automatic variable
+    # and using it as a parameter throws "Cannot overwrite variable Host".
+    [string]$BindHost = "127.0.0.1",
     [switch]$AllowMutations
 )
 
@@ -32,7 +34,7 @@ $tokenSet = [bool]$env:ACT_MCP_TOKEN
 Write-Host "  ACT_MCP_TOKEN set:       $tokenSet"
 Write-Host "  ACT_MCP_ALLOW_MUTATIONS: $env:ACT_MCP_ALLOW_MUTATIONS"
 Write-Host "  Port:                    $Port"
-Write-Host "  Bind host:               $Host"
+Write-Host "  Bind host:               $BindHost"
 
 if (-not $tokenSet) {
     WARN "ACT_MCP_TOKEN is not set. The server will rely only on Cloudflare Access for auth."
@@ -57,8 +59,8 @@ if ($LASTEXITCODE -ne 0) {
 
 Section "Starting MCP server"
 Write-Host "  URL (via tunnel): https://mcp.<yourdomain>/"
-Write-Host "  Local URL:        http://${Host}:${Port}/mcp"
+Write-Host "  Local URL:        http://${BindHost}:${Port}/mcp"
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop."
 Write-Host ""
-python -m src.mcp_server.act_mcp --host $Host --port $Port
+python -m src.mcp_server.act_mcp --host $BindHost --port $Port
