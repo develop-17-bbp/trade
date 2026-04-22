@@ -78,6 +78,10 @@ sniper:
   min_confluence: 5
   min_score: 6
   min_expected_move_pct: 5.0
+  # Robinhood-hardening (intervention A): signals between 2.5% and 5%
+  # expected move are accepted as NORMAL tier (1x size). Below 2.5% rejected.
+  # Requires ACT_ROBINHOOD_HARDEN=1 env flag to activate.
+  normal_min_expected_move_pct: 2.5
   compound_pct: 50.0
   protect_principal: true
 max_hold_minutes: 10080

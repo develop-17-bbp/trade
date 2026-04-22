@@ -1067,6 +1067,15 @@ class TradingExecutor:
         self.sniper_min_expected_move_pct: float = sniper_cfg.get('min_expected_move_pct', 5.0)  # Must expect 5%+ move
         self.sniper_compound_pct: float = sniper_cfg.get('compound_pct', 50.0)  # Reinvest 50% of profits
         self.sniper_protect_principal: bool = sniper_cfg.get('protect_principal', True)  # Never risk original capital after first win
+        # Robinhood-hardening intervention A: tiered min-move thresholds. The sniper
+        # threshold was 5%+ expected move (correctly rare) — on a 1.69%-spread venue
+        # that's the only setup class worth 3x sizing. But waiting ONLY for 5%+ moves
+        # means weeks of zero trades in normal volatility. The "normal" tier at
+        # 2.5%+ expected move lets the bot take 1x-sized swings in between sniper
+        # setups so training/soak data accumulates.
+        self.normal_min_expected_move_pct: float = sniper_cfg.get(
+            'normal_min_expected_move_pct', 2.5
+        )
         self.sniper_stats: Dict[str, int] = {'signals_seen': 0, 'filtered': 0, 'entered': 0, 'wins': 0, 'losses': 0}
         self.sniper_profit_pool: float = 0.0  # Accumulated realized profits for compounding
         self.sniper_principal: float = self.initial_capital  # Protected base capital
@@ -3555,6 +3564,10 @@ class TradingExecutor:
                     f"{n}={d['signal_word']}" for n, d in _multi_details.items() if not n.startswith('_')
                 )
                 _consensus = _multi_details.get('_agreement', '?')
+                # Cache for conviction-gate consumption in _evaluate_entry
+                if not hasattr(self, '_last_multi_details'):
+                    self._last_multi_details = {}
+                self._last_multi_details[asset] = _multi_details
                 print(f"  [{self._ex_tag}:{asset}] MULTI-STRATEGY: {_strat_summary} | consensus={_consensus} score={_multi_details.get('_consensus_score', 0):.3f}")
             except Exception as e:
                 signal = ema_signal_raw
@@ -3909,6 +3922,76 @@ class TradingExecutor:
         if not hasattr(self, '_last_tf_signals'):
             self._last_tf_signals = {}
         self._last_tf_signals[asset] = tf_signals
+
+        # ── ROBINHOOD-HARDENING INTERVENTIONS (A+B+C) ──
+        # Gated by ACT_ROBINHOOD_HARDEN=1. Runs BEFORE LLM/ML so we don't waste
+        # expensive calls on trades the conviction gate would reject anyway.
+        #
+        # (A) Tiered move threshold — signals with expected_move < normal_min
+        #     are rejected, between normal_min and sniper_min are 'normal' tier,
+        #     >= sniper_min are 'sniper' tier. Size multiplier applied at sizing.
+        # (B) Macro bias — EconomicIntelligence's 12-layer summary becomes a
+        #     signed bias + size multiplier, applied at sizing time.
+        # (C) Conviction gate — TF + Hurst + multi-strategy + macro must all
+        #     align for 'sniper'; a looser subset for 'normal'; else reject.
+        self._last_conviction_tier = getattr(self, '_last_conviction_tier', {})
+        self._last_macro_bias = getattr(self, '_last_macro_bias', {})
+        _harden_enabled = (os.environ.get('ACT_ROBINHOOD_HARDEN') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        if _harden_enabled and signal in ('BUY', 'SELL'):
+            try:
+                from src.trading.conviction_gate import evaluate as _conv_evaluate
+                from src.trading.macro_bias import compute_macro_bias
+
+                # Macro summary (already fetched elsewhere in the cycle; read fresh)
+                _summary = None
+                if self._economic_intelligence is not None:
+                    try:
+                        _summary = self._economic_intelligence.get_macro_summary()
+                    except Exception:
+                        _summary = None
+                _macro = compute_macro_bias(_summary)
+
+                # Multi-strategy counts from the _process_asset call that just ran
+                _md = getattr(self, '_last_multi_details', {}).get(asset, {})
+                _ms_long = sum(1 for k, v in _md.items()
+                               if not k.startswith('_') and isinstance(v, dict)
+                               and v.get('signal_word') == 'LONG')
+                _ms_short = sum(1 for k, v in _md.items()
+                                if not k.startswith('_') and isinstance(v, dict)
+                                and v.get('signal_word') == 'SHORT')
+                _ms_flat = sum(1 for k, v in _md.items()
+                               if not k.startswith('_') and isinstance(v, dict)
+                               and v.get('signal_word') == 'FLAT')
+
+                # Hurst regime — float stored in self._last_hurst[asset]
+                _h = getattr(self, '_last_hurst', {}).get(asset, 0.5)
+                _regime = 'trending' if _h > 0.55 else ('mean_reverting' if _h < 0.45 else 'random')
+
+                _direction = 'LONG' if signal == 'BUY' else 'SHORT'
+                _conv = _conv_evaluate(
+                    direction=_direction,
+                    tf_1h_direction=htf_1h_direction,
+                    tf_4h_direction=htf_4h_direction,
+                    hurst_regime=_regime,
+                    multi_strategy_counts={'long': _ms_long, 'short': _ms_short, 'flat': _ms_flat},
+                    macro_bias=_macro,
+                )
+                self._last_conviction_tier[asset] = _conv.tier
+                self._last_macro_bias[asset] = _macro
+
+                if not _conv.passed:
+                    # Log the conviction-tier rejection reason and skip. This is the
+                    # intervention working as designed — low-conviction trades are
+                    # rejected before they eat spread.
+                    print(f"  [{self._ex_tag}:{asset}] CONVICTION REJECT: "
+                          f"tier=reject  reasons={_conv.reasons}")
+                    return
+
+                print(f"  [{self._ex_tag}:{asset}] CONVICTION PASS: tier={_conv.tier} "
+                      f"size_mult={_conv.size_multiplier}  macro_bias={_macro.signed_bias:+.2f}"
+                      f"{'  (crisis)' if _macro.crisis else ''}")
+            except Exception as _hardexc:
+                logger.debug(f"[HARDEN] conviction gate failed: {_hardexc}")
 
         # Need at least one active signal on a configured timeframe
         if not active_tf_signals:
@@ -6319,6 +6402,27 @@ class TradingExecutor:
             notional *= _meta_risk_mult
             if abs(_meta_risk_mult - 1.0) > 0.05:
                 print(f"  [{self._ex_tag}:{asset}] META RISK: {_meta_risk_mult:.2f}x — notional ${old_notional:,.0f} -> ${notional:,.0f}")
+
+        # ── ROBINHOOD-HARDENING sizing multipliers (B + C) ──
+        # Conviction tier: sniper=3x, normal=1x. Cached by _evaluate_entry's
+        # conviction gate. Macro bias size multiplier: 0.5-1.5x based on layer
+        # alignment; further faded if direction opposes bias sign.
+        _conv_tier = getattr(self, '_last_conviction_tier', {}).get(asset)
+        _macro = getattr(self, '_last_macro_bias', {}).get(asset)
+        if _conv_tier in ('sniper', 'normal') and _macro is not None:
+            try:
+                from src.trading.macro_bias import apply_direction_alignment
+                _conv_mult = 3.0 if _conv_tier == 'sniper' else 1.0
+                _macro_mult = apply_direction_alignment(_macro, action, _macro.size_multiplier)
+                _combined = _conv_mult * _macro_mult
+                if abs(_combined - 1.0) > 0.05:
+                    old_notional = notional
+                    notional *= _combined
+                    print(f"  [{self._ex_tag}:{asset}] HARDEN SIZE: tier={_conv_tier}({_conv_mult}x) "
+                          f"macro({_macro_mult:.2f}x) -> combined {_combined:.2f}x  "
+                          f"${old_notional:,.0f} -> ${notional:,.0f}")
+            except Exception as _hs:
+                logger.debug(f"[HARDEN] sizing multiplier failed: {_hs}")
 
         # Hard cap: max 5% of equity — prevents catastrophic position sizing
         # March 31: $270K-$764K positions on $30K equity = instant blowup
