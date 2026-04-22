@@ -201,6 +201,50 @@ def step2b_evolve_strategies(backtest_results, winners):
         return {}
 
 
+def step_genetic_feedback():
+    """Wire genetic evolution results into AdaptiveFeedbackLoop for live validation.
+
+    Reads the on-disk hall of fame (written by GeneticStrategyEngine to
+    logs/genetic_evolution_results.json) and feeds it to
+    AdaptiveFeedbackLoop.record_evolution_results, which cross-references
+    evolved entries with live trade outcomes and writes
+    data/evolution_feedback.json. Safe to run even if step2b already
+    fed the in-memory result — idempotent on-disk validation.
+    """
+    print("\n" + "="*60)
+    print("  STEP 2c: VALIDATING GENETIC HOF AGAINST LIVE OUTCOMES")
+    print("="*60)
+    try:
+        from src.trading.adaptive_feedback import AdaptiveFeedbackLoop
+
+        hof_path = os.path.join(PROJECT_ROOT, 'logs/genetic_evolution_results.json')
+        if not os.path.exists(hof_path):
+            logger.info("[GENETIC-FEEDBACK] No hall of fame file found — skipping validation")
+            return
+
+        with open(hof_path, 'r') as f:
+            data = json.load(f)
+        hof = data.get('hall_of_fame', []) or []
+
+        if not hof:
+            logger.info("[GENETIC-FEEDBACK] Empty hall of fame — skipping validation")
+            return
+
+        feedback = AdaptiveFeedbackLoop()
+        feedback.record_evolution_results(hall_of_fame=hof, diversity_metrics=None)
+        logger.info(
+            f"[GENETIC-FEEDBACK] Validated {len(hof)} hall of fame entries against live outcomes"
+        )
+    except ImportError as ie:
+        logger.info(f"[GENETIC-FEEDBACK] Skipped — ImportError: {ie}")
+    except FileNotFoundError as fe:
+        logger.info(f"[GENETIC-FEEDBACK] Skipped — FileNotFoundError: {fe}")
+    except json.JSONDecodeError as je:
+        logger.info(f"[GENETIC-FEEDBACK] Skipped — JSONDecodeError: {je}")
+    except Exception as e:
+        logger.warning(f"[GENETIC-FEEDBACK] Unexpected error: {e}")
+
+
 def step3_update_weights(winners):
     """Auto-update strategy weights based on backtest winners."""
     print("\n" + "="*60)
@@ -625,6 +669,7 @@ def run_cycle():
     step1_refresh_data()
     results, winners = step2_backtest_strategies()
     step2b_evolve_strategies(results, winners)
+    step_genetic_feedback()
     step3_update_weights(winners)
     step4_retrain_models()
     step4b_finetune_llm()
