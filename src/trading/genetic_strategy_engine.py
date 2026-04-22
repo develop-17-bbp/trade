@@ -151,7 +151,7 @@ def _clamp_gene(name: str, value: float) -> float:
 class StrategyDNA:
     """A strategy's genetic code — parameters + rules that can be evolved."""
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.genes: Dict[str, float] = {}
         for name, gene in INDICATOR_GENES.items():
             self.genes[name] = gene['default']
@@ -167,6 +167,18 @@ class StrategyDNA:
         self.generation: int = 0
         self.parents: List[str] = []
         self.name: str = f"GEN0_{random.randint(1000, 9999)}"
+        # Regime tag + live-trade feedback stats (wired by adaptive loop).
+        self.regime: str = "ANY"
+        self.live_wins: int = 0
+        self.live_losses: int = 0
+        self.live_pnl_sum: float = 0.0
+        self.live_sharpe: float = 0.0
+        self.validated: bool = False
+        # Allow callers to seed any field at construction (backward-compat
+        # with no-arg construction used throughout this module).
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
 
     def mutate(self, mutation_rate: float = 0.3):
         """Randomly adjust some genes."""
@@ -271,11 +283,19 @@ class StrategyDNA:
             'win_rate': self.win_rate, 'total_pnl': self.total_pnl,
             'trades': self.trades, 'sharpe': self.sharpe,
             'parents': self.parents, 'metrics': self.metrics,
+            'regime': self.regime,
+            'live_wins': self.live_wins, 'live_losses': self.live_losses,
+            'live_pnl_sum': self.live_pnl_sum, 'live_sharpe': self.live_sharpe,
+            'validated': self.validated,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> 'StrategyDNA':
-        """Reconstruct a StrategyDNA from a dict (round-trip with to_dict)."""
+        """Reconstruct a StrategyDNA from a dict (round-trip with to_dict).
+
+        Backward-compatible: legacy entries that predate the regime + live
+        stats fields load cleanly with defaults.
+        """
         dna = cls()
         dna.genes = d.get('genes', dna.genes)
         dna.entry_rule = d.get('entry_rule', dna.entry_rule)
@@ -290,7 +310,35 @@ class StrategyDNA:
         dna.generation = d.get('generation', 0)
         dna.parents = d.get('parents', [])
         dna.name = d.get('name', dna.name)
+        dna.regime = d.get('regime', 'ANY')
+        dna.live_wins = d.get('live_wins', 0)
+        dna.live_losses = d.get('live_losses', 0)
+        dna.live_pnl_sum = d.get('live_pnl_sum', 0.0)
+        dna.live_sharpe = d.get('live_sharpe', 0.0)
+        dna.validated = d.get('validated', False)
         return dna
+
+    # ── Live-trade feedback integration ─────────────────────────
+
+    def compute_blended_fitness(self, alpha: float = 0.5) -> float:
+        """Blend backtest fitness with live-trade performance.
+
+        Returns the raw backtest fitness until at least 3 live outcomes are
+        recorded; after that, blend with a live component scaled to match the
+        fitness range so the two terms combine cleanly.
+        """
+        live_total = self.live_wins + self.live_losses
+        if live_total < 3:
+            return self.fitness
+        live_win_rate = self.live_wins / live_total
+        live_avg_pnl = self.live_pnl_sum / live_total
+        live_component = (live_win_rate * 10.0) + max(-5.0, min(5.0, live_avg_pnl))
+        return alpha * self.fitness + (1 - alpha) * live_component
+
+    def mark_validated(self, min_trades: int = 5) -> None:
+        """Mark this strategy validated once it has enough live outcomes."""
+        if self.live_wins + self.live_losses >= min_trades:
+            self.validated = True
 
 
 # ═══════════════════════════════════════════════════════════════
