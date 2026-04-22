@@ -4290,19 +4290,49 @@ class TradingExecutor:
         except Exception:
             pass  # Don't block if indicator boosting fails
 
-        # ── GENETIC EVOLVED STRATEGIES SCORE BOOST (±1 point) ──
+        # ── GENETIC EVOLVED STRATEGIES SCORE BOOST (±1 normal, ±3 if validated) ──
         if genetic_count >= 2:
+            # Count how many voting DNAs are validated by live outcomes
+            _validated_count = 0
+            try:
+                _voting_dnas = getattr(self, '_last_genetic_voting_dnas', None) or []
+                if not _voting_dnas and isinstance(locals().get('_genetic_voting_dnas'), list):
+                    _voting_dnas = _genetic_voting_dnas
+                _hof = getattr(self, '_genetic_hall_of_fame', None) or []
+                if _voting_dnas and _hof:
+                    for _entry in _hof:
+                        _name = _entry.get('name') if isinstance(_entry, dict) else getattr(_entry, 'name', None)
+                        if _name in _voting_dnas:
+                            _validated = _entry.get('validated', False) if isinstance(_entry, dict) else getattr(_entry, 'validated', False)
+                            if _validated:
+                                _validated_count += 1
+            except Exception:
+                _validated_count = 0
+
+            # Escalate score impact if any voters are validated
+            _score_delta = 3 if _validated_count >= 1 else 1
+
             if signal == "BUY" and genetic_vote > 0:
-                entry_score += 1
+                entry_score += _score_delta
                 score_reasons.append(f"genetic_agree({genetic_count}v,+{genetic_vote})")
+                if _validated_count >= 1:
+                    try:
+                        logger.info(f"[GENETIC] escalated BUY score +{_score_delta} ({_validated_count} validated voters)")
+                    except Exception:
+                        pass
             elif signal == "BUY" and genetic_vote < 0:
-                entry_score -= 1
+                entry_score -= _score_delta
                 score_reasons.append(f"genetic_disagree({genetic_count}v,{genetic_vote})")
             elif signal == "SELL" and genetic_vote < 0:
-                entry_score += 1
+                entry_score += _score_delta
                 score_reasons.append(f"genetic_agree({genetic_count}v,{genetic_vote})")
+                if _validated_count >= 1:
+                    try:
+                        logger.info(f"[GENETIC] escalated SELL score +{_score_delta} ({_validated_count} validated voters)")
+                    except Exception:
+                        pass
             elif signal == "SELL" and genetic_vote > 0:
-                entry_score -= 1
+                entry_score -= _score_delta
                 score_reasons.append(f"genetic_disagree({genetic_count}v,+{genetic_vote})")
 
         # ── RANGE DETECTION — computed for LLM, NOT a hard block ──
