@@ -57,15 +57,56 @@ def build_server():
     """Build and return the FastMCP app. Imported lazily so tests can import
     this module without pulling the whole mcp runtime."""
     from mcp.server.fastmcp import FastMCP
+    try:
+        # Available in mcp >= 1.x — configures DNS-rebinding Host validation.
+        from mcp.server.transport_security import TransportSecuritySettings
+    except Exception:
+        TransportSecuritySettings = None
 
-    mcp = FastMCP(
-        "ACT-GPU",
-        instructions=(
-            "ACT trading-system inspection server. Read-only by default. "
-            "Use `status` for a quick health check; `evaluator_report` for full "
-            "component attribution. Logs available via `list_logs` + `tail_log`."
-        ),
-    )
+    # MCP's DNS-rebinding protection validates the Host header against an
+    # allowlist. Default list is empty or too restrictive, so requests from
+    # a Cloudflare tunnel (Host: *.trycloudflare.com) or after cloudflared's
+    # --http-host-header localhost rewrite get rejected with 421 Misdirected
+    # Request. We widen the list because auth is already provided by:
+    #   1. Cloudflare Access (or Zero Trust policy) at the edge
+    #   2. X-MCP-Token header checked server-side
+    # DNS rebinding is a browser-only attack; we're only serving non-browser
+    # MCP clients via header-authenticated HTTPS.
+    allowed_hosts_env = (os.environ.get("ACT_MCP_ALLOWED_HOSTS") or "").strip()
+    if allowed_hosts_env:
+        allowed_hosts = [h.strip() for h in allowed_hosts_env.split(",") if h.strip()]
+    else:
+        allowed_hosts = [
+            "*",                        # trust header auth; see note above
+            "127.0.0.1:*", "localhost:*",
+            "*.trycloudflare.com",      # quick tunnels
+        ]
+    allowed_origins = [
+        "*",                            # same rationale — MCP clients are not browsers
+    ]
+
+    if TransportSecuritySettings is not None:
+        tx_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,  # auth is via X-MCP-Token + CF Access
+            allowed_hosts=allowed_hosts,
+            allowed_origins=allowed_origins,
+        )
+        mcp = FastMCP(
+            "ACT-GPU",
+            instructions=(
+                "ACT trading-system inspection server. Read-only by default. "
+                "Use `status` for a quick health check; `evaluator_report` for full "
+                "component attribution. Logs available via `list_logs` + `tail_log`."
+            ),
+            transport_security=tx_security,
+        )
+    else:
+        mcp = FastMCP(
+            "ACT-GPU",
+            instructions=(
+                "ACT trading-system inspection server. Read-only by default."
+            ),
+        )
 
     # ── Read-only tools ─────────────────────────────────────────────
     @mcp.tool()
