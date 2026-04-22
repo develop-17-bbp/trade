@@ -216,6 +216,11 @@ if (-not (Get-Command "cloudflared" -ErrorAction SilentlyContinue)) {
     OK "cloudflared installed."
 }
 
+# ── Resolve script directory EARLY so later paths (docker-compose, process
+# launchers) can Join-Path against it. Without this, $dir is $null at line
+# 225 and Join-Path throws "Cannot bind argument to parameter 'Path'".
+$dir = $PSScriptRoot
+
 # ── Phase 1/2 observability stack (Docker) ─────────────────────────
 # Starts Redis, Prometheus, Grafana, Tempo, OTel Collector in WSL2 Docker
 # via docker-compose. Bot reads ACT_REDIS_URL + OTLP endpoint on localhost.
@@ -253,7 +258,7 @@ Get-Process | Where-Object { $_.MainWindowTitle -like "ACT*" } | Stop-Process -F
 Start-Sleep 2
 OK "Cleanup done."
 
-$dir = $PSScriptRoot
+# $dir resolved earlier (before observability stack). Keep PYTHON* env setup here.
 $env:PYTHONUNBUFFERED = "1"
 $env:PYTHONPATH = $dir
 
