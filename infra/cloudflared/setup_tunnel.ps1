@@ -113,7 +113,7 @@ OK "config.yml written to $ConfigPath"
 
 # ------ Step 4: route DNS (one CNAME per hostname) ------
 STEP 4 "Route DNS for each hostname"
-foreach ($Sub in @("grafana", "api")) {
+foreach ($Sub in @("grafana", "api", "mcp")) {
     $Host1 = "$Sub.$Domain"
     Write-Host "  Routing $Host1 -> $UUID"
     cloudflared tunnel route dns $TunnelName $Host1

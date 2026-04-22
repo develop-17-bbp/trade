@@ -41,5 +41,17 @@ ingress:
       connectTimeout: 10s
       httpHostHeader: localhost
 
+  # ── MCP server (Claude Code inspection tools) ──
+  # FastMCP streamable-HTTP transport. Must be behind Cloudflare Access Zero
+  # Trust because the tools expose log contents, git state, and (if
+  # ACT_MCP_ALLOW_MUTATIONS=1) bot restart. Service-token auth for
+  # non-interactive Claude Code sessions; email-OTP for browser inspection.
+  - hostname: mcp.REPLACE_ME_DOMAIN
+    service: http://localhost:9100
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 10s
+      httpHostHeader: localhost
+
   # ── Catch-all (REQUIRED) ──
   - service: http_status:404
