@@ -61,34 +61,7 @@ def _filter_joined(joined: List[Dict], asset: str) -> List[Dict]:
     return out
 
 
-def _class_weights(y: np.ndarray) -> np.ndarray:
-    n = len(y)
-    pos = int(np.sum(y == 1))
-    neg = int(np.sum(y == 0))
-    if pos == 0 or neg == 0:
-        return np.ones(n, dtype=float)
-    w_pos = n / (2.0 * pos)
-    w_neg = n / (2.0 * neg)
-    return np.where(y == 1, w_pos, w_neg).astype(float)
-
-
-def _optimal_threshold(probs: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
-    """Sweep TAKE thresholds; return the one that maximizes F1."""
-    best_f1, best_t = 0.0, 0.5
-    for t in np.arange(0.20, 0.85, 0.01):
-        p = (probs >= t).astype(int)
-        tp = int(np.sum((p == 1) & (y == 1)))
-        fp = int(np.sum((p == 1) & (y == 0)))
-        fn = int(np.sum((p == 0) & (y == 1)))
-        if tp == 0:
-            continue
-        prec = tp / (tp + fp)
-        rec = tp / (tp + fn)
-        f1 = 2 * prec * rec / (prec + rec + 1e-10)
-        if f1 > best_f1:
-            best_f1 = f1
-            best_t = float(t)
-    return best_t, best_f1
+from src.ml.training_utils import inverse_freq_weights as _class_weights, best_f1_threshold as _optimal_threshold
 
 
 def retrain(asset: str, min_joined: int, models_dir: str, force: bool) -> Dict:

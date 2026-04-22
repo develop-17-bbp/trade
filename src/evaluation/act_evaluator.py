@@ -115,19 +115,9 @@ def load_component_state(root: Optional[Path] = None) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────
 
 def _read_jsonl(path: str) -> List[Dict[str, Any]]:
-    if not os.path.exists(path):
-        return []
-    out: List[Dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                out.append(json.loads(line))
-            except Exception:
-                continue
-    return out
+    """Delegate to src.ml.shadow_log.read_all — same contract, one place to maintain."""
+    from src.ml.shadow_log import read_all
+    return read_all(path)
 
 
 def load_paper_trades(path: Optional[str] = None) -> List[Dict[str, Any]]:

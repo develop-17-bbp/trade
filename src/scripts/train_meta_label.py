@@ -383,20 +383,8 @@ def train(
         logger.info("Calibration: skipped (degenerate holdout)")
 
     # Thresholds (optimal TAKE cutoff)
-    best_f1, best_thresh = 0.0, 0.5
-    for t in np.arange(0.30, 0.75, 0.01):
-        p = (probs >= t).astype(int)
-        _tp = int(np.sum((p == 1) & (y_te == 1)))
-        _fp = int(np.sum((p == 1) & (y_te == 0)))
-        _fn = int(np.sum((p == 0) & (y_te == 1)))
-        if _tp == 0:
-            continue
-        _pr = _tp / (_tp + _fp)
-        _re = _tp / (_tp + _fn)
-        _f1 = 2 * _pr * _re / (_pr + _re + 1e-10)
-        if _f1 > best_f1:
-            best_f1 = _f1
-            best_thresh = float(t)
+    from src.ml.training_utils import best_f1_threshold as _optimal_threshold
+    best_thresh, best_f1 = _optimal_threshold(probs, y_te, lo=0.30, hi=0.75)
     thresh_path = os.path.join(models_dir, f"lgbm_{asset.lower()}_meta_thresholds.json")
     with open(thresh_path, "w", encoding="utf-8") as f:
         json.dump({"take_threshold": best_thresh, "take_f1": best_f1,
@@ -411,15 +399,7 @@ def train(
     }
 
 
-def _class_weights(y: np.ndarray) -> np.ndarray:
-    n = len(y)
-    pos = int(np.sum(y == 1))
-    neg = int(np.sum(y == 0))
-    if pos == 0 or neg == 0:
-        return np.ones(n, dtype=float)
-    w_pos = n / (2.0 * pos)
-    w_neg = n / (2.0 * neg)
-    return np.where(y == 1, w_pos, w_neg).astype(float)
+from src.ml.training_utils import inverse_freq_weights as _class_weights
 
 
 def main() -> int:

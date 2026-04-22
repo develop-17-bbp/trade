@@ -6735,13 +6735,6 @@ class TradingExecutor:
             'rl_state': ml_context.get('_rl_state', None),        # RL state at entry (for learning)
             'rl_action_idx': ml_context.get('_rl_action_idx', 0),  # RL action chosen at entry
             'ml_predictions': _ml_predictions_snapshot,           # Model Accuracy telemetry
-            # Shadow-mode: features + meta_prob captured at entry so shadow_retrain
-            # can join on outcome later. Kept on the position object so the exit
-            # path can write the matching outcome record without re-computing.
-            'shadow_features': ml_context.get('meta_features_snapshot'),
-            'shadow_meta_prob_raw': ml_context.get('meta_prob_raw'),
-            'shadow_meta_prob_cal': ml_context.get('meta_prob'),
-            'shadow_meta_threshold': ml_context.get('meta_take_threshold'),
         }
         self.last_trade_time[asset] = time.time()
 

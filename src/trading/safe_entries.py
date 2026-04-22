@@ -289,13 +289,21 @@ class SafeEntryState:
         return mean / math.sqrt(var)
 
     def combined_rolling_sharpe(self, n: int = 30) -> float:
-        """Sharpe over all assets' combined pnl stream — used for the readiness gate."""
-        merged: List[Tuple[float, float]] = []
-        for asset, s in self.assets.items():
-            for p in s.trade_pnl_pcts:
-                merged.append((s.last_outcome_ts, p))
-        merged.sort()
-        xs = [p for _, p in merged[-n:]] if len(merged) >= n else [p for _, p in merged]
+        """Sharpe over the pooled last-n pnl samples across assets.
+
+        We don't track per-trade timestamps inside each asset's pnl list (only
+        `last_outcome_ts` is recorded, and it's shared across all trades in
+        that asset's rolling window), so strict chronological interleaving
+        across assets isn't possible. We pool the most recent `n` samples
+        from each asset's cap-100 window and compute Sharpe on that sample.
+        Sharpe's mean/std are invariant to order, so this is correct for the
+        readiness-gate's purpose ("is the recent trade distribution good").
+        """
+        xs: List[float] = []
+        for s in self.assets.values():
+            # Take at most n from each asset's already-capped rolling window
+            xs.extend(s.trade_pnl_pcts[-n:])
+        xs = xs[-n:] if len(xs) > n else xs
         if len(xs) < 2:
             return 0.0
         mean = sum(xs) / len(xs)
