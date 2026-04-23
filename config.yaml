@@ -116,43 +116,49 @@ ai:
   llm_provider: auto
   claude_model: claude-haiku-4-5
 
-  # ── Dual-brain model split (C5c — reasoning-pair default) ──
+  # ── Dual-brain model split (C5d — named profiles, A/B switchable) ──
   #
-  # Per operator direction: BOTH brains should do deep reasoning, not
-  # just the analyst. Full DeepSeek-V3 / R1 (671B MoE) won't fit on a
-  # 32 GB GPU; we use the official DeepSeek-R1 distills which preserve
-  # R1's <think> chain-of-thought into a smaller Qwen backbone.
+  # Three brain profiles, env-switchable via ACT_BRAIN_PROFILE=<name>
+  # or pinned below via `profile:`. Per-role overrides via
+  # ACT_SCANNER_MODEL / ACT_ANALYST_MODEL still win over profile.
   #
-  #   Analyst (orchestrator, full reasoning) = deepseek-r1:32b @ Q4_K_M
-  #     ~20 GB VRAM. Kept verbose — <think> trace is useful for
-  #     TradePlan audit, feeds back into brain_memory AnalystTrace.
+  #   dense_r1      — deepseek-r1:32b + deepseek-r1:7b   (default)
+  #                   Both DeepSeek-R1 distills (dense). Most
+  #                   consistent output. Safest for paper soak —
+  #                   fewer variance sources when debugging shadow
+  #                   plan quality. ~25 GB combined.
   #
-  #   Scanner (worker, fast reasoning) = deepseek-r1:7b @ Q4_K_M
-  #     ~5 GB VRAM. Reasoning-capable at tick cadence (~60-180s).
-  #     <think> block is auto-stripped before the scanner's JSON
-  #     reaches brain_memory (see src/ai/dual_brain.py
-  #     strip_reasoning_tags) so the next analyst cycle sees a clean,
-  #     compact scanner report — no CoT bloat in the seed context.
+  #   moe_agentic   — qwen3-coder:30b + qwen2.5-coder:7b
+  #                   MoE analyst (Qwen3-Coder-30B-A3B, ~3B active)
+  #                   + dense coder worker. 2026 agentic gold
+  #                   standard; best tool-use speed; less raw
+  #                   reasoning depth than R1. ~24 GB combined.
   #
-  # Combined ~25 GB — fits with KV cache + OLLAMA_NUM_PARALLEL=4.
-  # Set num_ctx=32000 in each Modelfile for long-horizon memory.
+  #   hybrid        — qwen3-coder:30b + deepseek-r1:7b
+  #                   MoE agentic analyst + dense R1 scanner.
+  #                   Author's recommendation AFTER paper soak
+  #                   clears Sharpe ≥ 1.0. ~24 GB combined.
   #
-  # Alternative pairs (switch via env or by editing the two _model
-  # fields below):
-  #   * qwen3-coder:30b + qwen2.5-coder:7b — agentic-tool-use specialised
-  #     best for heavy MCP + structured JSON; less reasoning depth.
-  #   * qwen3:32b + devstral:24b — original operator pick, ~34 GB tight.
+  # A/B workflow on GPU box: leave config at default, set env per
+  # week: `setx ACT_BRAIN_PROFILE moe_agentic` for a week, then
+  # flip to `hybrid`, then back to `dense_r1`. Compare shadow-plan
+  # PnL + rolling Sharpe in warm_store across profiles.
   #
-  # Env overrides: ACT_SCANNER_MODEL / ACT_ANALYST_MODEL.
+  # See docs/dual_brain_setup.md for Modelfile templates and pull
+  # commands. All three profiles fit RTX 5090 32 GB with
+  # OLLAMA_NUM_PARALLEL=4.
   dual_brain:
     enabled: true
-    scanner_model: deepseek-r1:7b       # worker — fast reasoning, <think>-stripped
-    scanner_role: "market_survey"        # task tag for routing
-    analyst_model: deepseek-r1:32b      # orchestrator — full reasoning trace kept
+    profile: dense_r1                   # one of: dense_r1 | moe_agentic | hybrid
+    scanner_role: "market_survey"
     analyst_role: "trade_plan_compile"
-    fallback_cross: true                 # if primary fails, try the other
-    scanner_temperature: 0.3             # small CoT slack
-    analyst_temperature: 0.4             # analyst explores; strip noise via validator
+    fallback_cross: true                # if primary fails, try the other
+    # Leave scanner_model / analyst_model unset to use profile defaults.
+    # To pin a specific model regardless of profile:
+    # scanner_model: deepseek-r1:7b
+    # analyst_model: deepseek-r1:32b
+    # scanner_temperature: 0.3
+    # analyst_temperature: 0.4
   use_llm_trade_decider: true
   llm_trade_decider_mode: primary
   llm_trade_conf_threshold: 0.8

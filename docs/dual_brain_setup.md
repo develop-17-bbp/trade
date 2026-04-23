@@ -1,26 +1,53 @@
 # Dual-Brain Setup on RTX 5090 (32 GB VRAM)
 
-## Current default pair — reasoning on both sides (C5c)
+## Three profiles, A/B switchable (C5d)
 
+Three named brain profiles in `config.yaml`. Pick via
+`ai.dual_brain.profile: <name>` or the `ACT_BRAIN_PROFILE` env var.
+Per-role env overrides (`ACT_SCANNER_MODEL` / `ACT_ANALYST_MODEL`)
+still win over profile defaults.
+
+| Profile | Analyst | Scanner | Combined VRAM | When to use |
+|---|---|---|---|---|
+| **`dense_r1`** (default) | deepseek-r1:32b | deepseek-r1:7b | ~25 GB | Paper soak. Most consistent output; fewest variance sources while you validate the system. |
+| **`moe_agentic`** | qwen3-coder:30b (MoE) | qwen2.5-coder:7b | ~24 GB | Tool-use heavy workflows + MCP. Fastest; 2026 agentic gold standard. |
+| **`hybrid`** | qwen3-coder:30b (MoE) | deepseek-r1:7b | ~24 GB | Post-soak recommendation. MoE speed for agentic tool use + dense reasoning scanner for tick-cadence consistency. |
+
+All three:
+* Fit on RTX 5090 32 GB with KV cache headroom.
+* Require `OLLAMA_NUM_PARALLEL=4` for concurrent scanner+analyst inference.
+* Auto-strip `<think>...</think>` tags from scanner output (via
+  `src/ai/dual_brain.py::strip_reasoning_tags`) so reasoning traces don't
+  bloat brain_memory. Analyst keeps its full trace for audit.
+
+### A/B workflow on the GPU box
+
+```powershell
+# Week 1 — default (dense reasoning):
+# do nothing; config.yaml profile: dense_r1 is the default
+# restart bot, run paper soak for 7 days
+
+# Week 2 — MoE agentic:
+setx ACT_BRAIN_PROFILE moe_agentic
+# restart bot + ollama
+
+# Week 3 — hybrid:
+setx ACT_BRAIN_PROFILE hybrid
+# restart bot
 ```
-Analyst (orchestrator)  deepseek-r1:32b   Q4_K_M   ~20 GB   reasoning-focused
-Scanner (worker)        deepseek-r1:7b    Q4_K_M    ~5 GB   reasoning + fast
-────────────────────────────────────────────────────────────────────────
-Combined                                           ~25 GB   (fits w/ KV cache)
+
+Compare profiles in warm_store afterward:
+
+```sql
+SELECT
+  json_extract(component_signals, '$.analyst_model') AS profile_analyst,
+  COUNT(*) AS shadow_plans,
+  AVG(CASE WHEN final_action LIKE 'SHADOW_LONG' THEN 1 ELSE 0 END) AS long_rate
+FROM decisions
+WHERE decision_id LIKE 'shadow-%'
+  AND ts_ns >= (strftime('%s', 'now', '-7 days') * 1000000000)
+GROUP BY profile_analyst;
 ```
-
-Both are **DeepSeek-R1 distills** — they preserve R1's `<think>`
-chain-of-thought trace into a smaller Qwen backbone. Full DeepSeek-V3 /
-R1 (671B MoE) doesn't fit on a 5090.
-
-**Scanner-side `<think>` stripping:** the scanner runs every tick (60-180s).
-Its raw output can include a 1000+ token reasoning trace that would bloat
-`brain_memory` and the analyst's seed context. `dual_brain.py` automatically
-strips `<think>...</think>` from scanner output (controlled by
-`DEFAULT_STRIP_THINK_TAGS_FROM_SCANNER`), keeping only the final JSON.
-
-Analyst keeps its full reasoning trace — it's only called on-demand when
-the scanner flags a setup, and the trace is valuable audit data.
 
 ## Pull on the GPU box
 

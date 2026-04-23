@@ -5,14 +5,18 @@ import pytest
 
 from src.ai.dual_brain import (
     ANALYST,
+    BRAIN_PROFILES,
     BrainResponse,
     DEFAULT_ANALYST_MODEL,
     DEFAULT_ANALYST_TEMP,
+    DEFAULT_PROFILE,
     DEFAULT_SCANNER_MODEL,
     DEFAULT_SCANNER_TEMP,
     DISABLE_ENV,
+    PROFILE_ENV,
     SCANNER,
     _resolve,
+    _resolve_profile,
     analyze,
     build_analyst_llm_call,
     call_brain,
@@ -20,6 +24,74 @@ from src.ai.dual_brain import (
     scan,
     strip_reasoning_tags,
 )
+
+
+# ── Profiles (C5d) ─────────────────────────────────────────────────────
+
+
+def test_brain_profiles_has_three_named():
+    assert {"dense_r1", "moe_agentic", "hybrid"} <= set(BRAIN_PROFILES.keys())
+
+
+def test_default_profile_is_dense_r1():
+    assert DEFAULT_PROFILE == "dense_r1"
+    # Each profile must carry the four required fields.
+    for name, p in BRAIN_PROFILES.items():
+        for k in ("scanner_model", "analyst_model",
+                  "scanner_temperature", "analyst_temperature", "description"):
+            assert k in p, f"profile {name!r} missing {k!r}"
+
+
+def test_resolve_profile_default_when_env_and_config_empty(monkeypatch):
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
+    prof = _resolve_profile(None)
+    assert prof is BRAIN_PROFILES[DEFAULT_PROFILE]
+
+
+def test_resolve_profile_env_beats_config(monkeypatch):
+    monkeypatch.setenv(PROFILE_ENV, "moe_agentic")
+    cfg = {"ai": {"dual_brain": {"profile": "hybrid"}}}
+    assert _resolve_profile(cfg) is BRAIN_PROFILES["moe_agentic"]
+
+
+def test_resolve_profile_config_picks_when_no_env(monkeypatch):
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
+    prof = _resolve_profile({"ai": {"dual_brain": {"profile": "hybrid"}}})
+    assert prof is BRAIN_PROFILES["hybrid"]
+
+
+def test_resolve_profile_unknown_falls_back(monkeypatch):
+    monkeypatch.setenv(PROFILE_ENV, "definitely_not_a_profile")
+    assert _resolve_profile(None) is BRAIN_PROFILES[DEFAULT_PROFILE]
+
+
+def test_resolve_uses_profile_models_when_no_explicit_config(monkeypatch):
+    monkeypatch.setenv(PROFILE_ENV, "moe_agentic")
+    monkeypatch.delenv("ACT_SCANNER_MODEL", raising=False)
+    monkeypatch.delenv("ACT_ANALYST_MODEL", raising=False)
+    s = _resolve(None, SCANNER)
+    a = _resolve(None, ANALYST)
+    assert s.model == BRAIN_PROFILES["moe_agentic"]["scanner_model"]
+    assert a.model == BRAIN_PROFILES["moe_agentic"]["analyst_model"]
+
+
+def test_explicit_config_still_wins_over_profile(monkeypatch):
+    monkeypatch.setenv(PROFILE_ENV, "moe_agentic")
+    cfg = {"ai": {"dual_brain": {"scanner_model": "pinned:7b"}}}
+    s = _resolve(cfg, SCANNER)
+    a = _resolve(cfg, ANALYST)
+    assert s.model == "pinned:7b"
+    # analyst wasn't pinned, so profile wins.
+    assert a.model == BRAIN_PROFILES["moe_agentic"]["analyst_model"]
+
+
+def test_per_role_env_still_wins_over_profile(monkeypatch):
+    monkeypatch.setenv(PROFILE_ENV, "hybrid")
+    monkeypatch.setenv("ACT_SCANNER_MODEL", "env-scan:0.5b")
+    s = _resolve(None, SCANNER)
+    a = _resolve(None, ANALYST)
+    assert s.model == "env-scan:0.5b"
+    assert a.model == BRAIN_PROFILES["hybrid"]["analyst_model"]
 
 
 # ── Config resolution ──────────────────────────────────────────────────

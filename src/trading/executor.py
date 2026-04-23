@@ -9400,6 +9400,31 @@ Respond ONLY with JSON:
             from src.orchestration.warm_store import get_store
             import uuid as _uuid
             store = get_store()
+            # Tag the row with the active brain profile + models so
+            # the operator can A/B weekly profiles by querying
+            # component_signals.analyst_model / scanner_model /
+            # brain_profile in warm_store.
+            try:
+                from src.ai.dual_brain import (
+                    ANALYST, SCANNER, _resolve, _resolve_profile,
+                )
+                _cfg = getattr(self, 'config', None)
+                _prof = _resolve_profile(_cfg)
+                _analyst_cfg = _resolve(_cfg, ANALYST)
+                _scanner_cfg = _resolve(_cfg, SCANNER)
+                _brain_tag = {
+                    "brain_profile": next(
+                        (name for name, p in __import__('src.ai.dual_brain',
+                                                         fromlist=['BRAIN_PROFILES']
+                                                         ).BRAIN_PROFILES.items()
+                         if p is _prof),
+                        "unknown",
+                    ),
+                    "analyst_model": _analyst_cfg.model,
+                    "scanner_model": _scanner_cfg.model,
+                }
+            except Exception:
+                _brain_tag = {}
             store.write_decision({
                 "decision_id": f"shadow-{_uuid.uuid4().hex}",
                 "symbol": asset,
@@ -9412,6 +9437,7 @@ Respond ONLY with JSON:
                     "steps_taken": result.steps_taken,
                     "terminated_reason": result.terminated_reason,
                     "tool_calls": [t.get("name") for t in result.tool_calls],
+                    **_brain_tag,
                 },
             })
         except Exception as e:

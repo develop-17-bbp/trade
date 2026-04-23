@@ -80,33 +80,77 @@ VALID_BRAINS = (SCANNER, ANALYST)
 DISABLE_ENV = "ACT_DISABLE_DUAL_BRAIN"
 
 
-# ── Defaults (env > config > these) ─────────────────────────────────────
+# ── Profiles (C5d) ──────────────────────────────────────────────────────
 #
-# Reasoning-pair default (C5c, per operator request for deep reasoning on
-# BOTH sides). Full DeepSeek-V3/R1 (671B MoE) is infeasible on a single
-# 32 GB GPU — we use the official DeepSeek-R1 distills which preserve
-# the <think> chain-of-thought into a smaller Qwen backbone:
+# Three named brain profiles. Operator can A/B-test them via
+# ACT_BRAIN_PROFILE=<name> at runtime, or pin via config.yaml
+# `ai.dual_brain.profile: <name>`. All three fit on RTX 5090 32 GB.
 #
-#   Analyst (orchestrator, full reasoning)
-#       deepseek-r1:32b (distill-qwen-32b) @ Q4_K_M ≈ 20 GB
-#       Kept verbose — <think> trace is useful for the TradePlan audit
-#       log and feeds back into brain_memory's AnalystTrace.
+#   dense_r1      — deepseek-r1:32b + deepseek-r1:7b (default, most
+#                   consistent, reasoning-depth both sides). Safest
+#                   for paper soak; fewer variance sources to debug.
+#   moe_agentic   — qwen3-coder:30b + qwen2.5-coder:7b (MoE analyst
+#                   + dense worker). Best tool-use speed, 2026
+#                   agentic gold standard; less raw reasoning depth.
+#   hybrid        — qwen3-coder:30b (MoE analyst, ~3B active) +
+#                   deepseek-r1:7b (dense reasoning scanner).
+#                   Author's recommendation post-soak: fast agentic
+#                   tool-use where it matters, reasoning consistency
+#                   at tick cadence.
 #
-#   Scanner (worker, fast reasoning)
-#       deepseek-r1:7b (distill-qwen-7b) @ Q4_K_M ≈ 5 GB
-#       Reasoning-capable at tick cadence (~60-180s). Output is
-#       <think>-stripped by strip_reasoning_tags() so the scanner's
-#       final JSON stays compact for brain_memory.
-#
-# Combined ~25 GB — fits with KV cache + OLLAMA_NUM_PARALLEL=4.
-# Alternative pairs operators can flip to via env or config:
-#   * qwen3-coder:30b + qwen2.5-coder:7b (agentic-tool-use specialized)
-#   * qwen3:32b + devstral:24b (originally-stated pair, ~34 GB tight)
+# Operators can still override per-role via ACT_SCANNER_MODEL /
+# ACT_ANALYST_MODEL (those win over profile selection).
 
-DEFAULT_SCANNER_MODEL = "deepseek-r1:7b"       # worker — reasoning + fast
-DEFAULT_ANALYST_MODEL = "deepseek-r1:32b"      # orchestrator — full reasoning
-DEFAULT_SCANNER_TEMP = 0.3                      # small slack for CoT
-DEFAULT_ANALYST_TEMP = 0.4                      # more slack — analyst explores
+BRAIN_PROFILES: Dict[str, Dict[str, Any]] = {
+    "dense_r1": {
+        "scanner_model": "deepseek-r1:7b",
+        "analyst_model": "deepseek-r1:32b",
+        "scanner_temperature": 0.3,
+        "analyst_temperature": 0.4,
+        "description": "Both DeepSeek-R1 distills (dense). Most consistent; safest for paper soak.",
+    },
+    "moe_agentic": {
+        "scanner_model": "qwen2.5-coder:7b",
+        "analyst_model": "qwen3-coder:30b",     # MoE 30B-A3B (~3B active)
+        "scanner_temperature": 0.2,
+        "analyst_temperature": 0.3,
+        "description": "MoE analyst + dense coder worker. Fastest tool use; 2026 agentic gold standard.",
+    },
+    "hybrid": {
+        "scanner_model": "deepseek-r1:7b",      # dense reasoning worker
+        "analyst_model": "qwen3-coder:30b",     # MoE agentic orchestrator
+        "scanner_temperature": 0.3,
+        "analyst_temperature": 0.3,
+        "description": "MoE analyst + dense reasoning scanner. Post-soak recommendation.",
+    },
+}
+
+DEFAULT_PROFILE = "dense_r1"
+PROFILE_ENV = "ACT_BRAIN_PROFILE"
+
+
+def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Pick the active profile: env > config > default. Unknown names
+    fall back to the default so typos don't break the runtime."""
+    name = os.environ.get(PROFILE_ENV, "").strip()
+    if not name and isinstance(config, dict):
+        cfg = (config.get("ai") or {}).get("dual_brain") or {}
+        name = str(cfg.get("profile") or "").strip()
+    if not name or name not in BRAIN_PROFILES:
+        if name and name not in BRAIN_PROFILES:
+            logger.warning("unknown brain profile %r; falling back to %s",
+                           name, DEFAULT_PROFILE)
+        name = DEFAULT_PROFILE
+    return BRAIN_PROFILES[name]
+
+
+# ── Defaults (fall-through when neither profile nor explicit cfg) ───────
+
+_DEFAULT_PROFILE_FIELDS = BRAIN_PROFILES[DEFAULT_PROFILE]
+DEFAULT_SCANNER_MODEL = _DEFAULT_PROFILE_FIELDS["scanner_model"]
+DEFAULT_ANALYST_MODEL = _DEFAULT_PROFILE_FIELDS["analyst_model"]
+DEFAULT_SCANNER_TEMP = _DEFAULT_PROFILE_FIELDS["scanner_temperature"]
+DEFAULT_ANALYST_TEMP = _DEFAULT_PROFILE_FIELDS["analyst_temperature"]
 DEFAULT_STRIP_THINK_TAGS_FROM_SCANNER = True    # compact scanner output
 
 
@@ -173,18 +217,38 @@ class BrainResponse:
 
 
 def _resolve(config: Optional[Dict[str, Any]], brain: str) -> BrainConfig:
+    """Resolve the active BrainConfig for a role.
+
+    Precedence:
+      1. Per-role env override (ACT_SCANNER_MODEL / ACT_ANALYST_MODEL).
+      2. Per-role explicit config key (scanner_model / analyst_model).
+      3. Active profile's default (ACT_BRAIN_PROFILE or
+         config.ai.dual_brain.profile or DEFAULT_PROFILE).
+    """
     assert brain in VALID_BRAINS
-    cfg = {}
+    cfg: Dict[str, Any] = {}
     if isinstance(config, dict):
         cfg = (config.get("ai") or {}).get("dual_brain") or {}
 
+    profile_defaults = _resolve_profile(config)
+
     if brain == SCANNER:
-        model = os.environ.get("ACT_SCANNER_MODEL") or cfg.get("scanner_model") or DEFAULT_SCANNER_MODEL
-        temp = float(cfg.get("scanner_temperature") or DEFAULT_SCANNER_TEMP)
+        model = (
+            os.environ.get("ACT_SCANNER_MODEL")
+            or cfg.get("scanner_model")
+            or profile_defaults["scanner_model"]
+        )
+        temp = float(cfg.get("scanner_temperature")
+                     or profile_defaults["scanner_temperature"])
         sys_prompt = SCANNER_SYSTEM
     else:
-        model = os.environ.get("ACT_ANALYST_MODEL") or cfg.get("analyst_model") or DEFAULT_ANALYST_MODEL
-        temp = float(cfg.get("analyst_temperature") or DEFAULT_ANALYST_TEMP)
+        model = (
+            os.environ.get("ACT_ANALYST_MODEL")
+            or cfg.get("analyst_model")
+            or profile_defaults["analyst_model"]
+        )
+        temp = float(cfg.get("analyst_temperature")
+                     or profile_defaults["analyst_temperature"])
         sys_prompt = ANALYST_SYSTEM
     return BrainConfig(role=brain, model=str(model), temperature=float(temp), system_prompt=sys_prompt)
 
