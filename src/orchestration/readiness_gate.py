@@ -263,6 +263,60 @@ def is_live_ready() -> bool:
     return evaluate().open_
 
 
+# ── Emergency-mode signal (C4a) ─────────────────────────────────────────
+#
+# When the rolling Sharpe lags the target-derived equivalent badly enough,
+# publish a boolean signal that the scheduler + autonomous_loop can read
+# to tighten their cadence (hyperopt 4h→2h, LoRA retrain 12h→6h, etc.).
+#
+# This is a SIGNAL, not a gate criterion. The readiness gate itself still
+# closes only on the hard criteria above (trades, soak, Sharpe floor,
+# violation rate). Emergency mode just says "we're underperforming target,
+# spin the adaptation loops harder."
+
+EMERGENCY_MODE_RATIO = float(os.getenv("ACT_EMERGENCY_MODE_RATIO", "0.7"))
+EMERGENCY_ENV = "ACT_EMERGENCY_MODE"
+
+
+def is_emergency_mode(state: GateState = None) -> bool:
+    """True when rolling_sharpe / target_sharpe_equiv < EMERGENCY_MODE_RATIO.
+
+    Reads the most recent gate evaluation (or runs a fresh one if caller
+    didn't pass one in). Cheap enough to call from scheduler compute_score
+    — the evaluate() path is a single SQLite count + a sqlite JSON scan.
+    """
+    if state is None:
+        state = evaluate()
+    details = state.details or {}
+    sharpe = float(details.get("rolling_sharpe") or 0.0)
+    samples = int(details.get("sharpe_samples") or 0)
+    _target = details.get("target_annual_return_pct")
+    target_annual = float(_target) if _target is not None else 25.0
+    if target_annual <= 0 or samples < 10:
+        # No target to compare against, or too few samples to call it.
+        return False
+    # Target-equivalent Sharpe: inverse of the heuristic used in evaluate().
+    # annualised ≈ sharpe × 30, so target_sharpe ≈ target_annual / 30.
+    target_sharpe = target_annual / 30.0
+    if target_sharpe <= 0:
+        return False
+    return (sharpe / target_sharpe) < EMERGENCY_MODE_RATIO
+
+
+def publish_emergency_mode(flag: bool) -> None:
+    """Set process env + emit metric so other components can subscribe.
+
+    Uses os.environ so sub-processes inherit it; the scheduler re-reads
+    on every compute_score call so a flap takes effect within one tick.
+    """
+    os.environ[EMERGENCY_ENV] = "1" if flag else "0"
+    try:
+        from src.orchestration.metrics import record_emergency_mode
+        record_emergency_mode(bool(flag))
+    except Exception:
+        pass
+
+
 def format_report(state: GateState = None) -> str:
     """Human-readable multi-line report — used by CLI + startup banner."""
     if state is None:

@@ -186,6 +186,13 @@ if _HAS_CLIENT:
         registry=REGISTRY,
     )
 
+    emergency_mode = Gauge(
+        "act_emergency_mode",
+        "1 when rolling Sharpe is materially below the target-equivalent. "
+        "Scheduler + autonomous loop halve their intervals while set.",
+        registry=REGISTRY,
+    )
+
 
 def start_exporter(port: Optional[int] = None) -> bool:
     """Start the Prometheus HTTP exporter. Idempotent + safe to call early.
@@ -372,6 +379,15 @@ def record_readiness_gate(open_: bool, failure_count: int = 0) -> None:
     try:
         readiness_gate.set(1 if open_ else 0)
         readiness_gate_failures.set(int(failure_count))
+    except Exception:
+        pass
+
+
+def record_emergency_mode(flag: bool) -> None:
+    if not _ENABLED or not _HAS_CLIENT:
+        return
+    try:
+        emergency_mode.set(1 if flag else 0)
     except Exception:
         pass
 

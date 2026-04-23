@@ -150,3 +150,33 @@ def get_scheduler() -> Scheduler:
         if _scheduler_singleton is None:
             _scheduler_singleton = Scheduler()
         return _scheduler_singleton
+
+
+# ── Emergency-mode aware rate helper (C4a) ──────────────────────────────
+#
+# The readiness gate publishes `ACT_EMERGENCY_MODE=1` when the rolling
+# Sharpe lags target (see src/orchestration/readiness_gate.py::is_emergency_mode).
+# Jobs that should "spin harder" under pressure — hyperopt, freqai retrain,
+# genetic evolution — wrap their base rate through this helper instead of
+# passing a static rate_s.
+
+import os  # noqa: E402  (kept local to module; no other os use above)
+
+
+def emergency_aware_rate(base_rate_s: float, factor: float = 0.5) -> Callable[[], float]:
+    """Return a compute_score callable: base rate normally, base * factor
+    in emergency mode. Env is re-read on every call so a flap takes effect
+    within one scheduler tick.
+
+    factor=0.5 → halved interval in emergency, doubled cadence.
+    factor=1.0 → no-op (pass-through).
+    """
+    base = float(base_rate_s)
+    fac = max(0.1, min(1.0, float(factor)))
+
+    def _compute() -> float:
+        if os.environ.get("ACT_EMERGENCY_MODE", "0") == "1":
+            return base * fac
+        return base
+
+    return _compute

@@ -23,6 +23,26 @@ funding_arb:
   min_annualised_pct: 12.0
   notional_usd: 2000
   expected_hold_days: 7
+
+# ── Agentic trade loop (C3 build; default off) ──
+# Multi-turn LLM tool-use loop that compiles a TradePlan before any order
+# reaches the executor. Keep disabled for now; flip when 14-day paper soak
+# proves stable and the operator is ready. Env ACT_AGENTIC_LOOP=1 also flips
+# it on. Env ACT_DISABLE_AGENTIC_LOOP=1 forces OFF (overrides config).
+agentic_loop:
+  enabled: false
+  max_steps: 8
+  max_context_tokens: 80000
+  keep_recent_rounds: 4
+
+# ── Emergency-mode signal (informational) ──
+# When rolling Sharpe / target-equivalent Sharpe < emergency_ratio, the
+# scheduler halves retrain intervals and autonomous_loop tightens its
+# adaptation cadence. NOT a trading gate — the readiness gate still
+# controls live-capital promotion.
+emergency_mode:
+  enabled: true
+  ratio: 0.7                  # emergency when sharpe_obs/sharpe_target < this
 exchanges:
 - name: robinhood
   assets:
