@@ -1,0 +1,11 @@
+name: readiness
+description: >
+  Print the current readiness-gate state — open/closed, numbers, and
+  reasons. Includes progress_to_target_pct (agentic-loop metric) and
+  emergency-mode status. Safe, read-only.
+reversible: true
+requires_confirmation: false
+tags:
+  - ops
+  - read_only
+  - diagnostic

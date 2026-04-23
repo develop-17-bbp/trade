@@ -1,0 +1,14 @@
+name: emergency-flatten
+description: >
+  Emergency stop. Sets ACT_DISABLE_AGENTIC_LOOP=1 (halts shadow + live
+  agentic cycles), writes an incident row to warm_store, and raises
+  emergency mode. Does NOT close positions automatically — that's left
+  to the operator's market order (the executor will still manage open
+  positions via stops/TPs). Non-reversible in the sense that the flag
+  persists until explicitly cleared by the operator.
+reversible: false
+requires_confirmation: true
+tags:
+  - ops
+  - destructive
+  - kill_switch

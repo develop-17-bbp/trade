@@ -1,0 +1,12 @@
+name: regime-check
+description: >
+  Report current market regime plus the champion strategy in the
+  strategy repository for that regime. Shows the bandit's top-3
+  picks by posterior mean. Read-only.
+reversible: true
+requires_confirmation: false
+tags:
+  - ops
+  - read_only
+  - diagnostic
+  - strategy
