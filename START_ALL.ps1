@@ -84,18 +84,34 @@ $geneticInterval = [math]::Round([math]::Max(0.25, $adaptInterval), 2)
 # Population: scales linearly with compute score
 $geneticPop = [math]::Min(500, [math]::Max(10, [math]::Floor($computeScore * 2)))
 
-# Models: load more if VRAM allows
-if ($gpuVRAM -ge 40) {
-    # A100/H100+ : can run multiple large models simultaneously
-    $ollamaModels = @("mistral:latest", "llama3.2:latest", "neural-chat:latest", "codellama:latest")
-} elseif ($gpuVRAM -ge 16) {
-    $ollamaModels = @("mistral:latest", "llama3.2:latest", "neural-chat:latest")
-} elseif ($gpuVRAM -ge 8) {
-    $ollamaModels = @("mistral:latest", "llama3.2:latest")
-} elseif ($gpuVRAM -ge 4) {
-    $ollamaModels = @("llama3.2:latest")
-} else {
-    $ollamaModels = @("llama3.2:latest")
+# ── Dual-brain models (C5d profile default: dense_r1) ──
+# ACT_BRAIN_PROFILE can override which pair we pull; the operator can
+# also pin per-role via ACT_SCANNER_MODEL / ACT_ANALYST_MODEL.
+$brainProfile = $env:ACT_BRAIN_PROFILE
+if (-not $brainProfile) { $brainProfile = "dense_r1" }
+
+switch ($brainProfile) {
+    "dense_r1"    { $scannerModel = "deepseek-r1:7b";      $analystModel = "deepseek-r1:32b" }
+    "moe_agentic" { $scannerModel = "qwen2.5-coder:7b";    $analystModel = "qwen3-coder:30b" }
+    "hybrid"      { $scannerModel = "deepseek-r1:7b";      $analystModel = "qwen3-coder:30b" }
+    default {
+        WARN "Unknown ACT_BRAIN_PROFILE=$brainProfile — defaulting to dense_r1"
+        $scannerModel = "deepseek-r1:7b"; $analystModel = "deepseek-r1:32b"
+    }
+}
+
+# Per-role env overrides always win.
+if ($env:ACT_SCANNER_MODEL) { $scannerModel = $env:ACT_SCANNER_MODEL }
+if ($env:ACT_ANALYST_MODEL) { $analystModel = $env:ACT_ANALYST_MODEL }
+
+$ollamaModels = @($analystModel, $scannerModel) | Select-Object -Unique
+
+# On very small GPUs (<8 GB), the 32B analyst won't fit even at Q4_K_M.
+# Downshift the whole profile to 7B-only mode with a warning.
+if ($gpuVRAM -lt 8 -and $gpuVRAM -gt 0) {
+    WARN "gpuVRAM=$gpuVRAM GB — downshifting analyst from $analystModel to $scannerModel"
+    $analystModel = $scannerModel
+    $ollamaModels = @($scannerModel)
 }
 
 $tier = "SCORE=$computeScore"
@@ -261,6 +277,23 @@ OK "Cleanup done."
 # $dir resolved earlier (before observability stack). Keep PYTHON* env setup here.
 $env:PYTHONUNBUFFERED = "1"
 $env:PYTHONPATH = $dir
+
+# ── Agentic-loop env (C17) ──
+# Turn the shadow loop ON by default so the GPU box is producing shadow
+# plans + brain_memory scan reports + graph edges from the moment the
+# bot boots. Set ACT_DISABLE_AGENTIC_LOOP=1 in .env to force off.
+if (-not $env:ACT_AGENTIC_LOOP) { $env:ACT_AGENTIC_LOOP = "1" }
+if (-not $env:ACT_BRAIN_PROFILE) { $env:ACT_BRAIN_PROFILE = $brainProfile }
+
+# Propagate scanner/analyst model choices so child processes see them.
+if (-not $env:ACT_SCANNER_MODEL) { $env:ACT_SCANNER_MODEL = $scannerModel }
+if (-not $env:ACT_ANALYST_MODEL) { $env:ACT_ANALYST_MODEL = $analystModel }
+
+# Enable concurrent scanner+analyst inference on Ollama. Without this,
+# Ollama serializes requests and the scanner blocks the analyst every
+# tick. RTX 5090's 1792 GB/s bandwidth absorbs parallelism.
+if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "4" }
+OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel OLLAMA_NUM_PARALLEL=$($env:OLLAMA_NUM_PARALLEL)"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan

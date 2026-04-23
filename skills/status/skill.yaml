@@ -1,0 +1,13 @@
+name: status
+description: >
+  One-shot system verification: env flags, Ollama model presence,
+  warm_store activity, brain_memory freshness, knowledge-graph edge
+  counts, active personas, readiness-gate state. Use after `git pull`
+  + START_ALL.ps1 to confirm every subsystem came up correctly.
+  Safe, read-only.
+reversible: true
+requires_confirmation: false
+tags:
+  - ops
+  - read_only
+  - diagnostic

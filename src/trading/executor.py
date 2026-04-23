@@ -9372,9 +9372,15 @@ Respond ONLY with JSON:
     # the quota/rate-limit tightens.
 
     def _run_agentic_shadow(self, asset: str, closes) -> None:
-        """Fire the agentic loop in shadow mode. Never raises."""
+        """Fire the agentic loop in shadow mode. Never raises.
+
+        C17 — delegates to src.ai.shadow_tick.run_tick which orchestrates
+        web-bundle fetch → graph ingest → scanner brain publish →
+        analyst plan compile → persona refresh, all throttled per-asset.
+        """
         try:
-            from src.ai.agentic_bridge import agentic_loop_enabled, compile_agentic_plan
+            from src.ai.agentic_bridge import agentic_loop_enabled
+            from src.ai.shadow_tick import run_tick
         except Exception:
             return
 
@@ -9385,13 +9391,14 @@ Respond ONLY with JSON:
             last_close = float(closes[-1]) if closes is not None and len(closes) > 0 else 0.0
             regime = getattr(self, '_last_regime', 'UNKNOWN') or 'UNKNOWN'
             quant_data = f"[ASSET={asset}] [LAST_CLOSE={last_close:.2f}] [REGIME={regime}]"
-            result = compile_agentic_plan(
-                asset=asset,
-                regime=str(regime),
-                quant_data=quant_data,
-            )
+            tick_summary = run_tick(asset=asset, quant_digest=quant_data)
         except Exception as e:
-            logger.debug("[agentic_shadow] %s compile failed: %s", asset, e)
+            logger.debug("[agentic_shadow] %s tick failed: %s", asset, e)
+            return
+
+        # Unpack the LoopResult that run_tick stashed for us.
+        result = tick_summary.get("_loop_result")
+        if result is None:
             return
 
         # Log to warm_store for A/B analysis. Uses a shadow decision_id
@@ -9437,6 +9444,11 @@ Respond ONLY with JSON:
                     "steps_taken": result.steps_taken,
                     "terminated_reason": result.terminated_reason,
                     "tool_calls": [t.get("name") for t in result.tool_calls],
+                    # C17 tick telemetry:
+                    "scanner_published": bool(tick_summary.get("scanner_published")),
+                    "ingest_counts": tick_summary.get("ingest_counts") or {},
+                    "personas_refreshed": bool(tick_summary.get("personas_refreshed")),
+                    "persona_report": tick_summary.get("persona_report") or {},
                     **_brain_tag,
                 },
             })
