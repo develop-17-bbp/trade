@@ -3297,6 +3297,15 @@ class TradingExecutor:
                 self._try_reconnect(asset)
                 return
 
+        # ── Agentic shadow loop (C4d) ─────────────────────────────────
+        # When ACT_AGENTIC_LOOP=1 (or config.agentic_loop.enabled=true),
+        # run the LLM-driven TradePlan compiler in SHADOW MODE alongside
+        # the existing decision path. The compiled plan is logged to
+        # warm_store for A/B analysis but does NOT replace the executor's
+        # live decision — that flip comes after paper soak shows shadow
+        # plans match reality. Never raises; errors logged + ignored.
+        self._run_agentic_shadow(asset, closes)
+
         if raw_5m and len(raw_5m) > 0:
             newest_ts = raw_5m[-1][0] / 1000.0
             age_minutes = (time.time() - newest_ts) / 60
@@ -9349,3 +9358,71 @@ Respond ONLY with JSON:
                 'reasoning': f'facilitator unavailable ({type(e).__name__}) — conservative weighted avg',
                 'override_notes': '',
             }
+
+    # ── Agentic shadow loop (C4d) ───────────────────────────────────────
+    #
+    # Runs the agentic LLM trade-plan compiler in parallel with the
+    # existing decision path. Observation-only: the compiled plan is
+    # logged to warm_store for A/B analysis against what the executor
+    # actually traded. No order is placed through this path yet — that
+    # flip happens after a paper soak shows shadow plans are sensible.
+    #
+    # Cost: one LLM cycle per asset per tick when enabled. Acceptable on
+    # the 60s/180s poll schedule; set ACT_AGENTIC_LOOP=0 to disable if
+    # the quota/rate-limit tightens.
+
+    def _run_agentic_shadow(self, asset: str, closes) -> None:
+        """Fire the agentic loop in shadow mode. Never raises."""
+        try:
+            from src.ai.agentic_bridge import agentic_loop_enabled, compile_agentic_plan
+        except Exception:
+            return
+
+        if not agentic_loop_enabled(getattr(self, 'config', None)):
+            return
+
+        try:
+            last_close = float(closes[-1]) if closes is not None and len(closes) > 0 else 0.0
+            regime = getattr(self, '_last_regime', 'UNKNOWN') or 'UNKNOWN'
+            quant_data = f"[ASSET={asset}] [LAST_CLOSE={last_close:.2f}] [REGIME={regime}]"
+            result = compile_agentic_plan(
+                asset=asset,
+                regime=str(regime),
+                quant_data=quant_data,
+            )
+        except Exception as e:
+            logger.debug("[agentic_shadow] %s compile failed: %s", asset, e)
+            return
+
+        # Log to warm_store for A/B analysis. Uses a shadow decision_id
+        # so it doesn't collide with the executor's real decisions.
+        try:
+            from src.orchestration.warm_store import get_store
+            import uuid as _uuid
+            store = get_store()
+            store.write_decision({
+                "decision_id": f"shadow-{_uuid.uuid4().hex}",
+                "symbol": asset,
+                "direction": {"LONG": 1, "SHORT": -1}.get(result.plan.direction, 0),
+                "confidence": float(getattr(result.plan, 'confidence', 0.0)),
+                "final_action": f"SHADOW_{result.plan.direction}",
+                "plan": result.plan.to_dict(),
+                "component_signals": {
+                    "source": "agentic_shadow",
+                    "steps_taken": result.steps_taken,
+                    "terminated_reason": result.terminated_reason,
+                    "tool_calls": [t.get("name") for t in result.tool_calls],
+                },
+            })
+        except Exception as e:
+            logger.debug("[agentic_shadow] %s warm_store write failed: %s", asset, e)
+
+        # Compact log line for the dashboard / tail-f watchers.
+        try:
+            print(
+                f"  [{self._ex_tag}:{asset}] SHADOW PLAN {result.plan.direction} "
+                f"tier={result.plan.entry_tier} size={result.plan.size_pct}% "
+                f"({result.terminated_reason}, {result.steps_taken} steps)"
+            )
+        except Exception:
+            pass
