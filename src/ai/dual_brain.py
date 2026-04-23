@@ -55,11 +55,22 @@ DISABLE_ENV = "ACT_DISABLE_DUAL_BRAIN"
 
 
 # ── Defaults (env > config > these) ─────────────────────────────────────
+#
+# Research-pair default (2026 agentic benchmarks on RTX 5090 32 GB):
+#   - Analyst (orchestrator) = qwen3-coder:30b — gold standard for
+#     agentic work, 100 tok/s, 110k context, Pydantic-JSON excellent.
+#   - Scanner (worker) = qwen2.5-coder:7b — purpose-built for tool-call
+#     extraction + JSON parsing at speed. ~5 GB so the Analyst has the
+#     full context-window room.
+# Combined footprint ~27 GB. With OLLAMA_NUM_PARALLEL=4 both run
+# concurrently without swap. Operators can override to Devstral 24B
+# (scanner) / Qwen 3 32B (analyst) via env if they prefer that pair —
+# both pairs tested against the same tool-use protocol.
 
-DEFAULT_SCANNER_MODEL = "qwen3:32b"
-DEFAULT_ANALYST_MODEL = "devstral:24b"
-DEFAULT_SCANNER_TEMP = 0.4
-DEFAULT_ANALYST_TEMP = 0.1
+DEFAULT_SCANNER_MODEL = "qwen2.5-coder:7b"   # worker — fast structured output
+DEFAULT_ANALYST_MODEL = "qwen3-coder:30b"    # orchestrator — deep reasoning + JSON
+DEFAULT_SCANNER_TEMP = 0.2                    # low — structured output
+DEFAULT_ANALYST_TEMP = 0.3                    # small slack for multi-step reasoning
 
 
 SCANNER_SYSTEM = (

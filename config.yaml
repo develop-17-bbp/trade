@@ -116,24 +116,44 @@ ai:
   llm_provider: auto
   claude_model: claude-haiku-4-5
 
-  # ── Dual-brain model split (C5) ──
-  # Left brain / right brain. Scanner is Qwen 32B — stronger general
-  # reasoning + pattern recognition, ideal for the broad "what's
-  # happening in the market" survey pass that runs every tick.
-  # Analyst is Devstral 24B — Mistral's agentic/coding-focused model,
-  # excellent at structured tool-use + Pydantic JSON output, used by
-  # the agentic trade loop for TradePlan compilation.
-  # Both run locally via Ollama on the RTX 5090; Q4_K_M quantization.
+  # ── Dual-brain model split (C5b — research-pair default) ──
+  #
+  # Orchestrator + worker pattern (2026 agentic research): bigger model
+  # drives long-horizon planning; smaller/faster model handles
+  # high-frequency structured output. Best-available pair on RTX 5090
+  # 32 GB per multiple independent 2026 benchmarks:
+  #
+  #   Analyst (orchestrator, left brain) = qwen3-coder:30b @ Q5_K_M
+  #     The 2026 "gold standard" for agentic work on a single 32 GB
+  #     GPU. ~22 GB VRAM. 110k context. ~100 tok/s on 5090. Best-in-class
+  #     structured-JSON output — TradePlan Pydantic compilation under
+  #     authority constraint is its natural fit.
+  #
+  #   Scanner (worker, right brain) = qwen2.5-coder:7b @ Q5_K_M
+  #     ~5 GB VRAM. Purpose-built for tool-call extraction + JSON
+  #     parsing at speed. Same tokenizer family as the Analyst, so
+  #     context sharing through brain_memory is clean.
+  #
+  # Combined ~27 GB fits with headroom for KV cache.
+  # Recommended runtime: OLLAMA_NUM_PARALLEL=4 so scanner + analyst
+  # can run concurrently without swap (5090 bandwidth is 1792 GBps).
+  # Set num_ctx=32000 in each model's Modelfile for long-horizon memory.
+  #
+  # Alternative pair if operator prefers the originally-stated models:
+  #   analyst_model: qwen3:32b        (Q4_K_M ~20 GB)
+  #   scanner_model: devstral:24b     (Q4_K_M ~14 GB)
+  #   # combined ~34 GB — tight, relies on Ollama model-swap
+  #
   # Env overrides: ACT_SCANNER_MODEL / ACT_ANALYST_MODEL.
   dual_brain:
     enabled: true
-    scanner_model: qwen3:32b           # right-brain pattern survey
+    scanner_model: qwen2.5-coder:7b    # worker — fast structured output
     scanner_role: "market_survey"       # task tag for routing
-    analyst_model: devstral:24b        # left-brain structured decision
+    analyst_model: qwen3-coder:30b     # orchestrator — deep reasoning + JSON
     analyst_role: "trade_plan_compile"
     fallback_cross: true                # if primary fails, try the other
-    scanner_temperature: 0.4            # slightly creative for pattern spotting
-    analyst_temperature: 0.1            # deterministic for structured output
+    scanner_temperature: 0.2            # structured output, keep low
+    analyst_temperature: 0.3            # small slack for multi-step reasoning
   use_llm_trade_decider: true
   llm_trade_decider_mode: primary
   llm_trade_conf_threshold: 0.8
