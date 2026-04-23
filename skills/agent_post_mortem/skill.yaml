@@ -1,0 +1,18 @@
+name: agent-post-mortem
+description: >
+  Counterfactual post-mortem for one trade decision. Load the
+  decision + plan + self-critique + brain_memory trace for the
+  given decision_id, then ask each relevant agent persona (via the
+  Analyst brain acting as a 'voice') why it voted that way and
+  whether it would vote differently given the outcome. Supports
+  live-rewind: for a recent trade you can also ask 'what if the
+  scanner had flagged earlier?' — it re-runs the analyst against
+  the seed context that existed N seconds before the actual cycle.
+  Operator-debugging aid; not a trading edge.
+reversible: true
+requires_confirmation: false
+tags:
+  - ops
+  - read_only
+  - diagnostic
+  - llm
