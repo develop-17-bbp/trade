@@ -138,10 +138,41 @@ def _serialize_and_cap(raw: Any, cap: int) -> str:
     return s
 
 
-# ── Default registry builder ────────────────────────────────────────────
+# ── Default registry builder (hot-path cached) ────────────────────────
+
+# Module-level cache: `build_default_registry` was being called on every
+# shadow tick which (a) re-imported quant/agent/MCP helpers, (b) hit
+# every configured MCP server's /tools/list endpoint over the network,
+# and (c) parsed config.yaml from disk. That's 500 ms – 8 s wasted per
+# tick if any MCP server is slow. Cache the built registry for the
+# process lifetime; operators can force a rebuild via reset_default_registry().
+_DEFAULT_REGISTRY: Optional[ToolRegistry] = None
+
+
+def get_default_registry() -> ToolRegistry:
+    """Return a process-wide cached ToolRegistry. Build on first call."""
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = _build_default_registry_uncached()
+    return _DEFAULT_REGISTRY
+
+
+def reset_default_registry() -> None:
+    """Drop the cache so the next get_default_registry() rebuilds.
+    Use after config.yaml mcp_clients edit or when tests want a fresh
+    registry."""
+    global _DEFAULT_REGISTRY
+    _DEFAULT_REGISTRY = None
 
 
 def build_default_registry() -> ToolRegistry:
+    """Backward-compat wrapper — tests and legacy callers still use this.
+    Returns the CACHED singleton; pass force=True via reset first if
+    you really want a fresh build."""
+    return get_default_registry()
+
+
+def _build_default_registry_uncached() -> ToolRegistry:
     """Assemble ACT's standard tool kit for the agentic trade loop.
 
     Imports are lazy inside handlers so this module loads even when some

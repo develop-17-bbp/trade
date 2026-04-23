@@ -171,72 +171,14 @@ def load_similar_trades(
 
 
 def _fetch_scan_context(asset: str) -> str:
-    """Build the analyst's seed-context block. Pulls from EVERY live
-    memory system ACT maintains so the LLM starts each cycle with full
-    situational awareness — not just the most recent scanner report.
-
-    Sources (all best-effort, graceful on missing subsystem):
-      * brain_memory   — latest scan report (C7b)
-      * brain_memory   — last 3 analyst traces (C7b)
-      * graph_rag      — compact real-time graph digest (C12)
-      * brain_to_body  — current controller state (C9)
-      * warm_store     — last 2 self_critiques for calibration
-    """
-    lines: List[str] = []
-
-    # Scanner report.
+    """Build the analyst's seed-context block via the shared
+    context_builders.build_analyst_context helper (simplify pass)."""
     try:
-        from src.ai.brain_memory import get_scan_for_analyst
-        report = get_scan_for_analyst(asset)
-        if report is not None:
-            lines.append(
-                f"## SCANNER REPORT ({int(report.age_s())}s old)\n"
-                f"- opportunity_score: {report.opportunity_score:.0f}\n"
-                f"- proposed_direction: {report.proposed_direction}\n"
-                f"- signals: {', '.join(report.top_signals[:5]) or 'none'}\n"
-                f"- rationale: {report.rationale[:200]}"
-            )
-    except Exception:
-        pass
-
-    # Recent analyst verdicts.
-    try:
-        from src.ai.brain_memory import get_recent_analyst_traces
-        traces = get_recent_analyst_traces(asset, limit=3) or []
-        if traces:
-            bullets = [
-                f"- {t.direction}/{t.tier} size={t.size_pct}% verdict={t.verdict or '-'}"
-                for t in traces
-            ]
-            lines.append("## RECENT ANALYST DECISIONS\n" + "\n".join(bullets))
-    except Exception:
-        pass
-
-    # Knowledge graph digest (C12) — compact view of live edges.
-    try:
-        from src.ai.graph_rag import query_digest
-        g = query_digest(asset, since_s=3600, max_chars=400)
-        if g and not g.startswith("[graph disabled") and not g.startswith("[graph unavailable"):
-            lines.append(g)
-    except Exception:
-        pass
-
-    # Body controller state (C9) — pressure signals + priority agents.
-    try:
-        from src.learning.brain_to_body import get_controller
-        ctrl = get_controller().current()
-        lines.append(
-            f"## BODY CONTROLS\n"
-            f"- emergency_level: {ctrl.emergency_level}\n"
-            f"- exploration_bias: {ctrl.exploration_bias:.2f}\n"
-            f"- priority_agents (ask these first): "
-            f"{', '.join(ctrl.priority_agents[:5]) or '(default)'}\n"
-            f"- reason: {ctrl.reason[:200]}"
-        )
-    except Exception:
-        pass
-
-    return "\n\n".join(lines)
+        from src.ai.context_builders import build_analyst_context
+        return build_analyst_context(asset)
+    except Exception as e:
+        logger.debug("_fetch_scan_context failed: %s", e)
+        return ""
 
 
 def compile_agentic_plan(

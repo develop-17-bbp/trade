@@ -82,49 +82,21 @@ class PolymarketProbabilityEstimate:
 
 
 def _build_context_block(asset: str) -> str:
-    """Pull a compact context block from ACT's live streams for the
-    analyst's prompt. Every source is optional; missing data just
-    produces a thinner (but still valid) prompt."""
-    parts = []
+    """Delegate to the shared context_builders.build_analyst_context —
+    cached per-asset for 30s so polymarket_hunt's 20-market loop
+    doesn't pay the 4-subquery cost 20 times. Polymarket's probability
+    prompt doesn't need recent-analyst-traces (those are about spot
+    trades, not prediction markets), so we exclude that source."""
     try:
-        from src.ai.brain_memory import get_scan_for_analyst
-        scan = get_scan_for_analyst(asset, max_age_s=3600.0)
-        if scan is not None:
-            parts.append(
-                f"## SCANNER ({int(scan.age_s())}s old)\n"
-                f"opportunity_score={scan.opportunity_score:.0f}  "
-                f"direction={scan.proposed_direction}\n"
-                f"signals: {', '.join(scan.top_signals[:5]) or 'none'}\n"
-                f"rationale: {scan.rationale[:200]}"
-            )
+        from src.ai.context_builders import build_analyst_context
+        block = build_analyst_context(
+            asset,
+            include_traces=False,           # traces are spot-specific
+            include_body_controls=False,    # body-controls are spot-specific
+        )
     except Exception:
-        pass
-
-    try:
-        from src.ai.web_context import get_news_digest
-        news = get_news_digest(asset, hours=12)
-        if news and news.summary and news.summary != "unavailable":
-            parts.append(f"## NEWS\n{news.summary[:400]}")
-    except Exception:
-        pass
-
-    try:
-        from src.ai.web_context import get_fear_greed_digest
-        fg = get_fear_greed_digest()
-        if fg and fg.summary and fg.summary != "unavailable":
-            parts.append(f"## FEAR/GREED\n{fg.summary[:120]}")
-    except Exception:
-        pass
-
-    try:
-        from src.ai.graph_rag import query_digest
-        g = query_digest(asset, since_s=3600, max_chars=400)
-        if g and not g.startswith("[graph disabled") and not g.startswith("[graph unavailable"):
-            parts.append(g)
-    except Exception:
-        pass
-
-    return "\n\n".join(parts) if parts else f"## CONTEXT\n(no fresh data for {asset})"
+        return f"## CONTEXT\n(no fresh data for {asset})"
+    return block if block else f"## CONTEXT\n(no fresh data for {asset})"
 
 
 # ── Parser ─────────────────────────────────────────────────────────────

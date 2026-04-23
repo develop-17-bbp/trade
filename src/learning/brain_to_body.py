@@ -33,7 +33,9 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Literal, Optional, Sequence
+
+EmergencyLevel = Literal["normal", "caution", "stress"]
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,7 @@ class BodyControls:
     """One snapshot of brain→body pressure signals."""
     exploration_bias: float = 1.0
     genetic_cadence_s: float = DEFAULT_GENETIC_CADENCE_S
-    emergency_level: str = EMERGENCY_LEVEL_NORMAL
+    emergency_level: EmergencyLevel = EMERGENCY_LEVEL_NORMAL
     priority_agents: List[str] = field(default_factory=list)
     reason: str = "neutral defaults (no inputs)"
     computed_at: float = field(default_factory=time.time)
