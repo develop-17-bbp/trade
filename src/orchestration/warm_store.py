@@ -82,6 +82,19 @@ _SCHEMA = [
 ]
 
 
+# Columns added after the initial schema shipped. Each is backward-safe:
+# the ALTER runs once on startup, tolerates "duplicate column" on reruns.
+# component_signals → which component suggested each leg of the decision
+#                     (multi_strategy / lgbm / lora / llm_agentic / rl)
+# plan_json         → the compiled TradePlan (M1) for post-hoc audit
+# self_critique     → second-LLM verification written at trade close (Phase 5a)
+_MIGRATIONS = [
+    "ALTER TABLE decisions ADD COLUMN component_signals TEXT DEFAULT '{}'",
+    "ALTER TABLE decisions ADD COLUMN plan_json TEXT DEFAULT '{}'",
+    "ALTER TABLE decisions ADD COLUMN self_critique TEXT DEFAULT '{}'",
+]
+
+
 class WarmStore:
     """SQLite-backed durable decision + outcome log.
 
@@ -104,6 +117,13 @@ class WarmStore:
             conn = self._get_conn()
             for stmt in _SCHEMA:
                 conn.execute(stmt)
+            for stmt in _MIGRATIONS:
+                try:
+                    conn.execute(stmt)
+                except sqlite3.OperationalError as e:
+                    # "duplicate column name" is expected after first run.
+                    if "duplicate column" not in str(e).lower():
+                        raise
             conn.commit()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -132,10 +152,31 @@ class WarmStore:
             str(decision.get("final_action", "FLAT")),
             json.dumps(decision.get("authority_violations", []) or []),
             json.dumps(decision, default=str),
+            json.dumps(decision.get("component_signals") or {}, default=str),
+            json.dumps(decision.get("plan") or {}, default=str),
+            json.dumps(decision.get("self_critique") or {}, default=str),
         )
         with self._lock:
             self._pending_decisions.append(row)
             self._maybe_flush_locked()
+
+    def update_self_critique(self, decision_id: str, critique: Dict[str, Any]) -> None:
+        """Write the post-close verification payload onto an existing decision row.
+
+        Called by trade_verifier after a trade closes. No-op if the decision
+        row hasn't been flushed yet — caller can retry or flush first.
+        """
+        with self._lock:
+            self._flush_locked()
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE decisions SET self_critique=? WHERE decision_id=?",
+                (json.dumps(critique, default=str), decision_id),
+            )
+            conn.commit()
+        except Exception as e:
+            logger.debug("warm_store update_self_critique failed for %s: %s", decision_id, e)
 
     def write_outcome(self, outcome: Dict[str, Any]) -> None:
         row = (
@@ -213,8 +254,9 @@ class WarmStore:
                 conn.executemany(
                     """INSERT OR REPLACE INTO decisions
                        (decision_id, trace_id, symbol, ts_ns, direction, confidence, consensus,
-                        veto, raw_signal, final_action, authority_violations, payload_json)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        veto, raw_signal, final_action, authority_violations, payload_json,
+                        component_signals, plan_json, self_critique)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     self._pending_decisions,
                 )
             if self._pending_outcomes:
