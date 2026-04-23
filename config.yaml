@@ -53,6 +53,17 @@ emergency_mode:
 # Kill switch: ACT_DISABLE_MCP_CLIENTS=1 skips all external registration.
 # Headers support ${ENV_VAR} expansion for secret tokens.
 mcp_clients: []
+
+# ── Hooks (C8) — operator extension points on named events ──
+# Each event is a list of {cmd | python, blocking, timeout_s, name}.
+# `blocking: true` on a pre_* / on_authority_* event: a non-zero exit
+# VETOES the protected action (place-order, exit, etc.).
+# Shell cmd strings expand ${ENV_VAR} and {{context.key}} placeholders.
+# Kill switch: ACT_DISABLE_HOOKS=1 disables all hooks.
+# Events: pre_trade_submit, post_trade_open, pre_exit, post_trade_close,
+#   on_authority_violation, on_emergency_mode_enter/exit,
+#   on_strategy_promote, on_startup, on_shutdown.
+hooks: {}
 exchanges:
 - name: robinhood
   assets:
