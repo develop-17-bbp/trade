@@ -309,6 +309,53 @@ def build_default_registry() -> ToolRegistry:
     except Exception as _e:
         logger.debug("quant_tools not registered: %s", _e)
 
+    # ── Real-time knowledge-graph tool (C12) ───────────────────────────
+    # Continuous-ingest graph over ACT's live data streams (news +
+    # sentiment + institutional + polymarket + correlation edges, all
+    # time-decayed). Analyst queries it via `query_knowledge_graph`.
+    try:
+        from src.ai.graph_rag import query_digest as _graph_query
+
+        def _handle_graph_query(args):
+            asset = args.get("asset")
+            try:
+                since_s = float(args.get("since_s") or 3600.0)
+            except Exception:
+                since_s = 3600.0
+            try:
+                max_chars = int(args.get("max_chars") or 500)
+            except Exception:
+                max_chars = 500
+            try:
+                summary = _graph_query(
+                    asset=asset, since_s=since_s, max_chars=max_chars,
+                )
+            except Exception as e:
+                return {"error": f"{type(e).__name__}: {e}"}
+            return {"summary": summary}
+
+        reg.register(Tool(
+            name="query_knowledge_graph",
+            description=(
+                "[GRAPH] Query ACT's real-time knowledge graph over live "
+                "data streams (news, sentiment, institutional, polymarket, "
+                "correlations). Returns a compact text digest with recent "
+                "entities + time-decayed edge weights around `asset`. "
+                "Omit `asset` for a global kind-count snapshot."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "since_s": {"type": "number", "minimum": 60, "maximum": 604800},
+                    "max_chars": {"type": "integer", "minimum": 100, "maximum": 2000},
+                },
+            },
+            handler=_handle_graph_query, tag="read_only",
+        ))
+    except Exception as _e:
+        logger.debug("graph_rag tool not registered: %s", _e)
+
     reg.register(Tool(
         name="submit_trade_plan",
         description=(
