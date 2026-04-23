@@ -6327,6 +6327,23 @@ class TradingExecutor:
             except Exception:
                 pass
 
+        # ── Caution-marker size reduction (LLM-reasoning text parser) ──
+        # When the LLM's prose flags caution/risk/reversal concerns but its
+        # confidence number is still high, trust the prose. Strictly size-reducing:
+        # 2+ markers → halve, 1 marker → 0.75x. Never increases size, never blocks.
+        _caution_markers = ('caution', 'risk', 'careful', 'reversal',
+                            'macro', 'uncertain', 'concern', 'however', 'beware')
+        _reasoning_lc = (reasoning or '').lower()
+        _caution_hits = sum(1 for m in _caution_markers if m in _reasoning_lc)
+        if _caution_hits >= 2:
+            _old_sz = size_pct
+            size_pct = max(1.0, size_pct * 0.5)
+            print(f"  [{self._ex_tag}:{asset}] CAUTION MARKERS ({_caution_hits}): size {_old_sz:.0f}% -> {size_pct:.0f}%")
+        elif _caution_hits == 1:
+            _old_sz = size_pct
+            size_pct = max(1.0, size_pct * 0.75)
+            print(f"  [{self._ex_tag}:{asset}] CAUTION MARKER (1): size {_old_sz:.0f}% -> {size_pct:.0f}%")
+
         # Calculate position size — ATR-based dynamic sizing when available, fixed % fallback
         max_size_pct = 20 if self.equity < 500 else 5
         size_pct = max(1, min(max_size_pct, size_pct))
@@ -6803,6 +6820,16 @@ class TradingExecutor:
             'rl_agent': _mlp_rl,
         }
 
+        # ml_confidence for paper-record telemetry. Prefer calibrated meta-prob,
+        # fall back to raw lgbm confidence, else 0. The previous `'ml_confidence'
+        # in dir() else 0` guard at the record_entry call always fell to 0
+        # because the variable was never defined in this scope.
+        ml_confidence = float(
+            ml_context.get('meta_prob')
+            or ml_context.get('lgbm_confidence')
+            or 0.0
+        )
+
         # Record position (with chosen timeframe for scaled SL management)
         self.positions[asset] = {
             'direction': action,          # LONG or SHORT
@@ -6875,7 +6902,7 @@ class TradingExecutor:
                     asset=asset, direction=action, price=price,
                     score=entry_score, quantity=qty,
                     sl_price=sl_price, tp_price=0,
-                    ml_confidence=ml_confidence if 'ml_confidence' in dir() else 0,
+                    ml_confidence=ml_confidence,
                     llm_confidence=confidence,
                     size_pct=size_pct, reasoning=reasoning[:200] if reasoning else '',
                 )
