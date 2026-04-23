@@ -81,6 +81,31 @@ def _posterior_mean(alpha: float, beta: float) -> float:
     return alpha / total
 
 
+def _effective_exploit_bias(emergency_mode: bool) -> float:
+    """Resolve the bias power to apply to each Thompson draw.
+
+    Precedence:
+      1. BodyController's current exploration_bias (C9) — if it's
+         meaningfully away from 1.0, honor it directly.
+      2. Static EMERGENCY_EXPLOIT_BIAS when emergency_mode is set.
+      3. 1.0 (no bias) otherwise.
+
+    Never raises — a missing BodyController collapses to the static path.
+    """
+    try:
+        from src.learning.brain_to_body import current_exploration_bias
+        cb = float(current_exploration_bias(default=1.0))
+        # Only override the static path when the controller has a
+        # non-trivial opinion.
+        if abs(cb - 1.0) > 1e-6:
+            return max(0.25, min(5.0, cb))
+    except Exception:
+        pass
+    if emergency_mode and EMERGENCY_EXPLOIT_BIAS > 1.0:
+        return float(EMERGENCY_EXPLOIT_BIAS)
+    return 1.0
+
+
 def sample_from_records(
     records: Sequence,                                    # list of StrategyRecord
     *,
@@ -103,6 +128,8 @@ def sample_from_records(
         return None
     rng = rng or random.Random()
 
+    bias = _effective_exploit_bias(emergency_mode)
+
     draws: List[BanditDraw] = []
     for rec in records:
         sid = getattr(rec, "strategy_id", None)
@@ -112,8 +139,9 @@ def sample_from_records(
         losses = int(getattr(rec, "live_losses", 0) or 0)
         alpha, beta = _posterior_params(wins, losses, prior_alpha, prior_beta)
         p = rng.betavariate(alpha, beta)
-        if emergency_mode and EMERGENCY_EXPLOIT_BIAS > 1.0:
-            p = p ** EMERGENCY_EXPLOIT_BIAS
+        if bias != 1.0:
+            # Bias > 1 sharpens (exploit); bias < 1 flattens (explore).
+            p = p ** bias
         draws.append(BanditDraw(
             strategy_id=sid,
             sampled_p=p,

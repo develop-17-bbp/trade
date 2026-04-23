@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 FRESH_SCAN_S = float(os.getenv("ACT_SCAN_FRESH_S", "120"))
 PERSONA_REFRESH_EVERY_TICKS = int(os.getenv("ACT_PERSONA_REFRESH_EVERY", "5"))
 INGEST_EVERY_TICKS = int(os.getenv("ACT_GRAPH_INGEST_EVERY", "3"))
+BODY_CONTROLLER_REFRESH_EVERY_TICKS = int(os.getenv("ACT_BODY_CONTROLLER_EVERY", "5"))
 
 # Per-asset tick counters (process-local).
 _tick_counters: Dict[str, int] = {}
@@ -259,5 +260,19 @@ def run_tick(asset: str, quant_digest: str = "") -> Dict[str, Any]:
             }
         except Exception as e:
             logger.debug("shadow_tick: persona refresh failed: %s", e)
+
+    # ── 6. Brain-to-body controller refresh (C9, throttled) ───────────
+    if tick_n % max(1, BODY_CONTROLLER_REFRESH_EVERY_TICKS) == 0:
+        try:
+            from src.learning.brain_to_body import get_controller
+            controls = get_controller().refresh(asset=asset.upper())
+            out["body_controls"] = {
+                "exploration_bias": controls.exploration_bias,
+                "emergency_level": controls.emergency_level,
+                "priority_agents": controls.priority_agents[:5],
+                "reason": controls.reason,
+            }
+        except Exception as e:
+            logger.debug("shadow_tick: body controller refresh failed: %s", e)
 
     return out

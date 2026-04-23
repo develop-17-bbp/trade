@@ -198,6 +198,18 @@ def _handle_backtest(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ── Body-controls tool handler ─────────────────────────────────────────
+
+
+def _handle_body_controls(_args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from src.learning.brain_to_body import get_controller
+        controls = get_controller().current()
+        return controls.to_dict()
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 # ── Registration entry point ───────────────────────────────────────────
 
 
@@ -262,6 +274,25 @@ def register_agent_tools(registry) -> List[str]:
             handler=_handle_debate, tag="read_only",
         ))
         added.append("ask_debate")
+    except ValueError:
+        pass
+
+    # get_body_controls — C9.
+    try:
+        registry.register(Tool(
+            name="get_body_controls",
+            description=(
+                "[CONTROLLER] Current brain-to-body pressure signals: "
+                "exploration_bias for the strategy bandit, "
+                "genetic_cadence_s, emergency_level "
+                "(normal/caution/stress), priority_agents (which ask_* "
+                "tools to query first this tick), and the diagnostic "
+                "reason. Updated every few shadow ticks."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_body_controls, tag="read_only",
+        ))
+        added.append("get_body_controls")
     except ValueError:
         pass
 
