@@ -170,6 +170,37 @@ def load_similar_trades(
 # ── Main entry ──────────────────────────────────────────────────────────
 
 
+def _fetch_scan_context(asset: str) -> str:
+    """Pull the latest scanner-brain report for `asset` (via C7b brain_memory)
+    and format it as a short block for the analyst's seed context. Returns
+    empty string if nothing fresh is available."""
+    try:
+        from src.ai.brain_memory import get_scan_for_analyst, get_recent_analyst_traces
+        report = get_scan_for_analyst(asset)
+    except Exception:
+        return ""
+    lines: List[str] = []
+    if report is not None:
+        lines.append(
+            f"## SCANNER REPORT ({int(report.age_s())}s old)\n"
+            f"- opportunity_score: {report.opportunity_score:.0f}\n"
+            f"- proposed_direction: {report.proposed_direction}\n"
+            f"- signals: {', '.join(report.top_signals[:5]) or 'none'}\n"
+            f"- rationale: {report.rationale[:200]}"
+        )
+    try:
+        traces = get_recent_analyst_traces(asset, limit=3)
+    except Exception:
+        traces = []
+    if traces:
+        bullets = [
+            f"- {t.direction}/{t.tier} size={t.size_pct}% verdict={t.verdict or '-'}"
+            for t in traces
+        ]
+        lines.append("## RECENT ANALYST DECISIONS\n" + "\n".join(bullets))
+    return "\n\n".join(lines)
+
+
 def compile_agentic_plan(
     asset: str,
     *,
@@ -183,7 +214,13 @@ def compile_agentic_plan(
     recent_critiques: Optional[List[Dict[str, Any]]] = None,
 ) -> LoopResult:
     """Compose the full loop and run it. Safe to call from the executor;
-    never raises — a compile failure returns a SKIP plan with reason."""
+    never raises — a compile failure returns a SKIP plan with reason.
+
+    Scanner/analyst bridge (C7b): if the brain_memory has a fresh scan
+    report or recent analyst traces for this asset, they're appended to
+    quant_data before the loop seeds — so the analyst sees what the
+    scanner flagged and what past decisions looked like.
+    """
 
     # Kill switch wins over everything.
     if os.environ.get("ACT_DISABLE_AGENTIC_LOOP", "0") == "1":
@@ -199,6 +236,12 @@ def compile_agentic_plan(
             similar_trades = load_similar_trades(asset, regime)
         if recent_critiques is None:
             recent_critiques = load_recent_critiques()
+
+        # C7b — inject scanner report + recent analyst traces into quant_data
+        # so the analyst sees the other brain's output.
+        brain_block = _fetch_scan_context(asset)
+        if brain_block:
+            quant_data = (quant_data + "\n\n" + brain_block) if quant_data else brain_block
 
         registry = registry or build_default_registry()
         context = context or AgenticContext(asset=asset)
@@ -220,7 +263,26 @@ def compile_agentic_plan(
             recent_critiques=recent_critiques,
             similar_trades=similar_trades,
         )
-        return loop.run()
+        result = loop.run()
+
+        # C7b — write the analyst's decision back into brain_memory so
+        # the scanner's next tick sees it. Compact trace; never raises.
+        try:
+            import time as _t
+            from src.ai.brain_memory import AnalystTrace, publish_analyst_trace
+            publish_analyst_trace(AnalystTrace(
+                asset=asset, ts=_t.time(),
+                plan_id=getattr(result.plan, 'plan_id', '') or '',
+                direction=str(result.plan.direction),
+                tier=str(result.plan.entry_tier),
+                size_pct=float(getattr(result.plan, 'size_pct', 0.0)),
+                thesis=str(getattr(result.plan, 'thesis', ''))[:300],
+                verdict=result.terminated_reason,
+            ))
+        except Exception as _e:
+            logger.debug("brain_memory publish_analyst_trace failed: %s", _e)
+
+        return result
     except Exception as e:
         logger.debug("compile_agentic_plan fatal: %s", e)
         return LoopResult(
