@@ -82,6 +82,15 @@ class BaseAgent(ABC):
         self._correct_calls: int = 0
         self._alpha: float = self.config.get('weight_update_alpha', 0.15)
 
+        # Per-agent episodic memory (C12b) — each agent keeps its own
+        # recent (state_digest, vote, outcome) tuples so it can answer
+        # "when I saw this kind of setup before, how did I vote and was
+        # I right?" Populated by record_episode() after trade close,
+        # queried by get_similar_episodes() before vote.
+        self._episode_buffer: deque = deque(
+            maxlen=int(self.config.get('episode_buffer_size', 100))
+        )
+
     @abstractmethod
     def analyze(self, quant_state: Dict, context: Dict) -> AgentVote:
         """
@@ -151,10 +160,12 @@ class BaseAgent(ABC):
             'total_calls': self._total_calls,
             'correct_calls': self._correct_calls,
             'accuracy_history': list(self._accuracy_history),
+            # C12b — persist episodic memory so restarts don't lose it.
+            'episode_buffer': list(self._episode_buffer),
         }
         try:
             with open(path, 'w') as f:
-                json.dump(state, f, indent=2)
+                json.dump(state, f, indent=2, default=str)
         except Exception:
             pass
 
@@ -172,8 +183,102 @@ class BaseAgent(ABC):
             self._correct_calls = state.get('correct_calls', 0)
             hist = state.get('accuracy_history', [])
             self._accuracy_history = deque(hist, maxlen=200)
+            # C12b — restore episodic memory if present (backward-compat
+            # with old state files that don't carry this key).
+            eps = state.get('episode_buffer', []) or []
+            self._episode_buffer = deque(
+                eps, maxlen=int(self.config.get('episode_buffer_size', 100)),
+            )
         except Exception:
             pass
+
+    # ── Per-agent episodic memory (C12b) ───────────────────────────────
+
+    # Quant-state keys worth keeping in the episode "fingerprint" — tight,
+    # comparable across time. Subclasses can extend via extra_keys arg.
+    _EPISODE_DEFAULT_KEYS = (
+        "ema_slope_pct", "hurst", "bollinger_pct", "zscore",
+        "rsi", "macd_hist", "atr_pct", "regime", "vol_regime",
+        "funding_rate", "fear_greed_index",
+    )
+
+    def _episode_fingerprint(
+        self, quant_state: Dict, extra_keys: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Extract a compact snapshot of the current quant_state. Only
+        numeric/string scalars — no arrays — so comparison is cheap and
+        persistence stays small."""
+        keys = list(self._EPISODE_DEFAULT_KEYS) + list(extra_keys or [])
+        snap: Dict[str, Any] = {}
+        for k in keys:
+            v = quant_state.get(k)
+            if isinstance(v, (int, float, str, bool)) or v is None:
+                snap[k] = v
+        return snap
+
+    def record_episode(
+        self,
+        quant_state: Dict,
+        vote: "AgentVote",
+        outcome: Optional[Dict] = None,
+    ) -> None:
+        """Append one episode to this agent's personal buffer.
+
+        Called from orchestrator.post_trade_feedback (or agentic_trade_loop
+        close callback). `outcome` carries pnl_pct + was_profitable once
+        the trade closes; pass None at open-time to record just the vote.
+        """
+        try:
+            self._episode_buffer.append({
+                "ts": __import__("time").time(),
+                "state": self._episode_fingerprint(quant_state),
+                "vote": {
+                    "direction": int(getattr(vote, "direction", 0)),
+                    "confidence": float(getattr(vote, "confidence", 0.0)),
+                },
+                "outcome": (dict(outcome) if isinstance(outcome, dict) else None),
+            })
+        except Exception:
+            # Never let memory bookkeeping break the vote path.
+            pass
+
+    def get_similar_episodes(
+        self,
+        current_state: Dict,
+        k: int = 5,
+        min_numeric_keys: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Return the top-k past episodes whose fingerprint is closest
+        to `current_state`. Similarity = inverse L1 distance over shared
+        numeric keys, ignoring missing/non-numeric fields. If the agent
+        has < min_numeric_keys overlap, returns an empty list rather
+        than a noisy match.
+        """
+        if not self._episode_buffer:
+            return []
+        current = self._episode_fingerprint(current_state)
+        current_nums = {k: v for k, v in current.items()
+                        if isinstance(v, (int, float)) and v is not None}
+        if len(current_nums) < min_numeric_keys:
+            return []
+
+        scored: List[tuple] = []
+        for ep in self._episode_buffer:
+            st = ep.get("state") or {}
+            shared = [
+                kk for kk in current_nums.keys()
+                if isinstance(st.get(kk), (int, float))
+            ]
+            if len(shared) < min_numeric_keys:
+                continue
+            dist = sum(abs(float(current_nums[kk]) - float(st[kk])) for kk in shared)
+            scored.append((dist, ep))
+        scored.sort(key=lambda x: x[0])
+        return [ep for _, ep in scored[: max(1, int(k))]]
+
+    def episodic_memory_size(self) -> int:
+        """For dashboards / /regime-check. No I/O."""
+        return len(self._episode_buffer)
 
     def _safe_get(self, d: Dict, *keys, default=0.0):
         """Safely traverse nested dicts."""
