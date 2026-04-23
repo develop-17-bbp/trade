@@ -299,6 +299,16 @@ def build_default_registry() -> ToolRegistry:
 
     # ── Write (authority-gated) ─────────────────────────────────────────
 
+    # ── Quant-tool extensions (C11) ────────────────────────────────────
+    # Wrap existing src/models/ quantitative tools as LLM-callable
+    # digests (OU process, Hurst, Kalman, HMM regime, Hawkes, cointegration).
+    # Import-lazy so a missing model module doesn't block registry build.
+    try:
+        from src.ai.quant_tools import register_quant_tools
+        register_quant_tools(reg)
+    except Exception as _e:
+        logger.debug("quant_tools not registered: %s", _e)
+
     reg.register(Tool(
         name="submit_trade_plan",
         description=(
