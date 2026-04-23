@@ -1,0 +1,15 @@
+name: fine-tune-brain
+description: >
+  Run one dual-brain fine-tune cycle: filter warm_store experience
+  for high-quality samples, train analyst + scanner QLoRA adapters
+  sequentially (analyst ~30-45 min, scanner ~5-10 min on RTX 5090),
+  validate via champion-gate, and hot-swap promoted adapters.
+  Pauses agentic loop while training to avoid VRAM contention. Uses
+  the Unsloth backend when available; falls back to the stub backend
+  (for dry-run / CI). Persists a cycle report to logs/fine_tune/.
+reversible: false
+requires_confirmation: true
+tags:
+  - ops
+  - ml
+  - destructive
