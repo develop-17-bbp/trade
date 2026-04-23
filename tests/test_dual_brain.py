@@ -18,6 +18,7 @@ from src.ai.dual_brain import (
     call_brain,
     is_enabled,
     scan,
+    strip_reasoning_tags,
 )
 
 
@@ -188,6 +189,57 @@ def test_brain_response_trims_long_text():
 
 
 # ── build_analyst_llm_call ──────────────────────────────────────────────
+
+
+# ── strip_reasoning_tags ────────────────────────────────────────────────
+
+
+def test_strip_think_noop_when_absent():
+    assert strip_reasoning_tags("just a plain answer") == "just a plain answer"
+    assert strip_reasoning_tags("") == ""
+
+
+def test_strip_think_removes_closed_block():
+    raw = "<think>step 1\nstep 2\nstep 3</think>\n{\"opportunity_score\": 72}"
+    out = strip_reasoning_tags(raw)
+    assert "step 1" not in out
+    assert "opportunity_score" in out
+
+
+def test_strip_think_case_insensitive():
+    raw = "<THINK>reasoning</THINK>answer"
+    assert strip_reasoning_tags(raw) == "answer"
+
+
+def test_strip_think_removes_unclosed_block_at_end():
+    raw = "final answer before reasoning\n<think>ran out of tokens mid-thought"
+    out = strip_reasoning_tags(raw)
+    assert out == "final answer before reasoning"
+
+
+def test_strip_think_multiple_blocks():
+    raw = "<think>a</think>part1<think>b</think>part2"
+    assert strip_reasoning_tags(raw) == "part1part2"
+
+
+def test_call_brain_strips_scanner_think_trace():
+    def stub(model, prompt, sys_prompt, temp):
+        return "<think>reasoning trace ...</think>\n{\"opportunity_score\": 60}"
+
+    resp = call_brain(SCANNER, "scan", llm_call=stub)
+    assert resp.ok is True
+    assert "<think>" not in resp.text
+    assert "opportunity_score" in resp.text
+
+
+def test_call_brain_preserves_analyst_think_trace():
+    def stub(model, prompt, sys_prompt, temp):
+        return "<think>deliberation ...</think>\n{\"plan\": {\"asset\": \"BTC\"}}"
+
+    resp = call_brain(ANALYST, "compile plan", llm_call=stub)
+    assert resp.ok is True
+    # Analyst keeps the <think> block so brain_memory + audit see it.
+    assert "<think>" in resp.text
 
 
 def test_analyst_llm_call_flattens_messages(monkeypatch):

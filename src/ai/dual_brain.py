@@ -40,10 +40,36 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# DeepSeek-R1 and other reasoning-trained models emit <think>...</think>
+# blocks before their final answer. For the scanner's tick-cadence output
+# we want the answer only — the CoT trace can be 1000+ tokens and would
+# bloat brain_memory + the analyst's seed context.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+# Also handle unclosed <think> (model ran out of budget mid-trace): in
+# that case nothing after <think> is useful — drop everything from the
+# opener to the end, keeping whatever came before.
+_UNCLOSED_THINK_RE = re.compile(r"<think>.*$", re.IGNORECASE | re.DOTALL)
+
+
+def strip_reasoning_tags(text: str) -> str:
+    """Remove <think>...</think> reasoning traces from model output.
+
+    Safe no-op on models that don't emit the tag (plain JSON / prose).
+    Preserves the final answer so the tool-use loop's JSON parser sees
+    the complete envelope. Trimmed to a single trailing newline.
+    """
+    if not text or "<think>" not in text.lower():
+        return text
+    stripped = _THINK_RE.sub("", text)
+    stripped = _UNCLOSED_THINK_RE.sub("", stripped)
+    return stripped.strip()
 
 
 # Brain names — keep these stable; other modules check against them.
@@ -56,21 +82,32 @@ DISABLE_ENV = "ACT_DISABLE_DUAL_BRAIN"
 
 # ── Defaults (env > config > these) ─────────────────────────────────────
 #
-# Research-pair default (2026 agentic benchmarks on RTX 5090 32 GB):
-#   - Analyst (orchestrator) = qwen3-coder:30b — gold standard for
-#     agentic work, 100 tok/s, 110k context, Pydantic-JSON excellent.
-#   - Scanner (worker) = qwen2.5-coder:7b — purpose-built for tool-call
-#     extraction + JSON parsing at speed. ~5 GB so the Analyst has the
-#     full context-window room.
-# Combined footprint ~27 GB. With OLLAMA_NUM_PARALLEL=4 both run
-# concurrently without swap. Operators can override to Devstral 24B
-# (scanner) / Qwen 3 32B (analyst) via env if they prefer that pair —
-# both pairs tested against the same tool-use protocol.
+# Reasoning-pair default (C5c, per operator request for deep reasoning on
+# BOTH sides). Full DeepSeek-V3/R1 (671B MoE) is infeasible on a single
+# 32 GB GPU — we use the official DeepSeek-R1 distills which preserve
+# the <think> chain-of-thought into a smaller Qwen backbone:
+#
+#   Analyst (orchestrator, full reasoning)
+#       deepseek-r1:32b (distill-qwen-32b) @ Q4_K_M ≈ 20 GB
+#       Kept verbose — <think> trace is useful for the TradePlan audit
+#       log and feeds back into brain_memory's AnalystTrace.
+#
+#   Scanner (worker, fast reasoning)
+#       deepseek-r1:7b (distill-qwen-7b) @ Q4_K_M ≈ 5 GB
+#       Reasoning-capable at tick cadence (~60-180s). Output is
+#       <think>-stripped by strip_reasoning_tags() so the scanner's
+#       final JSON stays compact for brain_memory.
+#
+# Combined ~25 GB — fits with KV cache + OLLAMA_NUM_PARALLEL=4.
+# Alternative pairs operators can flip to via env or config:
+#   * qwen3-coder:30b + qwen2.5-coder:7b (agentic-tool-use specialized)
+#   * qwen3:32b + devstral:24b (originally-stated pair, ~34 GB tight)
 
-DEFAULT_SCANNER_MODEL = "qwen2.5-coder:7b"   # worker — fast structured output
-DEFAULT_ANALYST_MODEL = "qwen3-coder:30b"    # orchestrator — deep reasoning + JSON
-DEFAULT_SCANNER_TEMP = 0.2                    # low — structured output
-DEFAULT_ANALYST_TEMP = 0.3                    # small slack for multi-step reasoning
+DEFAULT_SCANNER_MODEL = "deepseek-r1:7b"       # worker — reasoning + fast
+DEFAULT_ANALYST_MODEL = "deepseek-r1:32b"      # orchestrator — full reasoning
+DEFAULT_SCANNER_TEMP = 0.3                      # small slack for CoT
+DEFAULT_ANALYST_TEMP = 0.4                      # more slack — analyst explores
+DEFAULT_STRIP_THINK_TAGS_FROM_SCANNER = True    # compact scanner output
 
 
 SCANNER_SYSTEM = (
@@ -271,6 +308,12 @@ def call_brain(
         text = ""
 
     if text.strip():
+        # Scanner runs every tick and feeds brain_memory — strip <think>
+        # traces so the next analyst cycle sees the compact answer only.
+        # Analyst keeps its full reasoning trace (useful for audit +
+        # learned preference from past TradePlans).
+        if brain == SCANNER and DEFAULT_STRIP_THINK_TAGS_FROM_SCANNER:
+            text = strip_reasoning_tags(text)
         return BrainResponse(brain=brain, model=cfg.model, text=text, ok=True)
 
     # Fall back to the other brain if requested.

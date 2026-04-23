@@ -116,44 +116,43 @@ ai:
   llm_provider: auto
   claude_model: claude-haiku-4-5
 
-  # ── Dual-brain model split (C5b — research-pair default) ──
+  # ── Dual-brain model split (C5c — reasoning-pair default) ──
   #
-  # Orchestrator + worker pattern (2026 agentic research): bigger model
-  # drives long-horizon planning; smaller/faster model handles
-  # high-frequency structured output. Best-available pair on RTX 5090
-  # 32 GB per multiple independent 2026 benchmarks:
+  # Per operator direction: BOTH brains should do deep reasoning, not
+  # just the analyst. Full DeepSeek-V3 / R1 (671B MoE) won't fit on a
+  # 32 GB GPU; we use the official DeepSeek-R1 distills which preserve
+  # R1's <think> chain-of-thought into a smaller Qwen backbone.
   #
-  #   Analyst (orchestrator, left brain) = qwen3-coder:30b @ Q5_K_M
-  #     The 2026 "gold standard" for agentic work on a single 32 GB
-  #     GPU. ~22 GB VRAM. 110k context. ~100 tok/s on 5090. Best-in-class
-  #     structured-JSON output — TradePlan Pydantic compilation under
-  #     authority constraint is its natural fit.
+  #   Analyst (orchestrator, full reasoning) = deepseek-r1:32b @ Q4_K_M
+  #     ~20 GB VRAM. Kept verbose — <think> trace is useful for
+  #     TradePlan audit, feeds back into brain_memory AnalystTrace.
   #
-  #   Scanner (worker, right brain) = qwen2.5-coder:7b @ Q5_K_M
-  #     ~5 GB VRAM. Purpose-built for tool-call extraction + JSON
-  #     parsing at speed. Same tokenizer family as the Analyst, so
-  #     context sharing through brain_memory is clean.
+  #   Scanner (worker, fast reasoning) = deepseek-r1:7b @ Q4_K_M
+  #     ~5 GB VRAM. Reasoning-capable at tick cadence (~60-180s).
+  #     <think> block is auto-stripped before the scanner's JSON
+  #     reaches brain_memory (see src/ai/dual_brain.py
+  #     strip_reasoning_tags) so the next analyst cycle sees a clean,
+  #     compact scanner report — no CoT bloat in the seed context.
   #
-  # Combined ~27 GB fits with headroom for KV cache.
-  # Recommended runtime: OLLAMA_NUM_PARALLEL=4 so scanner + analyst
-  # can run concurrently without swap (5090 bandwidth is 1792 GBps).
-  # Set num_ctx=32000 in each model's Modelfile for long-horizon memory.
+  # Combined ~25 GB — fits with KV cache + OLLAMA_NUM_PARALLEL=4.
+  # Set num_ctx=32000 in each Modelfile for long-horizon memory.
   #
-  # Alternative pair if operator prefers the originally-stated models:
-  #   analyst_model: qwen3:32b        (Q4_K_M ~20 GB)
-  #   scanner_model: devstral:24b     (Q4_K_M ~14 GB)
-  #   # combined ~34 GB — tight, relies on Ollama model-swap
+  # Alternative pairs (switch via env or by editing the two _model
+  # fields below):
+  #   * qwen3-coder:30b + qwen2.5-coder:7b — agentic-tool-use specialised
+  #     best for heavy MCP + structured JSON; less reasoning depth.
+  #   * qwen3:32b + devstral:24b — original operator pick, ~34 GB tight.
   #
   # Env overrides: ACT_SCANNER_MODEL / ACT_ANALYST_MODEL.
   dual_brain:
     enabled: true
-    scanner_model: qwen2.5-coder:7b    # worker — fast structured output
-    scanner_role: "market_survey"       # task tag for routing
-    analyst_model: qwen3-coder:30b     # orchestrator — deep reasoning + JSON
+    scanner_model: deepseek-r1:7b       # worker — fast reasoning, <think>-stripped
+    scanner_role: "market_survey"        # task tag for routing
+    analyst_model: deepseek-r1:32b      # orchestrator — full reasoning trace kept
     analyst_role: "trade_plan_compile"
-    fallback_cross: true                # if primary fails, try the other
-    scanner_temperature: 0.2            # structured output, keep low
-    analyst_temperature: 0.3            # small slack for multi-step reasoning
+    fallback_cross: true                 # if primary fails, try the other
+    scanner_temperature: 0.3             # small CoT slack
+    analyst_temperature: 0.4             # analyst explores; strip noise via validator
   use_llm_trade_decider: true
   llm_trade_decider_mode: primary
   llm_trade_conf_threshold: 0.8
