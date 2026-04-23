@@ -49,15 +49,27 @@ logger = logging.getLogger(__name__)
 
 def build_llm_call(
     system_prompt_override: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
 ) -> Callable[[List[Dict[str, Any]]], str]:
-    """Return a closure: `(messages) -> str` that dispatches through the
-    existing LLMRouter. Any provider (Ollama, Anthropic, Gemini) will do.
+    """Return a closure: `(messages) -> str` that dispatches the agentic
+    loop's turns to an LLM.
 
-    The closure flattens the multi-turn message list into a single
-    prompt + system_prompt pair — LLMRouter.generate() takes that shape.
-    This works for providers that don't natively support tool_use blocks;
-    the agentic loop's JSON envelope protocol compensates.
+    Routing (C5 dual-brain):
+      * If `ai.dual_brain.enabled` is true in config, route to the
+        ANALYST brain (Devstral 24B by default) — its structured-JSON
+        and tool-use training fits the loop's multi-turn envelope
+        protocol.
+      * Otherwise, use the legacy flatten-and-dispatch path through
+        the first available LLMRouter provider. Same behavior as
+        before C5; existing tests / fallback unchanged.
     """
+    # Prefer the dual-brain Analyst when enabled.
+    try:
+        from src.ai.dual_brain import build_analyst_llm_call, is_enabled as _dual_enabled
+        if _dual_enabled(config):
+            return build_analyst_llm_call(config)
+    except Exception as e:
+        logger.debug("agentic_bridge: dual_brain unavailable, using flat router: %s", e)
     def _call(messages: List[Dict[str, Any]]) -> str:
         if not messages:
             return ""

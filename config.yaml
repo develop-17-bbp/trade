@@ -94,6 +94,25 @@ ai:
   ollama_base_url: http://localhost:11434
   llm_provider: auto
   claude_model: claude-haiku-4-5
+
+  # ── Dual-brain model split (C5) ──
+  # Left brain / right brain. Scanner is Qwen 32B — stronger general
+  # reasoning + pattern recognition, ideal for the broad "what's
+  # happening in the market" survey pass that runs every tick.
+  # Analyst is Devstral 24B — Mistral's agentic/coding-focused model,
+  # excellent at structured tool-use + Pydantic JSON output, used by
+  # the agentic trade loop for TradePlan compilation.
+  # Both run locally via Ollama on the RTX 5090; Q4_K_M quantization.
+  # Env overrides: ACT_SCANNER_MODEL / ACT_ANALYST_MODEL.
+  dual_brain:
+    enabled: true
+    scanner_model: qwen3:32b           # right-brain pattern survey
+    scanner_role: "market_survey"       # task tag for routing
+    analyst_model: devstral:24b        # left-brain structured decision
+    analyst_role: "trade_plan_compile"
+    fallback_cross: true                # if primary fails, try the other
+    scanner_temperature: 0.4            # slightly creative for pattern spotting
+    analyst_temperature: 0.1            # deterministic for structured output
   use_llm_trade_decider: true
   llm_trade_decider_mode: primary
   llm_trade_conf_threshold: 0.8
@@ -109,8 +128,8 @@ ai:
   orchestrator_enabled: true
 monitor:
   enabled: true
-  ollama_url: https://spas-inclusive-breaking-frontier.trycloudflare.com
-  ollama_model: mistral:latest
+  ollama_url: http://localhost:11434
+  ollama_model: devstral:24b
   scan_interval: 120
   auto_fix: true
   max_fixes_per_hour: 5
