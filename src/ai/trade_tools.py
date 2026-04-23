@@ -321,6 +321,25 @@ def build_default_registry() -> ToolRegistry:
     except Exception as _e:
         logger.debug("agent_tools not registered: %s", _e)
 
+    # ── External MCP servers (C7 — now auto-wired) ─────────────────────
+    # Previously the operator had to manually call register_all_from_config.
+    # Now every `python -m ... build_default_registry()` mirrors every
+    # configured MCP server's tools into the same registry the Analyst
+    # brain sees. No-op if config.yaml:mcp_clients is empty or
+    # ACT_DISABLE_MCP_CLIENTS=1 is set.
+    try:
+        from pathlib import Path as _P
+        import yaml as _yaml
+        from src.ai.mcp_client_registry import register_all_from_config
+        _cfg_path = _P(__file__).resolve().parents[2] / "config.yaml"
+        _cfg = {}
+        if _cfg_path.exists():
+            with _cfg_path.open("r", encoding="utf-8") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+        register_all_from_config(reg, _cfg)
+    except Exception as _e:
+        logger.debug("mcp clients not registered: %s", _e)
+
     # ── Real-time knowledge-graph tool (C12) ───────────────────────────
     # Continuous-ingest graph over ACT's live data streams (news +
     # sentiment + institutional + polymarket + correlation edges, all

@@ -231,6 +231,66 @@ def check_personas() -> Dict[str, Any]:
 # ── Config ─────────────────────────────────────────────────────────────
 
 
+def check_polymarket() -> Dict[str, Any]:
+    """Polymarket venue diagnostic — mode, live-gates, py_clob_client
+    installed, recent shadow/live activity from warm_store.
+    """
+    out: Dict[str, Any] = {
+        "enabled_in_config": False,
+        "live_env_set": os.environ.get("ACT_POLYMARKET_LIVE") == "1",
+        "py_clob_client_installed": False,
+        "executor_mode": "unknown",
+        "recent_shadow_orders": 0,
+        "recent_live_orders": 0,
+    }
+    try:
+        from src.exchanges.polymarket_executor import PolymarketExecutor
+        cfg = check_config()
+        # check_config() only returns a subset; reload full cfg for pm block.
+        try:
+            import yaml
+            from pathlib import Path as _Path
+            cfg_path = _Path(__file__).resolve().parents[2] / "config.yaml"
+            if cfg_path.exists():
+                with cfg_path.open("r", encoding="utf-8") as f:
+                    full_cfg = yaml.safe_load(f) or {}
+            else:
+                full_cfg = {}
+        except Exception:
+            full_cfg = {}
+        pm_cfg = full_cfg.get("polymarket") or {}
+        out["enabled_in_config"] = bool(pm_cfg.get("enabled", False))
+        ex = PolymarketExecutor(config=full_cfg)
+        out["executor_mode"] = ex.mode()
+    except Exception as e:
+        out["error"] = str(e)[:120]
+
+    try:
+        import py_clob_client  # noqa: F401
+        out["py_clob_client_installed"] = True
+    except Exception:
+        pass
+
+    # Recent activity in warm_store — PM_SHADOW vs PM_LIVE actions.
+    try:
+        db = _warm_db_path()
+        if os.path.exists(db):
+            conn = sqlite3.connect(db, timeout=2.0)
+            cutoff_ns = int((time.time() - 86400) * 1_000_000_000)
+            out["recent_shadow_orders"] = int(conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE ts_ns >= ? "
+                "AND final_action = 'PM_SHADOW'", (cutoff_ns,),
+            ).fetchone()[0] or 0)
+            out["recent_live_orders"] = int(conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE ts_ns >= ? "
+                "AND final_action = 'PM_LIVE'", (cutoff_ns,),
+            ).fetchone()[0] or 0)
+            conn.close()
+    except Exception:
+        pass
+    return out
+
+
 def check_config() -> Dict[str, Any]:
     cfg_path = Path(__file__).resolve().parents[2] / "config.yaml"
     if not cfg_path.exists():

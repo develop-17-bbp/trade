@@ -42,20 +42,38 @@ def _fetch_crypto_markets(limit: int) -> List[Dict[str, Any]]:
 
 
 def _estimate_probability(market: Dict[str, Any]) -> float:
-    """Quick probability estimate — sophisticated version uses the
-    Analyst brain. For the MVP we fall back to a conservative mean
-    between implied price and 0.5 (i.e. assume moderate edge when we
-    have no LLM signal yet)."""
+    """Back-compat wrapper — kept because tests may import it. New
+    code uses `_estimate_via_analyst` which returns a full
+    PolymarketProbabilityEstimate with rationale + confidence."""
+    est = _estimate_via_analyst(market)
+    return est.estimated_yes_probability
+
+
+def _estimate_via_analyst(market: Dict[str, Any]):
+    """Delegate to the Analyst brain (C13b). Returns a
+    PolymarketProbabilityEstimate. Never raises — the estimator has
+    its own fallback path returning zero-edge."""
     try:
-        yes_price = float(market.get("yes_price") or 0.0)
-    except Exception:
-        return 0.5
-    # Clamp into (0, 1).
-    yes_price = max(0.01, min(0.99, yes_price))
-    # Baseline: market-implied + small contrarian tilt toward 0.5.
-    # This only produces meaningful edge when we wire the Analyst in
-    # below; otherwise conviction will correctly reject most markets.
-    return yes_price
+        from src.trading.polymarket_analyst import estimate_probability
+        return estimate_probability(market)
+    except Exception as e:
+        logger.debug("polymarket-hunt: estimator failed: %s", e)
+        # Final fallback — manual zero-edge estimate.
+        from src.trading.polymarket_analyst import PolymarketProbabilityEstimate
+        try:
+            implied = float(market.get("yes_price") or 0.5)
+        except Exception:
+            implied = 0.5
+        implied = max(0.01, min(0.99, implied))
+        return PolymarketProbabilityEstimate(
+            market_id=str(market.get("market_id") or "?"),
+            question=str(market.get("question") or ""),
+            implied_yes_probability=implied,
+            estimated_yes_probability=implied,
+            edge=0.0, confidence=0.0,
+            rationale=f"hunt estimator exception: {type(e).__name__}",
+            fallback_used=True,
+        )
 
 
 def run(args: Dict[str, Any]) -> SkillResult:
@@ -87,15 +105,11 @@ def run(args: Dict[str, Any]) -> SkillResult:
 
     scored: List[Dict[str, Any]] = []
     for m in markets:
-        # For each market, try both YES and NO sides; keep whichever the
-        # gate approves. The LLM-side probability estimate is pluggable;
-        # here we use _estimate_probability as a placeholder.
-        implied_yes = float(m.get("yes_price") or 0.5)
-        # Simple contrarian heuristic: if implied > 0.5 but volume is
-        # heavily one-sided, the other side may be mispriced. Leave the
-        # actual probability estimation to the Analyst in a future commit;
-        # for the MVP, we just eyeball.
-        est_p = _estimate_probability(m)
+        # C13b: delegate to the Analyst brain for a real probability
+        # estimate. If the Analyst has no edge, it returns implied ==
+        # estimated and the conviction gate auto-rejects.
+        estimate = _estimate_via_analyst(m)
+        est_p = estimate.estimated_yes_probability
         for side in ("YES", "NO"):
             r = eval_pm(
                 market=m, proposed_side=side,
@@ -107,6 +121,7 @@ def run(args: Dict[str, Any]) -> SkillResult:
                 scored.append({
                     "market": m,
                     "conviction": r.to_dict(),
+                    "estimate": estimate.to_dict(),
                 })
                 break   # don't take both sides of the same market
 
@@ -145,12 +160,15 @@ def run(args: Dict[str, Any]) -> SkillResult:
     ]
     for rank, s in enumerate(scored[:3], 1):
         c = s["conviction"]
+        e = s.get("estimate") or {}
         q = (s["market"].get("question") or "")[:80]
         msg_lines.append(
             f"  #{rank} {c['tier']:<6} {c['side']:<3} "
             f"shares={c['shares']:<4} EV=${c['expected_value_usd']:,.2f} "
-            f"edge={c['edge']:+.3f}  [{q}]"
+            f"edge={c['edge']:+.3f} conf={e.get('confidence', '-'):<5}  [{q}]"
         )
+        if e.get("rationale"):
+            msg_lines.append(f"           why: {e['rationale'][:120]}")
     if submitted:
         msg_lines.append(
             f"  Submitted: market={submitted['market_id']} "

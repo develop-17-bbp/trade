@@ -10,6 +10,7 @@ from src.skills.diagnostics import (
     check_graph,
     check_ollama_models,
     check_personas,
+    check_polymarket,
     check_readiness,
     check_warm_store,
 )
@@ -54,6 +55,14 @@ def _lights(data: Dict[str, Any]) -> Dict[str, str]:
     lights["graph"] = "green" if edge_total > 0 else "yellow"
     lights["personas"] = "green" if (personas or {}).get("active_count", 0) > 0 else "yellow"
     lights["readiness"] = "green" if (readiness or {}).get("open") else "yellow"
+
+    pm = data.get("polymarket") or {}
+    if pm.get("executor_mode") == "live":
+        lights["polymarket"] = "green"
+    elif pm.get("enabled_in_config") or pm.get("recent_shadow_orders", 0) > 0:
+        lights["polymarket"] = "yellow"   # shadow-active
+    else:
+        lights["polymarket"] = "yellow"
     return lights
 
 
@@ -66,6 +75,7 @@ def run(args: Dict[str, Any]) -> SkillResult:
         "graph": check_graph(),
         "personas": check_personas(),
         "readiness": check_readiness(),
+        "polymarket": check_polymarket(),
         "config": check_config(),
     }
     lights = _lights(data)

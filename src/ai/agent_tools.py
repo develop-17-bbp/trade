@@ -210,6 +210,35 @@ def _handle_body_controls(_args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+# ── Skill dispatch tool (lets the agentic loop invoke operator skills) ─
+
+
+def _handle_dispatch_skill(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Invoke a registered skill from inside the agentic loop.
+
+    Safety: the registry enforces requires_confirmation=true skills
+    (emergency-flatten, fine-tune-brain, polymarket-hunt) need
+    confirm=true in args when invoker='llm'. Without the flag, those
+    skills are blocked at dispatch and the LLM sees a rejection
+    instead of running the skill. Read-only skills (/status,
+    /diagnose-noop, /readiness, /regime-check, /agent-post-mortem)
+    run freely.
+    """
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"error": "skill name is required"}
+    skill_args = args.get("args") or {}
+    if not isinstance(skill_args, dict):
+        return {"error": "args must be an object/dict"}
+    try:
+        from src.skills.registry import get_registry
+        reg = get_registry()
+        result = reg.dispatch(name, skill_args, invoker="llm")
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    return result.to_dict()
+
+
 # ── Registration entry point ───────────────────────────────────────────
 
 
@@ -274,6 +303,35 @@ def register_agent_tools(registry) -> List[str]:
             handler=_handle_debate, tag="read_only",
         ))
         added.append("ask_debate")
+    except ValueError:
+        pass
+
+    # dispatch_skill — C13b. Lets the LLM invoke operator skills.
+    try:
+        registry.register(Tool(
+            name="dispatch_skill",
+            description=(
+                "[SKILL] Invoke a registered skill (see /list in the "
+                "skills CLI for names). Destructive skills "
+                "(emergency-flatten, fine-tune-brain, polymarket-hunt) "
+                "require `args.confirm=true` when called from the LLM — "
+                "without that flag, dispatch is refused. Read-only "
+                "skills (status, diagnose-noop, readiness, regime-check, "
+                "agent-post-mortem) run freely."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string",
+                             "description": "Skill name e.g. 'status' or 'diagnose-noop'"},
+                    "args": {"type": "object",
+                             "description": "Kwargs to pass to the skill's action."},
+                },
+                "required": ["name"],
+            },
+            handler=_handle_dispatch_skill, tag="read_only",
+        ))
+        added.append("dispatch_skill")
     except ValueError:
         pass
 
