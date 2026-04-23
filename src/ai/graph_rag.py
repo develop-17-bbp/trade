@@ -238,6 +238,45 @@ class KnowledgeGraph:
             conn.commit()
         return eid
 
+    def add_edges_bulk(self, rows: List[Dict[str, Any]]) -> List[str]:
+        """Batch-insert N edges in one transaction (N inserts, 1 commit).
+
+        Each row is a dict with add_edge-shaped keys. Malformed rows are
+        skipped with a debug log rather than aborting the batch.
+        Used by ingest_news etc. so a 10-item news batch is 1 commit
+        instead of 10.
+        """
+        if not rows:
+            return []
+        now = time.time()
+        prepared: List[tuple] = []
+        ids: List[str] = []
+        for r in rows:
+            try:
+                eid = uuid.uuid4().hex
+                prepared.append((
+                    eid,
+                    r["src_id"], r["dst_id"],
+                    r["relation"], r["kind"],
+                    float(r.get("weight", 1.0)),
+                    now, r.get("source", "") or "",
+                    json.dumps(r.get("payload") or {}, default=str),
+                ))
+                ids.append(eid)
+            except Exception as e:
+                logger.debug("add_edges_bulk: skipping malformed row: %s", e)
+        if not prepared:
+            return []
+        with self._lock:
+            conn = self._conn_get()
+            conn.executemany(
+                "INSERT INTO edges (edge_id, src_id, dst_id, relation, kind, "
+                "weight, ts, source, payload) VALUES (?,?,?,?,?,?,?,?,?)",
+                prepared,
+            )
+            conn.commit()
+        return ids
+
     # ── Queries ─────────────────────────────────────────────────────────
 
     def get_entity(self, entity_id: str) -> Optional[Entity]:
@@ -418,7 +457,8 @@ def ingest_news(asset: str, news_items: List[Dict[str, Any]]) -> int:
     except Exception:
         return 0
     asset_eid = g.upsert_entity(kind="asset", name=asset.upper())
-    n = 0
+    # Build all edges first, then insert in one commit via add_edges_bulk.
+    rows: List[Dict[str, Any]] = []
     for item in news_items:
         title = getattr(item, "title", None) or (item.get("title") if isinstance(item, dict) else None)
         if not title:
@@ -426,24 +466,22 @@ def ingest_news(asset: str, news_items: List[Dict[str, Any]]) -> int:
         src = getattr(item, "source", None) or (item.get("source") if isinstance(item, dict) else "") or "news"
         event_type = (getattr(item, "event_type", None)
                       or (item.get("event_type") if isinstance(item, dict) else "general"))
-        # News item as its own entity so duplicates collapse.
         news_eid = g.upsert_entity(
             kind="news", name=title[:200],
             attrs={"source": src, "event_type": event_type},
         )
-        # asset → news edge (weight scales with event_type impact).
         impact_weight = {
             "regulatory": 1.5, "etf": 1.3, "hack": 1.4, "macro": 1.0,
             "exchange": 0.9, "adoption": 0.8, "general": 0.6,
         }.get(event_type, 0.6)
-        g.add_edge(
-            src_id=asset_eid, dst_id=news_eid,
-            relation="mentions", kind="news",
-            weight=impact_weight, source=src,
-            payload={"event_type": event_type},
-        )
-        n += 1
-    return n
+        rows.append({
+            "src_id": asset_eid, "dst_id": news_eid,
+            "relation": "mentions", "kind": "news",
+            "weight": impact_weight, "source": src,
+            "payload": {"event_type": event_type},
+        })
+    inserted = g.add_edges_bulk(rows)
+    return len(inserted)
 
 
 def ingest_sentiment(asset: str, sentiment_vote) -> bool:
@@ -482,22 +520,21 @@ def ingest_institutional(asset: str, institutional_data: Dict[str, float]) -> in
         asset_eid = g.upsert_entity(kind="asset", name=asset.upper())
     except Exception:
         return 0
-    n = 0
+    rows: List[Dict[str, Any]] = []
     for key, val in institutional_data.items():
         if not isinstance(val, (int, float)):
             continue
         signal_eid = g.upsert_entity(kind="institutional_signal", name=str(key))
-        # Magnitude → weight; sign → relation direction.
         weight = min(5.0, abs(float(val)))
         rel = "positive_flow" if val >= 0 else "negative_flow"
-        g.add_edge(
-            src_id=asset_eid, dst_id=signal_eid,
-            relation=rel, kind="on_chain" if "flow" in key.lower() else "institutional",
-            weight=weight, source="institutional_fetcher",
-            payload={"raw_value": val},
-        )
-        n += 1
-    return n
+        rows.append({
+            "src_id": asset_eid, "dst_id": signal_eid,
+            "relation": rel,
+            "kind": "on_chain" if "flow" in key.lower() else "institutional",
+            "weight": weight, "source": "institutional_fetcher",
+            "payload": {"raw_value": val},
+        })
+    return len(g.add_edges_bulk(rows))
 
 
 def ingest_polymarket(asset: str, markets: List[Dict[str, Any]]) -> int:
@@ -509,7 +546,7 @@ def ingest_polymarket(asset: str, markets: List[Dict[str, Any]]) -> int:
         asset_eid = g.upsert_entity(kind="asset", name=asset.upper())
     except Exception:
         return 0
-    n = 0
+    rows: List[Dict[str, Any]] = []
     for m in markets:
         mid = str(m.get("market_id") or m.get("id") or "")
         question = str(m.get("question") or "")
@@ -520,14 +557,13 @@ def ingest_polymarket(asset: str, markets: List[Dict[str, Any]]) -> int:
             kind="polymarket_event", name=question[:200],
             attrs={"market_id": mid, "yes_price": yes_price},
         )
-        g.add_edge(
-            src_id=asset_eid, dst_id=event_eid,
-            relation="referenced_by", kind="polymarket",
-            weight=yes_price, source="polymarket",
-            payload={"market_id": mid, "yes_price": yes_price},
-        )
-        n += 1
-    return n
+        rows.append({
+            "src_id": asset_eid, "dst_id": event_eid,
+            "relation": "referenced_by", "kind": "polymarket",
+            "weight": yes_price, "source": "polymarket",
+            "payload": {"market_id": mid, "yes_price": yes_price},
+        })
+    return len(g.add_edges_bulk(rows))
 
 
 def ingest_correlation(asset_a: str, asset_b: str, correlation: float,

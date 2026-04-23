@@ -309,6 +309,18 @@ def build_default_registry() -> ToolRegistry:
     except Exception as _e:
         logger.debug("quant_tools not registered: %s", _e)
 
+    # ── Agent + debate + backtest tools (post-C17 simplify) ───────────
+    # Expose the 10 orchestrator agents that weren't callable before,
+    # plus ask_debate (run adversarial debate) and backtest_hypothesis
+    # (vectorized sanity check). Closes the "full potential" capability
+    # gap — every ACT subsystem the Analyst brain can meaningfully
+    # reason about is now a tool.
+    try:
+        from src.ai.agent_tools import register_agent_tools
+        register_agent_tools(reg)
+    except Exception as _e:
+        logger.debug("agent_tools not registered: %s", _e)
+
     # ── Real-time knowledge-graph tool (C12) ───────────────────────────
     # Continuous-ingest graph over ACT's live data streams (news +
     # sentiment + institutional + polymarket + correlation edges, all

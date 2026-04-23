@@ -35,7 +35,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -61,23 +60,14 @@ def _bump_tick(asset: str) -> int:
 # ── Scanner pass ───────────────────────────────────────────────────────
 
 
-_SCANNER_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
 def _extract_first_json(text: str) -> Optional[Dict[str, Any]]:
-    if not text:
+    """Delegate to the agentic_trade_loop's JSON extractor — same logic
+    (greedy regex + progressive shrinking), keep it in one place."""
+    try:
+        from src.ai.agentic_trade_loop import _extract_json
+        return _extract_json(text)
+    except Exception:
         return None
-    m = _SCANNER_JSON_RE.search(text)
-    if not m:
-        return None
-    # Try shrinking from the right if the body has trailing junk.
-    candidate = m.group(0)
-    for end in range(len(candidate), 0, -1):
-        try:
-            return json.loads(candidate[:end])
-        except Exception:
-            continue
-    return None
 
 
 def _run_scanner(asset: str, quant_digest: str, bundle_block: str) -> bool:
