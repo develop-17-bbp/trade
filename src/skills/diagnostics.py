@@ -69,13 +69,37 @@ def check_ollama_models() -> Dict[str, Any]:
 # ── Warm-store activity ────────────────────────────────────────────────
 
 
+def _columns_of(conn: sqlite3.Connection, table: str) -> set:
+    """Return the set of column names for `table` (empty on any error)."""
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return {row[1] for row in rows}
+    except Exception:
+        return set()
+
+
 def check_warm_store(window_s: float = 3600.0) -> Dict[str, Any]:
+    """Query warm_store for recent activity. Robust to legacy schemas
+    missing the C1 component_signals column (the migration runs on
+    first WarmStore() construction — before the bot boots, the column
+    may not exist yet)."""
     db = _warm_db_path()
     if not os.path.exists(db):
         return {"exists": False, "path": db}
     try:
+        # Open via get_store() so the C1 migration runs and the column
+        # gets added transparently. Safe for repeat calls.
+        try:
+            from src.orchestration.warm_store import get_store
+            get_store()
+        except Exception as e:
+            logger.debug("check_warm_store: get_store() init failed: %s", e)
+
         conn = sqlite3.connect(db, timeout=3.0)
         cur = conn.cursor()
+        cols = _columns_of(conn, "decisions")
+        has_component_signals = "component_signals" in cols
+
         cutoff_ns = int((time.time() - window_s) * 1_000_000_000)
         total = cur.execute(
             "SELECT COUNT(*) FROM decisions WHERE ts_ns >= ?", (cutoff_ns,),
@@ -87,23 +111,31 @@ def check_warm_store(window_s: float = 3600.0) -> Dict[str, Any]:
         outcomes = cur.execute(
             "SELECT COUNT(*) FROM outcomes WHERE exit_ts >= ?", (time.time() - window_s,),
         ).fetchone()[0]
-        scanner_published = cur.execute(
-            "SELECT COUNT(*) FROM decisions WHERE ts_ns >= ? AND "
-            "json_extract(component_signals, '$.scanner_published') = 1",
-            (cutoff_ns,),
-        ).fetchone()[0]
         actions = cur.execute(
             "SELECT final_action, COUNT(*) FROM decisions "
             "WHERE ts_ns >= ? AND decision_id NOT LIKE 'shadow-%' "
             "GROUP BY final_action ORDER BY 2 DESC", (cutoff_ns,),
         ).fetchall()
-        shadow_reasons = cur.execute(
-            "SELECT json_extract(component_signals, '$.terminated_reason'), COUNT(*) "
-            "FROM decisions WHERE ts_ns >= ? AND decision_id LIKE 'shadow-%' "
-            "GROUP BY 1 ORDER BY 2 DESC", (cutoff_ns,),
-        ).fetchall()
+
+        if has_component_signals:
+            scanner_published = cur.execute(
+                "SELECT COUNT(*) FROM decisions WHERE ts_ns >= ? AND "
+                "json_extract(component_signals, '$.scanner_published') = 1",
+                (cutoff_ns,),
+            ).fetchone()[0]
+            shadow_reasons = cur.execute(
+                "SELECT json_extract(component_signals, '$.terminated_reason'), COUNT(*) "
+                "FROM decisions WHERE ts_ns >= ? AND decision_id LIKE 'shadow-%' "
+                "GROUP BY 1 ORDER BY 2 DESC", (cutoff_ns,),
+            ).fetchall()
+        else:
+            # Legacy schema — report the gap honestly so /status turns yellow
+            # and /diagnose-noop can call it out.
+            scanner_published = 0
+            shadow_reasons = []
         conn.close()
-        return {
+
+        out: Dict[str, Any] = {
             "exists": True, "path": db, "window_s": window_s,
             "decisions_total": int(total or 0),
             "decisions_shadow": int(shadow or 0),
@@ -113,6 +145,12 @@ def check_warm_store(window_s: float = 3600.0) -> Dict[str, Any]:
             "real_action_breakdown": dict(actions or []),
             "shadow_terminated_reasons": dict(shadow_reasons or []),
         }
+        if not has_component_signals:
+            out["warning"] = (
+                "legacy schema — component_signals column not yet added. "
+                "Will self-heal when bot boots (WarmStore() runs migration)."
+            )
+        return out
     except Exception as e:
         return {"exists": True, "error": str(e)[:120]}
 

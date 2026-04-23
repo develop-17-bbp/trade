@@ -81,6 +81,18 @@ def run(args: Dict[str, Any]) -> SkillResult:
     lines.append(f"  Brain profile        = {env.get('ACT_BRAIN_PROFILE')}")
     lines.append(f"  Scanner / Analyst    = {env.get('ACT_SCANNER_MODEL')} / {env.get('ACT_ANALYST_MODEL')}")
 
+    # Helpful hint: when all agentic env flags are <unset>, the operator
+    # is likely running /status from a terminal that didn't source
+    # START_ALL.ps1. setx persistence fixes this for future terminals.
+    if env.get("ACT_AGENTIC_LOOP") == "<unset>" and \
+       env.get("ACT_BRAIN_PROFILE") == "<unset>":
+        lines.append("")
+        lines.append("  HINT: env flags unset — either:")
+        lines.append("    (a) open a fresh terminal after running START_ALL.ps1 ")
+        lines.append("        (setx persists; current windows need a restart), or")
+        lines.append("    (b) set manually:  setx ACT_AGENTIC_LOOP 1")
+        lines.append("                       setx ACT_BRAIN_PROFILE dense_r1")
+
     ws = data["warm_store"]
     if ws.get("exists"):
         lines.append(

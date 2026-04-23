@@ -282,18 +282,25 @@ $env:PYTHONPATH = $dir
 # Turn the shadow loop ON by default so the GPU box is producing shadow
 # plans + brain_memory scan reports + graph edges from the moment the
 # bot boots. Set ACT_DISABLE_AGENTIC_LOOP=1 in .env to force off.
-if (-not $env:ACT_AGENTIC_LOOP) { $env:ACT_AGENTIC_LOOP = "1" }
-if (-not $env:ACT_BRAIN_PROFILE) { $env:ACT_BRAIN_PROFILE = $brainProfile }
+#
+# We use BOTH `$env:VAR` (in-process — child processes we launch here
+# inherit it) AND `setx VAR` (persistent — survives to future terminals
+# so `python -m src.skills.cli run status` run from a fresh cmd/pwsh
+# window still sees the same flags). Without setx, operators running
+# /status from a different terminal see "<unset>" because $env: is
+# process-local.
+function _SetEnvPersistent($name, $value) {
+    Set-Item -Path ("env:" + $name) -Value $value
+    try { setx $name $value | Out-Null } catch {}
+}
 
-# Propagate scanner/analyst model choices so child processes see them.
-if (-not $env:ACT_SCANNER_MODEL) { $env:ACT_SCANNER_MODEL = $scannerModel }
-if (-not $env:ACT_ANALYST_MODEL) { $env:ACT_ANALYST_MODEL = $analystModel }
-
-# Enable concurrent scanner+analyst inference on Ollama. Without this,
-# Ollama serializes requests and the scanner blocks the analyst every
-# tick. RTX 5090's 1792 GB/s bandwidth absorbs parallelism.
-if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "4" }
+if (-not $env:ACT_AGENTIC_LOOP) { _SetEnvPersistent "ACT_AGENTIC_LOOP" "1" }
+if (-not $env:ACT_BRAIN_PROFILE) { _SetEnvPersistent "ACT_BRAIN_PROFILE" $brainProfile }
+if (-not $env:ACT_SCANNER_MODEL) { _SetEnvPersistent "ACT_SCANNER_MODEL" $scannerModel }
+if (-not $env:ACT_ANALYST_MODEL) { _SetEnvPersistent "ACT_ANALYST_MODEL" $analystModel }
+if (-not $env:OLLAMA_NUM_PARALLEL) { _SetEnvPersistent "OLLAMA_NUM_PARALLEL" "4" }
 OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel OLLAMA_NUM_PARALLEL=$($env:OLLAMA_NUM_PARALLEL)"
+OK "Env vars persisted via setx (open a new terminal to pick them up for diagnostics like /status)."
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
