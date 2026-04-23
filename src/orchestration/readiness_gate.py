@@ -53,6 +53,12 @@ def _tunables() -> Dict[str, float]:
         # regardless of trade count. Set to 0 to disable.
         "MIN_ROLLING_SHARPE": float(os.getenv("ACT_GATE_MIN_SHARPE", "1.0")),
         "SHARPE_WINDOW": int(os.getenv("ACT_GATE_SHARPE_WINDOW", "30")),
+        # Annualised-return target for the strategy. Informational only —
+        # used by the evaluator to compute 'progress_to_target'. Does NOT
+        # gate anything. 25-40% is the realistic envelope on Robinhood-
+        # hardened swing; 60-80% on a lower-fee venue; 100%+ requires a
+        # different strategy class (not in scope here).
+        "TARGET_ANNUAL_RETURN_PCT": float(os.getenv("ACT_TARGET_ANNUAL_PCT", "25.0")),
     }
 
 
@@ -222,6 +228,26 @@ def evaluate() -> GateState:
     details["operator_flag"] = operator_flag
     if not operator_flag:
         reasons.append(f"{REAL_CAPITAL_FLAG} not set (operator gate)")
+
+    # ── Informational: progress toward annualised return target ──
+    # Not a gate criterion — displayed so the operator can track how the
+    # observed rolling Sharpe maps to the realistic 25-40% annual target.
+    # Approximation: annualised_pct ≈ sharpe × sqrt(trades_per_year) × mean_pnl_pct.
+    # Simpler proxy: map rolling Sharpe to an expected annual band:
+    #   Sharpe 0.5  → ~15-25% annual
+    #   Sharpe 1.0  → ~25-40% annual
+    #   Sharpe 1.5  → ~40-65% annual
+    target_annual = float(t["TARGET_ANNUAL_RETURN_PCT"])
+    if sharpe > 0 and sharpe_samples >= 10:
+        # Rough heuristic: 1 Sharpe ≈ 30% annual on typical crypto-vol profile
+        estimated_annual = sharpe * 30.0
+        progress_pct = min(100.0, (estimated_annual / target_annual) * 100.0) if target_annual > 0 else 0.0
+    else:
+        estimated_annual = 0.0
+        progress_pct = 0.0
+    details["target_annual_return_pct"] = target_annual
+    details["estimated_annual_return_pct"] = round(estimated_annual, 2)
+    details["progress_to_target_pct"] = round(progress_pct, 1)
 
     gate = GateState(open_=(len(reasons) == 0), reasons=reasons, details=details)
     _emit_metric(gate)

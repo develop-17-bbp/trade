@@ -1,5 +1,28 @@
 mode: live
 poll_interval: 60
+
+# ── Timeframe profile ──
+# Pick one: 'scalp' (5m primary, current default) or 'swing' (1h primary,
+# recommended for Robinhood's 1.69% spread). 'position' (4h) for long-
+# hold. Env var ACT_TIMEFRAME_PROFILE overrides this key.
+timeframe_profile: scalp
+
+# ── Realistic annual-return target ──
+# Informational — used by the evaluator/readiness-gate diagnostic to show
+# how the current rolling Sharpe maps to an annualised return estimate.
+# 25% = realistic on Robinhood-hardened swing; 40% = upper envelope of
+# same strategy on a lower-fee venue (Bybit/Delta). NOT a trading gate.
+target_annual_return_pct: 25
+
+# ── Funding-rate arbitrage (dormant on Robinhood-only setup) ──
+# Only activates when a perp-futures venue (bybit/delta/binance_futures)
+# is added to the exchanges list AND funding_arb.enabled=true OR env
+# ACT_FUNDING_ARB=1.
+funding_arb:
+  enabled: false
+  min_annualised_pct: 12.0
+  notional_usd: 2000
+  expected_hold_days: 7
 exchanges:
 - name: robinhood
   assets:
