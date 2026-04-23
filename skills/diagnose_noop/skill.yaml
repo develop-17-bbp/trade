@@ -1,0 +1,14 @@
+name: diagnose-noop
+description: >
+  Answer "why hasn't the bot placed any profitable trades yet?" by
+  auditing the whole stack: env flags, Ollama model presence,
+  warm_store decision counts (shadow vs real), readiness-gate state,
+  brain_memory activity, and conviction-gate rejection patterns.
+  Output identifies the most likely cause in one line.
+reversible: true
+requires_confirmation: false
+tags:
+  - ops
+  - read_only
+  - diagnostic
+  - urgent
