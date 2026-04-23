@@ -64,6 +64,24 @@ mcp_clients: []
 #   on_authority_violation, on_emergency_mode_enter/exit,
 #   on_strategy_promote, on_startup, on_shutdown.
 hooks: {}
+
+# ── Polymarket venue (C13) — second venue, bypasses RH spread ceiling ──
+# Polymarket is a binary-options prediction market. YES/NO tokens pay
+# $1 on resolution. Different math than Robinhood spot — see
+# src/trading/polymarket_conviction.py for sizing rules.
+#
+# Gates (ALL must be true to place live orders):
+#   1. polymarket.enabled: true (this file)
+#   2. ACT_POLYMARKET_LIVE=1 env
+#   3. py_clob_client installed (pip install py-clob-client)
+#   4. POLYMARKET_API_KEY set (env or config below)
+#   5. Readiness gate OPEN
+# Otherwise every order is SHADOW-logged to warm_store for audit.
+polymarket:
+  enabled: false                   # default OFF
+  host: https://clob.polymarket.com
+  api_key: null                    # populate via POLYMARKET_API_KEY env
+  max_portfolio_exposure_pct: 15   # never >15% of equity on PM markets combined
 exchanges:
 - name: robinhood
   assets:

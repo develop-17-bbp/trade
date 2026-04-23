@@ -1,0 +1,15 @@
+name: polymarket-hunt
+description: >
+  Scan active Polymarket crypto markets, use the Analyst brain to
+  estimate true probability, run each candidate through the
+  Polymarket-specific conviction gate (sniper/normal/reject),
+  and submit the top tier match via PolymarketExecutor. Defaults
+  to shadow mode (no real orders) unless ACT_POLYMARKET_LIVE=1
+  AND config.polymarket.enabled=true AND readiness gate is open.
+  Writes a compact scan report to warm_store regardless.
+reversible: true
+requires_confirmation: true
+tags:
+  - ops
+  - polymarket
+  - venue
