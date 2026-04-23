@@ -43,6 +43,16 @@ agentic_loop:
 emergency_mode:
   enabled: true
   ratio: 0.7                  # emergency when sharpe_obs/sharpe_target < this
+
+# ── External MCP servers (C7) ──
+# Remote tool sources the Analyst brain can call alongside in-process
+# tools. Each server's tools are mirrored into ToolRegistry with a
+# namespace prefix (tag). Examples:
+#   - url: https://coingecko-mcp.example   tag: cg
+#   - url: http://localhost:3100           tag: tv
+# Kill switch: ACT_DISABLE_MCP_CLIENTS=1 skips all external registration.
+# Headers support ${ENV_VAR} expansion for secret tokens.
+mcp_clients: []
 exchanges:
 - name: robinhood
   assets:
