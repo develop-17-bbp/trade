@@ -116,12 +116,15 @@ def _load_robinhood_paper_trades() -> list:
 def _require_api_key(x_api_key: Optional[str] = Header(default=None)):
     api_key = os.environ.get("DASHBOARD_API_KEY", "")
     dev_mode = os.environ.get("TRADE_API_DEV_MODE", "").lower() in ("1", "true", "yes")
+    # Dev mode is an explicit, loud opt-in ("I know I'm bypassing auth").
+    # When it's set, skip the key check entirely — this is the flag
+    # operators reach for when running the dashboard locally without
+    # baking VITE_API_KEY into the frontend build.
+    if dev_mode:
+        return True
     if not api_key:
-        # No key configured at all: require explicit dev-mode opt-in or reject.
-        # This closes the "empty-key-accepts-everything" footgun that would
-        # expose the tunnel publicly if DASHBOARD_API_KEY got unset.
-        if dev_mode:
-            return True
+        # No key configured AND dev-mode not opted in: reject explicitly so
+        # the tunnel never accidentally serves unauthenticated traffic.
         raise HTTPException(status_code=403,
                             detail="DASHBOARD_API_KEY not configured. Set env var or enable TRADE_API_DEV_MODE=1")
     if x_api_key != api_key:
