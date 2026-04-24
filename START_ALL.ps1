@@ -238,6 +238,54 @@ foreach ($mod in $ollamaModels) {
 }
 OK "Models: $($ollamaModels -join ' + ')"
 
+# ── Pre-load brain models into VRAM with keep_alive=-1 ──
+# Without this, the FIRST scanner / analyst call after boot triggers
+# a 30-60 sec disk-load → request times out → empty LLM response →
+# parse_failures → bot fires zero trades for the first ~5 minutes.
+# Pre-load both models with keep_alive=-1 (Ollama: pin in VRAM
+# indefinitely until next request resets it) so Ollama has them
+# warm before the trading bot even tries.
+CHECK "Pre-loading brain models into VRAM (keep_alive=-1)..."
+$ollamaUrl = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL.TrimEnd('/') } else { 'http://127.0.0.1:11434' }
+$ctxNum = if ($env:OLLAMA_NUM_CTX) { $env:OLLAMA_NUM_CTX } else { '8192' }
+foreach ($mod in $ollamaModels) {
+    $payload = @{
+        model       = $mod
+        prompt      = 'ping'
+        stream      = $false
+        keep_alive  = -1
+        options     = @{ num_ctx = [int]$ctxNum; num_predict = 4 }
+    } | ConvertTo-Json -Depth 5 -Compress
+    try {
+        $resp = Invoke-WebRequest -Uri "$ollamaUrl/api/generate" `
+            -Method Post -Body $payload -ContentType 'application/json' `
+            -TimeoutSec 180 -ErrorAction Stop
+        if ($resp.StatusCode -eq 200) {
+            OK "Pre-loaded $mod (resident in VRAM, keep_alive=-1)"
+        } else {
+            WARN "Pre-load $mod returned HTTP $($resp.StatusCode)"
+        }
+    } catch {
+        WARN "Pre-load $mod failed: $($_.Exception.Message). Bot will retry on first tick."
+    }
+}
+
+# ── Verify both models actually resident ──
+try {
+    $ps = Invoke-RestMethod -Uri "$ollamaUrl/api/ps" -TimeoutSec 5 -ErrorAction Stop
+    if ($ps.models -and $ps.models.Count -gt 0) {
+        $loaded = ($ps.models | ForEach-Object { $_.name }) -join ', '
+        OK "Ollama VRAM: $loaded"
+        if ($ps.models.Count -lt $ollamaModels.Count) {
+            WARN "Only $($ps.models.Count) of $($ollamaModels.Count) models resident — set OLLAMA_MAX_LOADED_MODELS=$($ollamaModels.Count) and restart Ollama if both should fit."
+        }
+    } else {
+        WARN "Ollama /api/ps reports no resident models — pre-load may have failed silently."
+    }
+} catch {
+    WARN "Could not verify resident models via /api/ps: $($_.Exception.Message)"
+}
+
 # ── Load .env ──
 CHECK "Loading .env..."
 $envFile = Join-Path $PSScriptRoot ".env"
