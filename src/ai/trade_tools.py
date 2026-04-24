@@ -352,6 +352,19 @@ def _build_default_registry_uncached() -> ToolRegistry:
     except Exception as _e:
         logger.debug("agent_tools not registered: %s", _e)
 
+    # ── Unified-brain tool pack (C26 Step 2) ──────────────────────────
+    # Expose the remaining ACT subsystems that weren't LLM-callable yet:
+    # ML ensemble (LightGBM + LSTM + PatchTST + RL), 36-strategy engine,
+    # MemoryVault (age-decayed), Monte-Carlo VaR, EVT tail risk, macro
+    # bias, per-layer economic intelligence, genetic hall-of-fame
+    # challenger, full event-driven backtest. After this block the
+    # Analyst brain has access to every major ACT subsystem as a tool.
+    try:
+        from src.ai.unified_brain_tools import register_unified_brain_tools
+        register_unified_brain_tools(reg)
+    except Exception as _e:
+        logger.debug("unified_brain_tools not registered: %s", _e)
+
     # ── External MCP servers (C7 — now auto-wired) ─────────────────────
     # Previously the operator had to manually call register_all_from_config.
     # Now every `python -m ... build_default_registry()` mirrors every
