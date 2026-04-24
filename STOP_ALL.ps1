@@ -44,7 +44,7 @@ try {
             try {
                 Invoke-WebRequest -Uri "$ollamaUrl/api/generate" `
                     -Method Post -Body $payload -ContentType 'application/json' `
-                    -TimeoutSec 10 -ErrorAction Stop | Out-Null
+                    -TimeoutSec 10 -ErrorAction Stop -UseBasicParsing | Out-Null
                 Write-Host "    Unloaded: $m" -ForegroundColor Yellow
             } catch {
                 # Fallback to ollama CLI stop

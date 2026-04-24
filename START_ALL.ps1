@@ -259,7 +259,7 @@ foreach ($mod in $ollamaModels) {
     try {
         $resp = Invoke-WebRequest -Uri "$ollamaUrl/api/generate" `
             -Method Post -Body $payload -ContentType 'application/json' `
-            -TimeoutSec 180 -ErrorAction Stop
+            -TimeoutSec 180 -ErrorAction Stop -UseBasicParsing
         if ($resp.StatusCode -eq 200) {
             OK "Pre-loaded $mod (resident in VRAM, keep_alive=-1)"
         } else {
