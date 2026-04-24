@@ -1,0 +1,17 @@
+name: adverse-media-check
+description: >
+  Screen an entity / counterparty / protocol against recent news for
+  adverse signals before trusting it. AML-style negative-news check
+  adapted for crypto: pass an entity name (exchange, protocol, stable-
+  coin, oracle) and get back any critical/high-severity risk events
+  in the last N hours. Inspired by arXiv:2602.23373 "Agentic LLM
+  Framework for Adverse Media Screening in AML Compliance" but
+  applied to the crypto-markets ACT trades against.
+  Safe, read-only. Args: `entity=<name>` (required),
+  `hours=48` (optional), `min_severity=high` (optional).
+reversible: true
+requires_confirmation: false
+tags:
+  - compliance
+  - screening
+  - read_only
