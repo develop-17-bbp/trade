@@ -444,7 +444,7 @@ class LLMRouter:
         if remote_ollama_url:
             self.add_provider('remote_gpu', LLMConfig(
                 provider='ollama',
-                model=os.environ.get('OLLAMA_REMOTE_MODEL', 'mistral'),
+                model=os.environ.get('OLLAMA_REMOTE_MODEL', 'deepseek-r1:7b'),
                 base_url=remote_ollama_url,
                 timeout=120,
             ))
