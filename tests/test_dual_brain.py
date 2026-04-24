@@ -42,6 +42,45 @@ def test_default_profile_is_32gb_safe():
     # qwen3_r1 (32B + 32B ≈ 42GB) does not and requires operator
     # opt-in via ACT_BRAIN_PROFILE=qwen3_r1.
     assert DEFAULT_PROFILE in ("dense_r1", "moe_agentic")
+
+
+def test_vram_autodowngrade_swaps_qwen3_r1_to_dense_r1(monkeypatch):
+    """Even when ACT_BRAIN_PROFILE=qwen3_r1 is set in env, runtime
+    should auto-substitute dense_r1 on a 32GB card."""
+    monkeypatch.setenv(PROFILE_ENV, "qwen3_r1")
+    import src.ai.dual_brain as db
+    # Pretend we detected 32 GB
+    db._VRAM_CACHE_GB.clear()
+    db._VRAM_CACHE_GB["cap"] = 32.0
+    profile = db._resolve_profile()
+    assert profile["scanner_model"] == "deepseek-r1:7b"
+    assert profile["analyst_model"] == "deepseek-r1:32b"
+
+
+def test_vram_autodowngrade_disabled_via_env(monkeypatch):
+    """ACT_DISABLE_VRAM_AUTODOWNGRADE=1 lets operator force the
+    profile through even if VRAM doesn't fit."""
+    monkeypatch.setenv(PROFILE_ENV, "qwen3_r1")
+    monkeypatch.setenv("ACT_DISABLE_VRAM_AUTODOWNGRADE", "1")
+    import src.ai.dual_brain as db
+    db._VRAM_CACHE_GB.clear()
+    db._VRAM_CACHE_GB["cap"] = 32.0
+    profile = db._resolve_profile()
+    # Operator forced through — we get qwen3_r1 even though it OOMs
+    assert profile["scanner_model"] == "qwen3:32b"
+
+
+def test_vram_autodowngrade_skipped_on_large_gpu(monkeypatch):
+    """On 48 GB+ cards the qwen3_r1 profile fits and shouldn't be
+    downgraded."""
+    monkeypatch.setenv(PROFILE_ENV, "qwen3_r1")
+    monkeypatch.delenv("ACT_DISABLE_VRAM_AUTODOWNGRADE", raising=False)
+    import src.ai.dual_brain as db
+    db._VRAM_CACHE_GB.clear()
+    db._VRAM_CACHE_GB["cap"] = 48.0
+    profile = db._resolve_profile()
+    # Fits — keep qwen3_r1
+    assert profile["scanner_model"] == "qwen3:32b"
     # Each profile must carry the four required fields.
     for name, p in BRAIN_PROFILES.items():
         for k in ("scanner_model", "analyst_model",

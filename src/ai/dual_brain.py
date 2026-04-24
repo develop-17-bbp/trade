@@ -172,7 +172,16 @@ def _vram_estimate_gb(model: str) -> float:
 
 def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Pick the active profile: env > config > default. Unknown names
-    fall back to the default so typos don't break the runtime."""
+    fall back to the default so typos don't break the runtime.
+
+    AUTO-DOWNGRADE: if the resolved profile needs more VRAM than the
+    detected GPU has + 2 GB headroom, automatically substitute
+    `dense_r1` (which fits 32 GB cards). This prevents silent Ollama
+    OOM → empty LLM responses → parse_failures → zero trades —
+    the failure mode operators kept hitting because their persisted
+    env var was stale. Operators on >40 GB hardware are unaffected
+    (no downgrade triggered).
+    """
     name = os.environ.get(PROFILE_ENV, "").strip()
     if not name and isinstance(config, dict):
         cfg = (config.get("ai") or {}).get("dual_brain") or {}
@@ -183,11 +192,56 @@ def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
                            name, DEFAULT_PROFILE)
         name = DEFAULT_PROFILE
     profile = BRAIN_PROFILES[name]
-    # One-shot VRAM-fit warning — helps operators diagnose silent
-    # Ollama OOM ("provider returned empty text"). Only warns once
-    # per process; based on Q4_K_M quantization estimates.
     _emit_vram_warning_once(name, profile)
+
+    # Auto-downgrade if VRAM doesn't fit and we're not already on
+    # dense_r1. Cap detection at 2 GB headroom so we don't downgrade
+    # on cards that are exactly tight (e.g. 24 GB analyst + 6 GB
+    # scanner = 30 GB on a 32 GB card — fits with 2 GB headroom).
+    fallback_safe = "dense_r1"
+    if name != fallback_safe and os.environ.get(
+        "ACT_DISABLE_VRAM_AUTODOWNGRADE", ""
+    ).strip() != "1":
+        cap = _detect_vram_gb()
+        if cap > 0:
+            scanner = profile.get("scanner_model", "")
+            analyst = profile.get("analyst_model", "")
+            needed = _vram_estimate_gb(scanner) + _vram_estimate_gb(analyst)
+            if needed > cap + 2:
+                logger.warning(
+                    "[BRAIN] AUTO-DOWNGRADE: profile %r needs ~%.1f GB but "
+                    "only %.1f GB available; switching to %r at runtime. "
+                    "Set ACT_DISABLE_VRAM_AUTODOWNGRADE=1 to override "
+                    "(not recommended unless you've manually verified VRAM).",
+                    name, needed, cap, fallback_safe,
+                )
+                return BRAIN_PROFILES[fallback_safe]
+
     return profile
+
+
+_VRAM_CACHE_GB: Dict[str, float] = {}
+
+
+def _detect_vram_gb() -> float:
+    """Best-effort nvidia-smi VRAM detection. Cached for the process
+    lifetime so we don't shell out per-call."""
+    if "cap" in _VRAM_CACHE_GB:
+        return _VRAM_CACHE_GB["cap"]
+    cap = 0.0
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.total",
+             "--format=csv,noheader,nounits"],
+            stderr=subprocess.DEVNULL, timeout=3,
+        ).decode().strip().splitlines()
+        if out:
+            cap = float(out[0]) / 1024.0  # MiB → GiB
+    except Exception:
+        pass
+    _VRAM_CACHE_GB["cap"] = cap
+    return cap
 
 
 _VRAM_WARNED: Dict[str, bool] = {}
@@ -202,20 +256,10 @@ def _emit_vram_warning_once(name: str, profile: Dict[str, Any]) -> None:
         scanner = profile.get("scanner_model", "")
         analyst = profile.get("analyst_model", "")
         needed = _vram_estimate_gb(scanner) + _vram_estimate_gb(analyst)
-        # Best-effort detect RTX 5090 (32 GB). If we can't tell, skip.
-        cap = 0.0
-        try:
-            import subprocess
-            out = subprocess.check_output(
-                ["nvidia-smi", "--query-gpu=memory.total",
-                 "--format=csv,noheader,nounits"],
-                stderr=subprocess.DEVNULL, timeout=3,
-            ).decode().strip().splitlines()
-            if out:
-                cap = float(out[0]) / 1024.0   # MiB -> GiB
-        except Exception:
+        cap = _detect_vram_gb()
+        if cap == 0:
             return
-        if cap > 0 and needed > cap + 2:
+        if needed > cap + 2:
             logger.warning(
                 "[BRAIN] Profile %r needs ~%.1f GB VRAM (scanner=%s + "
                 "analyst=%s) but only %.1f GB detected. Expect empty-LLM "
