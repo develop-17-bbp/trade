@@ -442,9 +442,14 @@ class LLMRouter:
         # ── Remote Ollama GPU is the PRIMARY and ONLY LLM ──
         remote_ollama_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
         if remote_ollama_url:
+            # Treat empty-string env as absent so operators can clear
+            # a stale override (e.g. `setx OLLAMA_REMOTE_MODEL ""`)
+            # and get the sane default rather than an empty-model
+            # registration that silently fails downstream.
+            _remote_model = os.environ.get('OLLAMA_REMOTE_MODEL', '').strip() or 'deepseek-r1:7b'
             self.add_provider('remote_gpu', LLMConfig(
                 provider='ollama',
-                model=os.environ.get('OLLAMA_REMOTE_MODEL', 'deepseek-r1:7b'),
+                model=_remote_model,
                 base_url=remote_ollama_url,
                 timeout=120,
             ))

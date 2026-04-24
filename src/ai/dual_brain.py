@@ -142,8 +142,32 @@ BRAIN_PROFILES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-DEFAULT_PROFILE = "qwen3_r1"
+# Default profile: dense_r1 fits comfortably on 32 GB RTX 5090
+# (deepseek-r1:7b ~6GB + deepseek-r1:32b ~20GB = ~26GB). The
+# qwen3_r1 pair (qwen3:32b + deepseek-r1:32b = ~42GB) is excellent
+# but requires >40GB VRAM; ACT_BRAIN_PROFILE=qwen3_r1 selects it
+# explicitly on hardware that can hold it.
+DEFAULT_PROFILE = "dense_r1"
 PROFILE_ENV = "ACT_BRAIN_PROFILE"
+
+# Approximate Q4_K_M VRAM footprint by model name. Used for the
+# startup VRAM-compatibility warning. Numbers are rough upper bounds
+# including KV-cache + embeddings.
+_MODEL_VRAM_GB = {
+    "deepseek-r1:7b": 6.0,
+    "deepseek-r1:32b": 20.0,
+    "deepseek-r1:latest": 6.0,
+    "qwen2.5-coder:7b": 6.0,
+    "qwen3-coder:30b": 20.0,
+    "qwen3:32b": 22.0,
+    "devstral:24b": 16.0,
+    "llama3.2:latest": 3.0,
+    "mistral:latest": 6.0,
+}
+
+
+def _vram_estimate_gb(model: str) -> float:
+    return _MODEL_VRAM_GB.get(str(model or "").lower(), 10.0)
 
 
 def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -158,7 +182,56 @@ def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             logger.warning("unknown brain profile %r; falling back to %s",
                            name, DEFAULT_PROFILE)
         name = DEFAULT_PROFILE
-    return BRAIN_PROFILES[name]
+    profile = BRAIN_PROFILES[name]
+    # One-shot VRAM-fit warning — helps operators diagnose silent
+    # Ollama OOM ("provider returned empty text"). Only warns once
+    # per process; based on Q4_K_M quantization estimates.
+    _emit_vram_warning_once(name, profile)
+    return profile
+
+
+_VRAM_WARNED: Dict[str, bool] = {}
+
+
+def _emit_vram_warning_once(name: str, profile: Dict[str, Any]) -> None:
+    if _VRAM_WARNED.get(name):
+        return
+    _VRAM_WARNED[name] = True
+    try:
+        import os as _os
+        scanner = profile.get("scanner_model", "")
+        analyst = profile.get("analyst_model", "")
+        needed = _vram_estimate_gb(scanner) + _vram_estimate_gb(analyst)
+        # Best-effort detect RTX 5090 (32 GB). If we can't tell, skip.
+        cap = 0.0
+        try:
+            import subprocess
+            out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=memory.total",
+                 "--format=csv,noheader,nounits"],
+                stderr=subprocess.DEVNULL, timeout=3,
+            ).decode().strip().splitlines()
+            if out:
+                cap = float(out[0]) / 1024.0   # MiB -> GiB
+        except Exception:
+            return
+        if cap > 0 and needed > cap + 2:
+            logger.warning(
+                "[BRAIN] Profile %r needs ~%.1f GB VRAM (scanner=%s + "
+                "analyst=%s) but only %.1f GB detected. Expect empty-LLM "
+                "errors. Switch to dense_r1 (7B+32B, ~24 GB) or "
+                "moe_agentic (7B+30B, ~24 GB) via "
+                "`setx ACT_BRAIN_PROFILE dense_r1` + fresh cmd.",
+                name, needed, scanner, analyst, cap,
+            )
+        else:
+            logger.info(
+                "[BRAIN] Profile %r selected (scanner=%s, analyst=%s, "
+                "~%.1f GB needed, %.1f GB available)",
+                name, scanner, analyst, needed, cap or 0,
+            )
+    except Exception:
+        pass
 
 
 # ── Defaults (fall-through when neither profile nor explicit cfg) ───────

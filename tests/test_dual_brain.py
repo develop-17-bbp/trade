@@ -36,8 +36,12 @@ def test_brain_profiles_has_named_set():
     assert {"qwen3_r1", "dense_r1", "moe_agentic", "devstral_qwen3coder"} <= set(BRAIN_PROFILES.keys())
 
 
-def test_default_profile_is_qwen3_r1():
-    assert DEFAULT_PROFILE == "qwen3_r1"
+def test_default_profile_is_32gb_safe():
+    # DEFAULT_PROFILE must fit on a 32GB RTX 5090 out-of-the-box to
+    # avoid silent Ollama OOM. dense_r1 (7B + 32B ≈ 26GB) fits;
+    # qwen3_r1 (32B + 32B ≈ 42GB) does not and requires operator
+    # opt-in via ACT_BRAIN_PROFILE=qwen3_r1.
+    assert DEFAULT_PROFILE in ("dense_r1", "moe_agentic")
     # Each profile must carry the four required fields.
     for name, p in BRAIN_PROFILES.items():
         for k in ("scanner_model", "analyst_model",
