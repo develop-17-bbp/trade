@@ -1,0 +1,13 @@
+name: show-brain-trace
+description: >
+  Show the most recent scanner + analyst brain activity — what context
+  the LLM received, what it output, whether parsing succeeded. Use
+  this to verify the models are actually analyzing market data rather
+  than returning empty / malformed output. Args: `asset=BTC` (or ETH),
+  `limit=5` (how many recent traces to show). Safe, read-only.
+reversible: true
+requires_confirmation: false
+tags:
+  - diagnostic
+  - ops
+  - read_only
