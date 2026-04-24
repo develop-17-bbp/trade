@@ -68,27 +68,114 @@ class LoopResult:
 # ── JSON extraction ─────────────────────────────────────────────────────
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_UNCLOSED_THINK_RE = re.compile(r"<think>.*$", re.IGNORECASE | re.DOTALL)
+# JS-style comments that appear in LLM JSON output. Don't match inside strings
+# (approximation — not perfect but good enough for well-formed LLM output).
+_JS_LINE_COMMENT_RE = re.compile(r"(?<!:)//[^\n\r]*")
+_JS_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+# Trailing commas before } or ]
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _find_balanced_json(text: str, start: int = 0) -> Optional[str]:
+    """Find the first balanced {...} substring using a depth counter.
+
+    Tolerant to strings containing braces, escaped quotes. Returns None
+    if no balanced object is found.
+    """
+    i = text.find("{", start)
+    if i < 0:
+        return None
+    depth = 0
+    in_str = False
+    escaped = False
+    for j in range(i, len(text)):
+        ch = text[j]
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\" and in_str:
+            escaped = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i:j + 1]
+    return None
+
+
+def _sanitize_json_text(raw: str) -> str:
+    """Light cleanup for common LLM JSON output quirks.
+
+    * strip JS-style line comments (//) and block comments (/*...*/)
+    * strip trailing commas before } or ]
+    * strip leading/trailing backticks
+    """
+    s = raw.strip().strip("`")
+    s = _JS_BLOCK_COMMENT_RE.sub("", s)
+    s = _JS_LINE_COMMENT_RE.sub("", s)
+    s = _TRAILING_COMMA_RE.sub(r"\1", s)
+    return s
 
 
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     """Find the first balanced top-level JSON object in the LLM response.
 
-    Handles: ```json ... ``` fences, raw JSON, JSON embedded in prose.
+    Tolerant to:
+      * <think>...</think> reasoning-model prefixes (deepseek-r1, qwen3)
+      * ```json ... ``` fences
+      * JS-style comments inside JSON (// and /* */)
+      * trailing commas before } or ]
+      * prose before/after the JSON block
+      * single-line JSON with no formatting
     """
     if not text:
         return None
-    # Strip ```json fence if present
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    # 1. Strip any <think>...</think> reasoning trace first — these can
+    # contain braces that would confuse the balanced-brace scanner.
+    cleaned = _THINK_RE.sub("", text)
+    cleaned = _UNCLOSED_THINK_RE.sub("", cleaned)
+
+    # 2. Try fenced code block first — the cleanest signal of intent.
+    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", cleaned, re.DOTALL)
     if fenced:
         try:
-            return json.loads(fenced.group(1))
+            return json.loads(_sanitize_json_text(fenced.group(1)))
         except Exception:
-            pass
-    # Fall through to greedy match; try progressively shrinking from the right
-    m = _JSON_BLOCK_RE.search(text)
+            pass   # fall through to balanced-brace search
+
+    # 3. Balanced-brace scan. Walk forward — the LAST top-level object
+    # often wins when the LLM includes examples followed by the real
+    # answer. Collect candidates; try largest first.
+    candidates: list = []
+    start = 0
+    while start < len(cleaned):
+        found = _find_balanced_json(cleaned, start)
+        if not found:
+            break
+        candidates.append(found)
+        start = cleaned.find(found, start) + len(found)
+    # Try longest first — most specific likely to be the real payload.
+    for cand in sorted(candidates, key=len, reverse=True):
+        try:
+            return json.loads(_sanitize_json_text(cand))
+        except Exception:
+            continue
+
+    # 4. Last-resort: greedy single-match + progressive shrink-from-right
+    # (handles cases where balanced search failed due to quoted braces).
+    m = _JSON_BLOCK_RE.search(cleaned)
     if not m:
         return None
-    candidate = m.group(0)
+    candidate = _sanitize_json_text(m.group(0))
     for end in range(len(candidate), 0, -1):
         try:
             return json.loads(candidate[:end])
@@ -165,6 +252,19 @@ class AgenticTradeLoop:
             envelope = _extract_json(raw or "")
             if envelope is None:
                 parse_failures += 1
+                # Log the first 200 chars of the unparseable output so
+                # operators diagnosing zero-trade cycles can SEE what the
+                # model actually said. Scrub before logging in case the
+                # model accidentally echoed secrets.
+                try:
+                    from src.ai.output_scrubber import scrub
+                    preview = scrub(str(raw)[:400]).text.replace("\n", " ")
+                except Exception:
+                    preview = str(raw)[:400].replace("\n", " ")
+                logger.warning(
+                    "[agentic_loop:%s] parse_failure %d/%d — step=%d preview=%r",
+                    self.asset, parse_failures, MAX_PARSE_FAILURES, step + 1, preview,
+                )
                 if parse_failures >= MAX_PARSE_FAILURES:
                     return LoopResult(
                         plan=TradePlan.skip(self.asset, thesis="LLM produced unparseable output"),
