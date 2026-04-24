@@ -126,6 +126,23 @@ def _sanitize_json_text(raw: str) -> str:
     return s
 
 
+def _try_single_quoted_repair(raw: str) -> Optional[Dict[str, Any]]:
+    """Last-resort: LLM emitted Python-dict-style with single quotes.
+
+    ast.literal_eval handles {'key': 'value', 'nums': [1, 2]} where
+    json.loads fails. Safe — literal_eval refuses anything other than
+    primitives / lists / tuples / dicts / bool / None.
+    """
+    import ast
+    try:
+        obj = ast.literal_eval(raw.strip())
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    return None
+
+
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     """Find the first balanced top-level JSON object in the LLM response.
 
@@ -165,9 +182,15 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
         start = cleaned.find(found, start) + len(found)
     # Try longest first — most specific likely to be the real payload.
     for cand in sorted(candidates, key=len, reverse=True):
+        sanitized = _sanitize_json_text(cand)
         try:
-            return json.loads(_sanitize_json_text(cand))
+            return json.loads(sanitized)
         except Exception:
+            # Python-dict-style single-quoted? ast.literal_eval handles
+            # {'key': 'value'} that json.loads rejects.
+            repaired = _try_single_quoted_repair(sanitized)
+            if repaired is not None:
+                return repaired
             continue
 
     # 4. Last-resort: greedy single-match + progressive shrink-from-right
@@ -177,9 +200,13 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
         return None
     candidate = _sanitize_json_text(m.group(0))
     for end in range(len(candidate), 0, -1):
+        piece = candidate[:end]
         try:
-            return json.loads(candidate[:end])
+            return json.loads(piece)
         except Exception:
+            repaired = _try_single_quoted_repair(piece)
+            if repaired is not None:
+                return repaired
             continue
     return None
 

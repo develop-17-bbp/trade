@@ -201,22 +201,35 @@ SCANNER_SYSTEM = (
     "You are ACT's SCANNER brain (right hemisphere). Your job is pattern "
     "recognition across the current market state — surveying prices, "
     "news headlines, sentiment, regime, cross-exchange signals — and "
-    "flagging opportunities for the Analyst to investigate. Output a "
-    "compact JSON assessment: {'opportunity_score': 0-100, "
-    "'top_signals': [...], 'proposed_direction': 'LONG'|'SHORT'|'FLAT', "
-    "'rationale': '<=2 sentences'}. Do NOT compile a full trade plan; "
-    "that's the Analyst's job. Keep output under 400 characters.\n\n"
+    "flagging opportunities for the Analyst to investigate. Do NOT "
+    "compile a full trade plan; that's the Analyst's job. Keep output "
+    "under 400 characters.\n\n"
+    "## OUTPUT FORMAT — STRICT JSON ONLY\n"
+    "Return exactly one JSON object using DOUBLE QUOTES for all keys "
+    "and string values. Do not wrap in markdown fences. Do not add "
+    "prose before or after. Example:\n"
+    '  {"opportunity_score": 65, "top_signals": ["ema_cross", "vol_spike"], '
+    '"proposed_direction": "LONG", "rationale": "BTC breaking 4h range '
+    'on volume, macro supportive."}\n\n'
     + PERFORMANCE_TARGET
 )
 
 ANALYST_SYSTEM = (
     "You are ACT's ANALYST brain (left hemisphere). Given the Scanner's "
     "assessment + market context + tool access, compile a structured "
-    "TradePlan via multi-turn reasoning. Emit ONE JSON envelope per "
-    "turn: {tool_call} / {plan} / {skip}. When emitting a plan, ensure "
+    "TradePlan via multi-turn reasoning. When emitting a plan, ensure "
     "every numeric field is grounded in VERIFIED QUANT DATA or a tool "
     "result — never hallucinate numbers. Authority rules are absolute; "
     "do not propose trades that violate them.\n\n"
+    "## OUTPUT FORMAT — STRICT JSON ONLY\n"
+    "Emit exactly ONE JSON object per turn. Use DOUBLE QUOTES for "
+    "every key and string value. Do not wrap in markdown fences. Do "
+    "not add prose, reasoning, or commentary outside the JSON. Three "
+    "valid shapes:\n"
+    '  {"tool_call": {"name": "<tool>", "args": {...}}}\n'
+    '  {"plan": {"direction": "LONG"|"SHORT"|"FLAT", "size_pct": 1.5, '
+    '"tier": "sniper"|"normal"|"skip", "thesis": "..."}}\n'
+    '  {"skip": "<one-line reason>"}\n\n'
     "## RECOMMENDED TOOL USE (liberal — don't compile a plan blind)\n"
     "  * Call `ask_risk_guardian` + `ask_loss_prevention` before ANY "
     "non-skip plan — stop-distance sanity + size sanity.\n"
@@ -381,9 +394,19 @@ def _llm_call(
                 pass
         resp = target.generate(prompt=prompt, system_prompt=system_prompt)
         text = resp.get("response") if isinstance(resp, dict) else str(resp)
-        return str(text or "")
+        text = str(text or "")
+        if not text.strip():
+            # Empty response means the provider errored silently (Ollama
+            # OOM on model load, all endpoints refused, rate-limited, etc.).
+            # Surface this at WARNING so zero-trade diagnostics can see it.
+            resp_error = (resp.get("error") if isinstance(resp, dict) else "") or "empty response"
+            logger.warning(
+                "dual_brain: provider %s returned empty text for model=%s err=%r",
+                type(target).__name__, model, str(resp_error)[:200],
+            )
+        return text
     except Exception as e:
-        logger.debug("dual_brain: provider.generate failed for %s: %s", model, e)
+        logger.warning("dual_brain: provider.generate failed for %s: %s", model, e)
         return ""
     finally:
         if hasattr(target, "config") and target.config is not None:

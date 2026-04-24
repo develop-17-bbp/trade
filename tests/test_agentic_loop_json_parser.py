@@ -103,6 +103,34 @@ def test_handles_fence_with_leading_language_tag_only():
     assert obj == {"skip": "weak setup"}
 
 
+def test_python_dict_style_single_quotes():
+    """LLMs trained on Python (devstral, qwen-coder) sometimes emit
+    Python-dict syntax. ast.literal_eval must rescue these."""
+    text = "{'opportunity_score': 65, 'proposed_direction': 'LONG', 'rationale': 'momentum breakout'}"
+    obj = _extract_json(text)
+    assert obj is not None
+    assert obj["opportunity_score"] == 65
+    assert obj["proposed_direction"] == "LONG"
+
+
+def test_mixed_quotes_with_think_prefix():
+    text = ("<think>scanning...</think>"
+            "{'opportunity_score': 40, 'top_signals': ['ema_cross'], "
+            "'proposed_direction': 'FLAT', 'rationale': 'weak'}")
+    obj = _extract_json(text)
+    assert obj is not None
+    assert obj["opportunity_score"] == 40
+    assert obj["proposed_direction"] == "FLAT"
+
+
+def test_ast_repair_rejects_code_injection():
+    """ast.literal_eval must NOT execute arbitrary code."""
+    text = "{'key': __import__('os').system('echo pwn')}"
+    obj = _extract_json(text)
+    # Should safely fail (literal_eval refuses function calls), not crash.
+    assert obj is None
+
+
 def test_handles_multiline_json_with_comments_and_trailing_comma():
     """The all-at-once stress test — everything a real LLM throws at us."""
     text = """<think>
