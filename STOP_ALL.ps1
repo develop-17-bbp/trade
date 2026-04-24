@@ -1,4 +1,4 @@
-# ACT Trading System — Stop All Processes
+# ACT Trading System -- Stop All Processes
 # Run: powershell -ExecutionPolicy Bypass -File STOP_ALL.ps1
 
 Write-Host ""
@@ -30,7 +30,7 @@ Start-Sleep 2
 # Unload brain models from Ollama VRAM. START_ALL pinned them with
 # keep_alive=-1; STOP_ALL releases by sending keep_alive=0 (ollama
 # evicts immediately) for each currently-resident model. The Ollama
-# service itself stays running (it's a Windows background service);
+# service itself stays running (Windows background service);
 # only the model weights are evicted from GPU memory so ACT is
 # truly idle when stopped.
 $ollamaUrl = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL.TrimEnd('/') } else { 'http://127.0.0.1:11434' }
@@ -52,7 +52,7 @@ try {
             }
         }
     } else {
-        Write-Host "  No Ollama models resident — skipping unload." -ForegroundColor Gray
+        Write-Host "  No Ollama models resident -- skipping unload." -ForegroundColor Gray
     }
 } catch {
     Write-Host "  Ollama not reachable for unload (fine if Ollama service is down)." -ForegroundColor Gray
@@ -73,6 +73,6 @@ if (Test-Path $composeFile) {
 }
 
 Write-Host ""
-Write-Host "   ALL ACT PROCESSES STOPPED — VRAM RELEASED" -ForegroundColor Green
+Write-Host "   ALL ACT PROCESSES STOPPED -- VRAM RELEASED" -ForegroundColor Green
 Write-Host ""
 Start-Sleep 3
