@@ -57,6 +57,17 @@ NORMAL_MIN_STRATEGY_AGREEING = 3
 SNIPER_MIN_MACRO_MAGNITUDE = 0.20
 TRENDING_REGIMES = {"trending", "strong_trend", "trend"}
 
+# ── Regime-dependent hysteresis (C19, WebCryptoAgent-inspired) ─────────
+# θ_adopt > θ_hold so entering a position needs a stronger signal than
+# staying in one. Prevents flip-flopping when signals wobble around the
+# entry threshold while a trade is already live.
+#
+# Fresh entry (in_position=False) → full thresholds.
+# Holding (in_position=True)       → thresholds scaled down by HOLD_FACTOR.
+HOLD_SNIPER_STRATEGY_FLOOR = 4          # vs 5 for fresh entry
+HOLD_NORMAL_STRATEGY_FLOOR = 2          # vs 3 for fresh entry
+HOLD_MACRO_MAGNITUDE_FACTOR = 0.70      # 0.14 vs 0.20 for fresh entry
+
 
 @dataclass
 class ConvictionResult:
@@ -84,6 +95,7 @@ def evaluate(
     hurst_regime: Optional[str],
     multi_strategy_counts: Dict[str, int],
     macro_bias: Optional[MacroBias],
+    in_position: bool = False,
 ) -> ConvictionResult:
     """Compute conviction tier + size multiplier.
 
@@ -94,6 +106,11 @@ def evaluate(
         hurst_regime: 'trending' / 'mean_reverting' / 'random' / None
         multi_strategy_counts: {'long': int, 'short': int, 'flat': int}
         macro_bias: MacroBias from compute_macro_bias(), or None
+        in_position: True if we're evaluating whether to HOLD a current
+            position (use hold-threshold θ_hold); False for a fresh
+            ENTRY (use adopt-threshold θ_adopt). Hold thresholds are
+            looser than adopt so a mid-trade signal wobble doesn't flip
+            the position out — WebCryptoAgent-style regime hysteresis.
 
     Returns ConvictionResult with tier, size_multiplier, per-check booleans.
     """
@@ -137,19 +154,30 @@ def evaluate(
     if not tf_aligned:
         reasons.append(f"tf_not_aligned:1h={tf_1h},4h={tf_4h},dir={d}")
 
-    # ── Multi-strategy agreement ───────────────────────────────────────
+    # ── Multi-strategy agreement (regime-dependent hysteresis) ─────────
+    # Fresh entry uses adopt-thresholds (5 for sniper, 3 for normal).
+    # In-position uses hold-thresholds (4 for sniper, 2 for normal) so
+    # a brief signal dip mid-trade doesn't force us out.
     n_long = int(multi_strategy_counts.get("long", 0))
     n_short = int(multi_strategy_counts.get("short", 0))
     agreeing = n_long if d == "LONG" else n_short
-    checks["multi_strategy_ge_3"] = agreeing >= NORMAL_MIN_STRATEGY_AGREEING
-    checks["multi_strategy_ge_5"] = agreeing >= SNIPER_MIN_STRATEGY_AGREEING
-    if not checks["multi_strategy_ge_3"]:
-        reasons.append(f"multistrat_weak:{d.lower()}={agreeing}")
+    sniper_strategy_floor = HOLD_SNIPER_STRATEGY_FLOOR if in_position else SNIPER_MIN_STRATEGY_AGREEING
+    normal_strategy_floor = HOLD_NORMAL_STRATEGY_FLOOR if in_position else NORMAL_MIN_STRATEGY_AGREEING
+    checks["multi_strategy_normal_floor"] = agreeing >= normal_strategy_floor
+    checks["multi_strategy_sniper_floor"] = agreeing >= sniper_strategy_floor
+    # Back-compat aliases so existing downstream readers don't break.
+    checks["multi_strategy_ge_3"] = checks["multi_strategy_normal_floor"]
+    checks["multi_strategy_ge_5"] = checks["multi_strategy_sniper_floor"]
+    if not checks["multi_strategy_normal_floor"]:
+        reasons.append(f"multistrat_weak:{d.lower()}={agreeing}<{normal_strategy_floor}")
 
     # ── Macro alignment (direction matches net bias) ───────────────────
+    sniper_macro_magnitude = SNIPER_MIN_MACRO_MAGNITUDE * (
+        HOLD_MACRO_MAGNITUDE_FACTOR if in_position else 1.0
+    )
     if macro_bias is not None:
         macro_aligned = macro_bias.aligned(d)
-        macro_strong = abs(macro_bias.signed_bias) >= SNIPER_MIN_MACRO_MAGNITUDE
+        macro_strong = abs(macro_bias.signed_bias) >= sniper_macro_magnitude
     else:
         macro_aligned = True            # absent macro = neutral
         macro_strong = False

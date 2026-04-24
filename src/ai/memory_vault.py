@@ -1,10 +1,19 @@
+import math
 import os
 import sqlite3
 import json
+import time
 import numpy as np
 from datetime import datetime
 from typing import List, Dict, Optional
 from src.models.trade_trace import TradeTrace
+
+
+# C19 (WebCryptoAgent-inspired): weight similarity by exp(-age / λ) so
+# retrieval prefers RECENT experience over stale-but-similar. Lambda
+# in hours — 168 (1 week) balances "recent regime" vs "enough samples
+# to matter." Overridable per-call.
+DEFAULT_TIME_DECAY_LAMBDA_H = 168.0
 
 class MemoryVault:
     """
@@ -77,15 +86,24 @@ class MemoryVault:
         except Exception as e:
             print(f"  [MEMORY] Error storing trade experience: {e}")
 
-    def find_similar_trades(self, 
+    def find_similar_trades(self,
                            asset: str,
                            current_regime: str,
                            current_funding: float,
                            current_sentiment: Dict,
                            proposed_signal: int,
-                           top_k: int = 3) -> List[Dict]:
-        """Query memory for similar past situations using cosine similarity."""
-        
+                           top_k: int = 3,
+                           time_decay_lambda_h: Optional[float] = None,
+                           regime_bonus: float = 0.10) -> List[Dict]:
+        """Query memory for similar past situations.
+
+        C19 scoring combines three terms:
+          * cosine embedding similarity (semantic match)
+          * exp(-age_hours / λ) age decay (recent regimes preferred)
+          * +regime_bonus if row's regime matches current_regime exactly
+
+        Set time_decay_lambda_h=0 to disable decay (legacy behaviour).
+        """
         query_text = f"""
         Asset: {asset}
         Market regime: {current_regime}
@@ -93,43 +111,62 @@ class MemoryVault:
         Sentiment: bullish={current_sentiment.get('bullish', 0)*100:.0f}% bearish={current_sentiment.get('bearish', 0)*100:.0f}%
         Signal: {'LONG' if proposed_signal == 1 else 'SHORT' if proposed_signal == -1 else 'FLAT'}
         """
-        
+        lam = DEFAULT_TIME_DECAY_LAMBDA_H if time_decay_lambda_h is None else float(time_decay_lambda_h)
+        now_ts = time.time()
+
         try:
             query_embedding = self.model.encode(query_text).astype(np.float32)
-            
+
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
-            # Filter by asset to keep it efficient
-            cursor.execute('SELECT id, metadata, embedding, document FROM trade_experiences WHERE asset = ?', (asset,))
+
+            cursor.execute(
+                'SELECT id, timestamp, regime, metadata, embedding, document '
+                'FROM trade_experiences WHERE asset = ?', (asset,),
+            )
             rows = cursor.fetchall()
             conn.close()
-            
+
             if not rows:
                 return []
-            
+
             results = []
-            for row_id, meta_json, emb_blob, doc in rows:
+            for row_id, ts_str, regime, meta_json, emb_blob, doc in rows:
                 row_embedding = np.frombuffer(emb_blob, dtype=np.float32)
-                
-                # Manual cosine similarity Calculation
-                # cosine_similarity = (A . B) / (||A|| * ||B||)
+
                 dot_product = np.dot(query_embedding, row_embedding)
                 norm_q = np.linalg.norm(query_embedding)
                 norm_r = np.linalg.norm(row_embedding)
-                similarity = dot_product / (norm_q * norm_r) if norm_q > 0 and norm_r > 0 else 0
-                
+                cosine = dot_product / (norm_q * norm_r) if norm_q > 0 and norm_r > 0 else 0.0
+
+                # Age decay
+                age_factor = 1.0
+                if lam > 0 and ts_str:
+                    try:
+                        row_ts = datetime.fromisoformat(ts_str).timestamp()
+                        age_h = max(0.0, (now_ts - row_ts) / 3600.0)
+                        age_factor = math.exp(-age_h / lam)
+                    except Exception:
+                        age_factor = 1.0
+
+                # Regime bonus
+                regime_match = 1.0 + regime_bonus if (regime or "").lower() == (current_regime or "").lower() else 1.0
+
+                weighted = float(cosine) * age_factor * regime_match
+
                 results.append({
                     'id': row_id,
                     'metadata': json.loads(meta_json),
                     'document': doc,
-                    'similarity': float(similarity)
+                    'similarity': float(cosine),
+                    'age_factor': round(age_factor, 4),
+                    'regime_match': regime_match > 1.0,
+                    'weighted_score': float(weighted),
                 })
-                
-            # Sort by similarity descending
-            results.sort(key=lambda x: x['similarity'], reverse=True)
+
+            results.sort(key=lambda x: x['weighted_score'], reverse=True)
             return results[:top_k]
-            
+
         except Exception as e:
             print(f"  [MEMORY] Search error: {e}")
             return []
