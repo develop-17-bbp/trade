@@ -384,10 +384,14 @@ if (-not $env:OLLAMA_MAX_LOADED_MODELS) { _SetEnvPersistent "OLLAMA_MAX_LOADED_M
 # sequential by design. Crank to 2 only if you observe queue backlog
 # in the scheduler.
 if (-not $env:OLLAMA_NUM_PARALLEL) { _SetEnvPersistent "OLLAMA_NUM_PARALLEL" "1" }
-# OLLAMA_NUM_CTX=8192 caps the per-call KV-cache instead of letting
-# Ollama use the model's max context (32K-128K). Reduces 7B from
-# 8.2 GB to ~5 GB and 32B from 31 GB to ~20 GB on RTX 5090.
-if (-not $env:OLLAMA_NUM_CTX) { _SetEnvPersistent "OLLAMA_NUM_CTX" "8192" }
+# OLLAMA_NUM_CTX=16384 — large enough for the agentic loop's full
+# prompt (system + evidence document + tool registry + multi-turn
+# history can hit 4-8K tokens before the model starts generating).
+# 8K was too tight: prompts got silently truncated -> garbled output
+# -> parse_failures. 16K still fits on RTX 5090 (7B ~5 GB, 32B
+# ~22 GB at 16K = ~27 GB total). Operators on smaller cards or
+# lighter prompts can drop back to 8192 manually.
+if (-not $env:OLLAMA_NUM_CTX) { _SetEnvPersistent "OLLAMA_NUM_CTX" "16384" }
 # Generous timeouts for first-load of 32B from disk
 if (-not $env:OLLAMA_READ_TIMEOUT_S) { _SetEnvPersistent "OLLAMA_READ_TIMEOUT_S" "180" }
 OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel MAX_LOADED=$($env:OLLAMA_MAX_LOADED_MODELS) PARALLEL=$($env:OLLAMA_NUM_PARALLEL) CTX=$($env:OLLAMA_NUM_CTX)"

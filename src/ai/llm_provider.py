@@ -224,19 +224,33 @@ class OllamaProvider(BaseLLMProvider):
             f'{base}/api/generate',
         ]
 
-        # Cap context window at OLLAMA_NUM_CTX or 8192 (default).
-        # Without this Ollama may use the model's max ctx (32K-128K) which
-        # inflates KV-cache VRAM hugely — observed deepseek-r1:7b
-        # using 8.2 GB at ctx=32768 on RTX 5090, leaving no room for
-        # the 32B analyst. 8192 covers our prompts (typically 1-4K
-        # tokens) with comfortable headroom and shrinks 7B to ~5 GB.
+        # Cap context window at OLLAMA_NUM_CTX or 16384 (default).
+        # 8K was observed to truncate the agentic loop's full prompt
+        # (system + Evidence Document + 39 tool descriptions +
+        # multi-turn history can hit 4-8K tokens BEFORE generation).
+        # Truncation -> garbled model output -> parse_failures.
+        # 16K is comfortable on a 32 GB RTX 5090: 7B uses ~5 GB and
+        # 32B uses ~22 GB at 16K context.
         try:
-            _num_ctx = int(os.environ.get('OLLAMA_NUM_CTX', '8192'))
+            _num_ctx = int(os.environ.get('OLLAMA_NUM_CTX', '16384'))
         except ValueError:
-            _num_ctx = 8192
+            _num_ctx = 16384
         # Reasonable max-tokens cap so a runaway model doesn't hold a
         # generation slot forever; 1500 covers our JSON envelopes.
         _num_predict = self.config.max_tokens or 1500
+
+        # Approx token count = char_count / 3.5 (English, roughly). Used
+        # only for the warning when prompt approaches num_ctx so silent
+        # truncation is visible.
+        full_prompt_chars = len(prompt) + len(system_prompt or "")
+        approx_prompt_tokens = int(full_prompt_chars / 3.5)
+        if approx_prompt_tokens > _num_ctx * 0.85:
+            logger.warning(
+                "[OllamaProvider] prompt ~%d tokens approaches num_ctx=%d "
+                "(model=%s, chars=%d). Output may be silently truncated. "
+                "Consider raising OLLAMA_NUM_CTX or trimming prompts.",
+                approx_prompt_tokens, _num_ctx, model_id, full_prompt_chars,
+            )
 
         for url in endpoints:
             try:
