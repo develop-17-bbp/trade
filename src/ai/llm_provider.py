@@ -207,15 +207,36 @@ class OllamaProvider(BaseLLMProvider):
         base = self.config.base_url or 'http://127.0.0.1:11434'
         model_id = self.config.model or 'deepseek-r1:7b'
 
-        # Use short connect timeout (3s) — if Ollama isn't running, fail fast
-        # Read timeout stays longer (60s) for actual inference
-        local_timeout = (3, 60)
+        # Connect timeout 10s + read timeout 180s — covers 32B model first-
+        # load (which takes 20-60s from cold disk) and long inference on
+        # multi-turn ReAct cycles. Operators on slow disks can override
+        # via OLLAMA_CONNECT_TIMEOUT_S / OLLAMA_READ_TIMEOUT_S.
+        try:
+            _ct = float(os.environ.get('OLLAMA_CONNECT_TIMEOUT_S', '10'))
+            _rt = float(os.environ.get('OLLAMA_READ_TIMEOUT_S', '180'))
+        except ValueError:
+            _ct, _rt = 10.0, 180.0
+        local_timeout = (_ct, _rt)
 
         # Try OpenAI-compatible endpoint first
         endpoints = [
             f'{base}/v1/chat/completions',
             f'{base}/api/generate',
         ]
+
+        # Cap context window at OLLAMA_NUM_CTX or 8192 (default).
+        # Without this Ollama may use the model's max ctx (32K-128K) which
+        # inflates KV-cache VRAM hugely — observed deepseek-r1:7b
+        # using 8.2 GB at ctx=32768 on RTX 5090, leaving no room for
+        # the 32B analyst. 8192 covers our prompts (typically 1-4K
+        # tokens) with comfortable headroom and shrinks 7B to ~5 GB.
+        try:
+            _num_ctx = int(os.environ.get('OLLAMA_NUM_CTX', '8192'))
+        except ValueError:
+            _num_ctx = 8192
+        # Reasonable max-tokens cap so a runaway model doesn't hold a
+        # generation slot forever; 1500 covers our JSON envelopes.
+        _num_predict = self.config.max_tokens or 1500
 
         for url in endpoints:
             try:
@@ -224,7 +245,11 @@ class OllamaProvider(BaseLLMProvider):
                         'model': model_id,
                         'prompt': f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
                         'stream': False,
-                        'options': {'temperature': self.config.temperature},
+                        'options': {
+                            'temperature': self.config.temperature,
+                            'num_ctx': _num_ctx,
+                            'num_predict': _num_predict,
+                        },
                     }
                     resp = requests.post(url, json=payload, timeout=local_timeout)
                     if resp.ok:
