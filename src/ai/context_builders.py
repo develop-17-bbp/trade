@@ -42,6 +42,11 @@ class EvidenceSection:
     confidence: float = 0.5         # 0.0 - 1.0, source-self-reported
     age_s: float = 0.0              # freshness, seconds
     source: str = ""                # module / url for audit
+    # FS-ReasoningAgent kind tag — "factual" | "subjective" | "mixed"
+    # | "technical". Used by the analyst's regime-aware weighting and
+    # by post-mortem analysis to attribute wins/losses to evidence
+    # types (arXiv:2410.12464 Oct 2024).
+    kind: str = "mixed"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -50,11 +55,14 @@ class EvidenceSection:
             "confidence": round(self.confidence, 3),
             "age_s": round(self.age_s, 1),
             "source": self.source,
+            "kind": self.kind,
         }
 
     def to_prompt_block(self) -> str:
         """Formatted block the analyst prompt consumes."""
         tags = []
+        if self.kind and self.kind != "mixed":
+            tags.append(f"kind={self.kind}")
         if self.confidence < 1.0:
             tags.append(f"conf={self.confidence:.2f}")
         if self.age_s > 0:
@@ -216,14 +224,14 @@ def build_evidence_document(
         if c:
             doc.add(EvidenceSection(
                 name="SCANNER_REPORT", content=c,
-                confidence=0.7, source="brain_memory",
+                confidence=0.7, source="brain_memory", kind="mixed",
             ))
     if include_traces:
         c = _traces_block(asset_key)
         if c:
             doc.add(EvidenceSection(
                 name="RECENT_ANALYST_DECISIONS", content=c,
-                confidence=0.6, source="brain_memory",
+                confidence=0.6, source="brain_memory", kind="mixed",
             ))
     if include_news:
         c = _news_block(asset_key)
@@ -231,6 +239,11 @@ def build_evidence_document(
             doc.add(EvidenceSection(
                 name="NEWS", content=c,
                 confidence=0.5, source="web_context.news",
+                # News blends fact (regulation/tech) + subjectivity
+                # (sentiment angles). Default to mixed; specific
+                # callers that fetch FILTERED-factual or
+                # FILTERED-subjective news streams can override.
+                kind="mixed",
             ))
     if include_fear_greed:
         c = _fear_greed_block()
@@ -238,6 +251,7 @@ def build_evidence_document(
             doc.add(EvidenceSection(
                 name="FEAR_GREED", content=c,
                 confidence=0.6, source="web_context.fear_greed",
+                kind="subjective",   # crowd-emotion gauge
             ))
     if include_graph:
         c = _graph_block(asset_key)
@@ -245,6 +259,7 @@ def build_evidence_document(
             doc.add(EvidenceSection(
                 name="KNOWLEDGE_GRAPH", content=c,
                 confidence=0.65, source="graph_rag.query_digest",
+                kind="mixed",
             ))
     if include_body_controls:
         c = _body_controls_block()
@@ -252,6 +267,7 @@ def build_evidence_document(
             doc.add(EvidenceSection(
                 name="BODY_CONTROLS", content=c,
                 confidence=0.8, source="brain_to_body.controller",
+                kind="technical",    # quant-derived control signals
             ))
     return doc
 
