@@ -95,7 +95,7 @@ class AgenticStrategist:
     Features: Structured Output, Fact-Checking, and Bayesian Confidence Calibration.
     """
 
-    def __init__(self, provider: str = "local", model: str = "mistral:latest", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
+    def __init__(self, provider: str = "local", model: str = "deepseek-r1:7b", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
         self.use_local_on_failure = use_local_on_failure
         self.provider = provider
         self.model_name = model
@@ -823,7 +823,7 @@ STRATEGY RULES:
         import requests
 
         # Resolve model: prefer router's configured local model, then self.model_name, then safe default
-        model_id = "mistral"  # safe default that ships with Ollama
+        model_id = "deepseek-r1:7b"  # safe default — matches dense_r1 brain profile
         if self._llm_router and 'local' in self._llm_router.providers:
             model_id = self._llm_router.providers['local'].config.model or model_id
         elif self.model_name:

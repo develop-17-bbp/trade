@@ -29,12 +29,15 @@ from src.ai.dual_brain import (
 # ── Profiles (C5d) ─────────────────────────────────────────────────────
 
 
-def test_brain_profiles_has_three_named():
-    assert {"dense_r1", "moe_agentic", "hybrid"} <= set(BRAIN_PROFILES.keys())
+def test_brain_profiles_has_named_set():
+    # Post-2026-04 rankings the default moved to qwen3_r1; hybrid was
+    # retired because devstral_qwen3coder serves the same "agentic"
+    # niche with the models the operator actually has downloaded.
+    assert {"qwen3_r1", "dense_r1", "moe_agentic", "devstral_qwen3coder"} <= set(BRAIN_PROFILES.keys())
 
 
-def test_default_profile_is_dense_r1():
-    assert DEFAULT_PROFILE == "dense_r1"
+def test_default_profile_is_qwen3_r1():
+    assert DEFAULT_PROFILE == "qwen3_r1"
     # Each profile must carry the four required fields.
     for name, p in BRAIN_PROFILES.items():
         for k in ("scanner_model", "analyst_model",
@@ -50,14 +53,14 @@ def test_resolve_profile_default_when_env_and_config_empty(monkeypatch):
 
 def test_resolve_profile_env_beats_config(monkeypatch):
     monkeypatch.setenv(PROFILE_ENV, "moe_agentic")
-    cfg = {"ai": {"dual_brain": {"profile": "hybrid"}}}
+    cfg = {"ai": {"dual_brain": {"profile": "devstral_qwen3coder"}}}
     assert _resolve_profile(cfg) is BRAIN_PROFILES["moe_agentic"]
 
 
 def test_resolve_profile_config_picks_when_no_env(monkeypatch):
     monkeypatch.delenv(PROFILE_ENV, raising=False)
-    prof = _resolve_profile({"ai": {"dual_brain": {"profile": "hybrid"}}})
-    assert prof is BRAIN_PROFILES["hybrid"]
+    prof = _resolve_profile({"ai": {"dual_brain": {"profile": "devstral_qwen3coder"}}})
+    assert prof is BRAIN_PROFILES["devstral_qwen3coder"]
 
 
 def test_resolve_profile_unknown_falls_back(monkeypatch):
@@ -86,12 +89,12 @@ def test_explicit_config_still_wins_over_profile(monkeypatch):
 
 
 def test_per_role_env_still_wins_over_profile(monkeypatch):
-    monkeypatch.setenv(PROFILE_ENV, "hybrid")
+    monkeypatch.setenv(PROFILE_ENV, "devstral_qwen3coder")
     monkeypatch.setenv("ACT_SCANNER_MODEL", "env-scan:0.5b")
     s = _resolve(None, SCANNER)
     a = _resolve(None, ANALYST)
     assert s.model == "env-scan:0.5b"
-    assert a.model == BRAIN_PROFILES["hybrid"]["analyst_model"]
+    assert a.model == BRAIN_PROFILES["devstral_qwen3coder"]["analyst_model"]
 
 
 # ── Config resolution ──────────────────────────────────────────────────

@@ -85,7 +85,10 @@ class CreditAssigner:
         """Return the current credit_allocation dict for the Experience envelope.
 
         Blends prior ↔ learned based on history length. Always returns a
-        properly-normalized distribution that sums to 1.0.
+        properly-normalized distribution that sums to 1.0. Applies a small
+        DSR-derived bonus per component on top of the ridge fit so a
+        component running hot on risk-adjusted returns gets rewarded
+        even if raw PnL regression hasn't converged yet (C18a).
         """
         learned = self._learned_weights()
         prior = self._prior_weights()
@@ -96,9 +99,28 @@ class CreditAssigner:
         else:
             frac = (len(self._history) - _COLD_CUTOFF) / (_WARM_CUTOFF - _COLD_CUTOFF)
             out = self._blend(prior, learned, frac)
+        out = self._apply_dsr_bonus(out)
         out = self._clip_and_renormalize(out)
         self._last_weights = out
         self._emit_metrics()
+        return out
+
+    @staticmethod
+    def _apply_dsr_bonus(w: Dict[str, float]) -> Dict[str, float]:
+        """Additive DSR bonus per component. Best-effort — missing tracker
+        collapses to a no-op."""
+        try:
+            from src.learning.reward import dsr_to_credit_bonus, get_tracker
+            tracker = get_tracker()
+        except Exception:
+            return w
+        out = {}
+        for k, v in w.items():
+            try:
+                bonus = dsr_to_credit_bonus(tracker.get(k))
+            except Exception:
+                bonus = 0.0
+            out[k] = max(0.0, v + bonus)
         return out
 
     def weights(self) -> Dict[str, float]:

@@ -206,7 +206,166 @@ class AutonomousLoop:
         except Exception as e:
             logger.warning(f"  Overlay update failed: {e}")
 
+        # C18 — learning-mesh step: DSR reward + credit reassignment +
+        # safety quarantine + co-evolution publication. This is the
+        # glue that makes credit_assigner + reward + safety +
+        # coevolution actually influence the next cycle, rather than
+        # sitting as orphaned modules.
+        mesh = self._mesh_step(metrics)
+        result['mesh'] = mesh
+
         return result
+
+    # ══════════════════════════════════════════════════════════════
+    # Learning-mesh step (C18)
+    # ══════════════════════════════════════════════════════════════
+
+    def _mesh_step(self, metrics: Dict) -> Dict[str, Any]:
+        """Process recent closed trades through the learning mesh.
+
+        Order of operations:
+          1. DSR update for each component using recent pnl returns.
+          2. credit_assigner.record() + assign() → normalized weights.
+          3. safety.QuarantineManager observes each component's DSR
+             to detect pathological drift.
+          4. coevolution publishes top-K fitness hints back to signal
+             bus so RL + GA cross-pollinate.
+
+        Never raises — any failure collapses to a "mesh disabled" marker.
+        """
+        mesh: Dict[str, Any] = {'enabled': False}
+        recent = metrics.get('recent_trades') or []
+        if not recent:
+            mesh['reason'] = 'no recent trades'
+            return mesh
+
+        try:
+            from src.learning.reward import get_tracker
+            tracker = get_tracker()
+        except Exception as e:
+            mesh['reason'] = f'reward import failed: {e}'
+            return mesh
+
+        # Maintain a monotonic watermark so a trade isn't fed twice.
+        processed_ids = set(self._state.get('mesh_processed_ids', []))
+        new_ids: List[str] = []
+        dsr_updates: Dict[str, float] = {}
+
+        try:
+            from src.learning.credit_assigner import CreditAssigner, TradeRow
+        except Exception:
+            CreditAssigner = None
+            TradeRow = None
+        credit_recorded = 0
+        assigner = None
+        if CreditAssigner is not None and TradeRow is not None:
+            assigner = getattr(self, '_credit_assigner', None)
+            if assigner is None:
+                assigner = CreditAssigner()
+                self._credit_assigner = assigner
+
+        for t in recent:
+            tid = str(t.get('trade_id') or t.get('id') or t.get('ts') or '')
+            if tid and tid in processed_ids:
+                continue
+            pnl_pct = float(t.get('pnl_pct') or 0.0) / 100.0
+            asset = (t.get('asset') or t.get('symbol') or 'BTC').upper()
+            components = t.get('component_actions') or {}
+
+            # Portfolio-level DSR (per-asset).
+            portfolio_dsr = tracker.update('portfolio', pnl_pct, asset=asset)
+            dsr_updates[f"portfolio:{asset}"] = portfolio_dsr
+
+            for comp, action in components.items():
+                # Scale per-component "contribution" by its signed action
+                # so a component that voted FLAT doesn't get credit/blame
+                # for this trade's outcome.
+                try:
+                    contribution = pnl_pct * float(action)
+                except Exception:
+                    contribution = 0.0
+                dsr_val = tracker.update(comp, contribution, asset=asset)
+                dsr_updates[f"{comp}:{asset}"] = dsr_val
+
+            if assigner is not None and components:
+                try:
+                    assigner.record(TradeRow(
+                        component_actions={k: float(v) for k, v in components.items()
+                                           if isinstance(v, (int, float))},
+                        realized_pnl=pnl_pct,
+                    ))
+                    credit_recorded += 1
+                except Exception:
+                    pass
+            if tid:
+                new_ids.append(tid)
+
+        # Bound the watermark so state.json stays small.
+        processed_ids |= set(new_ids)
+        if len(processed_ids) > 500:
+            processed_ids = set(list(processed_ids)[-500:])
+        self._state['mesh_processed_ids'] = sorted(processed_ids)
+
+        weights: Dict[str, float] = {}
+        if assigner is not None:
+            try:
+                weights = assigner.assign()
+            except Exception:
+                weights = {}
+
+        # Safety — feed each component's DSR into the quarantine manager.
+        quarantined: List[str] = []
+        try:
+            from src.learning.safety import QuarantineManager
+            qm = getattr(self, '_quarantine_mgr', None)
+            if qm is None:
+                qm = QuarantineManager()
+                self._quarantine_mgr = qm
+            for stream, dsr_val in dsr_updates.items():
+                comp, _, _asset = stream.partition(':')
+                if not comp or comp == 'portfolio':
+                    continue
+                qm.should_accept(comp, 'dsr', dsr_val)
+            quarantined = [k for k, q in qm.quarantined_learners().items() if q]
+        except Exception:
+            pass
+
+        # Coevolution publication — top-K DNA if the strategy repo is up.
+        try:
+            from src.trading.strategy_repository import get_repo
+            from src.learning.coevolution import apply_rl_warm_starts_publish
+            repo = get_repo()
+            top_k = repo.search(status='champion', limit=5) or []
+            serializable = []
+            for rec in top_k:
+                serializable.append({
+                    'name': getattr(rec, 'strategy_id', 'unknown'),
+                    'fitness': float(getattr(rec, 'live_sharpe', 0.5) or 0.5),
+                    'genes': getattr(rec, 'dna', {}) or {},
+                })
+            if serializable:
+                apply_rl_warm_starts_publish(
+                    serializable,
+                    regime=str(metrics.get('regime', 'UNKNOWN')),
+                    model_version=os.getenv('ACT_MODEL_VERSION', 'dev'),
+                )
+        except Exception:
+            pass
+
+        mesh.update({
+            'enabled': True,
+            'dsr_streams': len(dsr_updates),
+            'credit_recorded': credit_recorded,
+            'weights': {k: round(v, 3) for k, v in weights.items()},
+            'quarantined': quarantined,
+            'portfolio_dsr': dsr_updates.get('portfolio:BTC', 0.0),
+        })
+        logger.info(
+            f"  Mesh: DSR_streams={mesh['dsr_streams']} "
+            f"credit_rows={mesh['credit_recorded']} "
+            f"quarantined={quarantined or 'none'}"
+        )
+        return mesh
 
     # ══════════════════════════════════════════════════════════════
     # 3. RETRAIN — Auto-retrain ML models when performance degrades

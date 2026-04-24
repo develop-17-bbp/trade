@@ -1,21 +1,22 @@
 """
 Dual-brain LLM router — scanner (right-brain) + analyst (left-brain).
 
-Operator-directed split (2026-04-23):
+Default profile (2026-04 "qwen3_r1", aligned with 2026-April Ollama
+best-practice rankings for trading workloads):
 
-  * **Scanner = Qwen 3 32B** (right brain). Pattern-recognition and broad
-    market-state survey. Runs every tick. Slightly creative temperature
-    (0.4) so it picks up weak signals the analyst would miss.
+  * **Scanner = Qwen 3 32B** (right brain). Best speed-to-intelligence
+    ratio for macro/news/sentiment summarization at tick cadence. Runs
+    every scheduler tick.
 
-  * **Analyst = Devstral 24B** (left brain). Mistral's agentic-coding
-    model. Purpose-built for structured tool-use + Pydantic JSON
-    output. Runs on-demand when scanner flags a setup. Low temperature
-    (0.1) so TradePlan compilation is deterministic under Pydantic
-    validation.
+  * **Analyst = DeepSeek-R1 32B distill** (left brain). Chain-of-thought
+    reasoning — "king of reasoning" for evaluating complex spot trading
+    signals and compiling TradePlans under Pydantic validation. Runs
+    on-demand when the scanner flags a setup.
 
 Both run locally via Ollama on the RTX 5090 at Q4_K_M quantization
-(~20GB + ~14GB = 34GB peak). Ollama's model-swap handles the RAM
-pressure when both can't be resident simultaneously.
+(~20GB qwen3 + ~19GB deepseek-r1 = ~39GB raw; Ollama swaps the analyst
+out when idle so the scanner stays resident at tick cadence and the
+full pair fits within VRAM headroom).
 
 Design constraints:
   * Zero new hard deps — composes over the existing
@@ -102,30 +103,46 @@ DISABLE_ENV = "ACT_DISABLE_DUAL_BRAIN"
 # ACT_ANALYST_MODEL (those win over profile selection).
 
 BRAIN_PROFILES: Dict[str, Dict[str, Any]] = {
+    # 2026-04 DEFAULT — scanner=qwen3:32b + analyst=deepseek-r1:32b.
+    # Matches the April-2026 community consensus (Qwen3 for broad
+    # context-processing / macro summarization, DeepSeek-R1 for CoT
+    # reasoning over trade decisions). Verified against operator's
+    # `ollama list` 2026-04-23.
+    "qwen3_r1": {
+        "scanner_model": "qwen3:32b",
+        "analyst_model": "deepseek-r1:32b",
+        "scanner_temperature": 0.2,
+        "analyst_temperature": 0.4,
+        "description": "Qwen3 32B scanner + DeepSeek-R1 32B analyst. 2026-04 recommended pair.",
+    },
     "dense_r1": {
         "scanner_model": "deepseek-r1:7b",
         "analyst_model": "deepseek-r1:32b",
         "scanner_temperature": 0.3,
         "analyst_temperature": 0.4,
-        "description": "Both DeepSeek-R1 distills (dense). Most consistent; safest for paper soak.",
+        "description": "Both DeepSeek-R1 distills (dense). Lightweight; fallback when Qwen3 swap cost hurts tick cadence.",
     },
     "moe_agentic": {
         "scanner_model": "qwen2.5-coder:7b",
         "analyst_model": "qwen3-coder:30b",     # MoE 30B-A3B (~3B active)
         "scanner_temperature": 0.2,
         "analyst_temperature": 0.3,
-        "description": "MoE analyst + dense coder worker. Fastest tool use; 2026 agentic gold standard.",
+        "description": "MoE analyst + dense coder worker. Best for strict JSON/tool-use; slightly weaker raw reasoning than qwen3_r1.",
     },
-    "hybrid": {
-        "scanner_model": "deepseek-r1:7b",      # dense reasoning worker
-        "analyst_model": "qwen3-coder:30b",     # MoE agentic orchestrator
+    # Devstral (agentic-coding) scanner + Qwen3-Coder analyst — the
+    # "bot-building" pair per 2026-04 guidance: devstral's agentic
+    # tool-calling specialization on the front, qwen3-coder's MoE
+    # precision on TradePlan JSON output at the back.
+    "devstral_qwen3coder": {
+        "scanner_model": "devstral:24b",
+        "analyst_model": "qwen3-coder:30b",
         "scanner_temperature": 0.3,
-        "analyst_temperature": 0.3,
-        "description": "MoE analyst + dense reasoning scanner. Post-soak recommendation.",
+        "analyst_temperature": 0.2,
+        "description": "Devstral 24B agentic scanner + Qwen3-Coder 30B analyst (strict JSON / tool-use pair).",
     },
 }
 
-DEFAULT_PROFILE = "dense_r1"
+DEFAULT_PROFILE = "qwen3_r1"
 PROFILE_ENV = "ACT_BRAIN_PROFILE"
 
 

@@ -94,6 +94,10 @@ class BodyControls:
     parse_failure_rate: float = 0.0
     scans_considered: int = 0
     traces_considered: int = 0
+    # Differential-Sharpe aggregate over per-asset streams (C18a). Positive
+    # = portfolio is earning risk-adjusted returns; negative = losing
+    # money relative to its own volatility.
+    portfolio_dsr: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -109,6 +113,7 @@ class BodyControls:
             "parse_failure_rate": round(self.parse_failure_rate, 3),
             "scans_considered": self.scans_considered,
             "traces_considered": self.traces_considered,
+            "portfolio_dsr": round(self.portfolio_dsr, 3),
         }
 
 

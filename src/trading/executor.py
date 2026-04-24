@@ -377,7 +377,7 @@ class TradingExecutor:
         ).rstrip('/')
         self.ollama_model: str = (
             os.environ.get('OLLAMA_REMOTE_MODEL', '')
-            or ai_cfg.get('reasoning_model', 'mistral:latest')
+            or ai_cfg.get('reasoning_model', 'qwen3:32b')
         )
         self.llm_conf_threshold: float = ai_cfg.get('llm_trade_conf_threshold', 0.40)
 
@@ -426,7 +426,7 @@ class TradingExecutor:
 
         # LLM strategist (used as fallback / for deeper analysis)
         provider = ai_cfg.get('reasoning_provider', 'auto')
-        model = ai_cfg.get('reasoning_model', 'mistral:latest')
+        model = ai_cfg.get('reasoning_model', 'qwen3:32b')
         use_local = ai_cfg.get('use_local_on_failure', False)
         self.strategist = AgenticStrategist(
             provider=provider,
@@ -8741,7 +8741,7 @@ class TradingExecutor:
             text = message.content[0].text.strip()
             return self._extract_json(text)
         except Exception as e:
-            logger.warning(f"Claude query failed: {e} -- falling back to Ollama mistral")
+            logger.warning(f"Claude query failed: {e} -- falling back to local Ollama")
             print(f"  [AI] Claude failed ({type(e).__name__}): {str(e)[:80]} -- using Ollama fallback")
             return self._query_llm(prompt)
 

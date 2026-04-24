@@ -84,19 +84,20 @@ $geneticInterval = [math]::Round([math]::Max(0.25, $adaptInterval), 2)
 # Population: scales linearly with compute score
 $geneticPop = [math]::Min(500, [math]::Max(10, [math]::Floor($computeScore * 2)))
 
-# ── Dual-brain models (C5d profile default: dense_r1) ──
+# ── Dual-brain models (C5d profile default: qwen3_r1 per 2026-04 rankings) ──
 # ACT_BRAIN_PROFILE can override which pair we pull; the operator can
 # also pin per-role via ACT_SCANNER_MODEL / ACT_ANALYST_MODEL.
 $brainProfile = $env:ACT_BRAIN_PROFILE
-if (-not $brainProfile) { $brainProfile = "dense_r1" }
+if (-not $brainProfile) { $brainProfile = "qwen3_r1" }
 
 switch ($brainProfile) {
-    "dense_r1"    { $scannerModel = "deepseek-r1:7b";      $analystModel = "deepseek-r1:32b" }
-    "moe_agentic" { $scannerModel = "qwen2.5-coder:7b";    $analystModel = "qwen3-coder:30b" }
-    "hybrid"      { $scannerModel = "deepseek-r1:7b";      $analystModel = "qwen3-coder:30b" }
+    "qwen3_r1"             { $scannerModel = "qwen3:32b";          $analystModel = "deepseek-r1:32b" }
+    "dense_r1"             { $scannerModel = "deepseek-r1:7b";     $analystModel = "deepseek-r1:32b" }
+    "moe_agentic"          { $scannerModel = "qwen2.5-coder:7b";   $analystModel = "qwen3-coder:30b" }
+    "devstral_qwen3coder"  { $scannerModel = "devstral:24b";       $analystModel = "qwen3-coder:30b" }
     default {
-        WARN "Unknown ACT_BRAIN_PROFILE=$brainProfile — defaulting to dense_r1"
-        $scannerModel = "deepseek-r1:7b"; $analystModel = "deepseek-r1:32b"
+        WARN "Unknown ACT_BRAIN_PROFILE=$brainProfile -- defaulting to qwen3_r1"
+        $scannerModel = "qwen3:32b"; $analystModel = "deepseek-r1:32b"
     }
 }
 

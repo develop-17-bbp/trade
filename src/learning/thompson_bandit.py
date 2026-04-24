@@ -70,8 +70,30 @@ def _posterior_params(
     live_losses: int,
     prior_alpha: float = DEFAULT_PRIOR_ALPHA,
     prior_beta: float = DEFAULT_PRIOR_BETA,
+    dsr_bonus: float = 0.0,
 ) -> Tuple[float, float]:
-    return prior_alpha + float(live_wins), prior_beta + float(live_losses)
+    """Beta(α, β) posterior. `dsr_bonus` (signed, from reward.dsr_to_bandit_bonus)
+    shifts posterior mass toward the winning/losing side so risk-adjusted
+    performance — not just raw WR — influences the sample. Bounded above
+    by the bonus cap in reward.dsr_to_bandit_bonus (±2.0 default) and below
+    by zero so neither side can go negative."""
+    alpha = prior_alpha + float(live_wins)
+    beta = prior_beta + float(live_losses)
+    if dsr_bonus > 0:
+        alpha += dsr_bonus
+    elif dsr_bonus < 0:
+        beta += -dsr_bonus
+    return max(1e-6, alpha), max(1e-6, beta)
+
+
+def _dsr_bonus_for(strategy_id: str) -> float:
+    """Best-effort DSR bonus lookup. A missing tracker collapses to 0.0."""
+    try:
+        from src.learning.reward import dsr_to_bandit_bonus, get_tracker
+        dsr = get_tracker().get("strategy", asset=strategy_id)
+        return dsr_to_bandit_bonus(dsr)
+    except Exception:
+        return 0.0
 
 
 def _posterior_mean(alpha: float, beta: float) -> float:
@@ -137,7 +159,10 @@ def sample_from_records(
             continue
         wins = int(getattr(rec, "live_wins", 0) or 0)
         losses = int(getattr(rec, "live_losses", 0) or 0)
-        alpha, beta = _posterior_params(wins, losses, prior_alpha, prior_beta)
+        alpha, beta = _posterior_params(
+            wins, losses, prior_alpha, prior_beta,
+            dsr_bonus=_dsr_bonus_for(sid),
+        )
         p = rng.betavariate(alpha, beta)
         if bias != 1.0:
             # Bias > 1 sharpens (exploit); bias < 1 flattens (explore).

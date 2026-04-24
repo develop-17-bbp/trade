@@ -13,7 +13,7 @@ Config (config.yaml):
     monitor:
       enabled: true
       ollama_url: "https://your-gpu-tunnel.trycloudflare.com"
-      ollama_model: "llama3.2:latest"
+      ollama_model: "devstral:24b"
       scan_interval: 60          # Check every 60s
       auto_fix: true             # Apply safe fixes automatically
       max_fixes_per_hour: 5      # Rate limit auto-fixes
@@ -223,7 +223,7 @@ class AutoHealer:
             monitor_cfg.get('ollama_model', '')
             or os.environ.get('MONITOR_OLLAMA_MODEL', '')
             or os.environ.get('OLLAMA_REMOTE_MODEL', '')
-            or ai_cfg.get('reasoning_model', 'llama3.2:latest')
+            or ai_cfg.get('reasoning_model', 'devstral:24b')
         )
 
         self.scan_interval = monitor_cfg.get('scan_interval', 60)

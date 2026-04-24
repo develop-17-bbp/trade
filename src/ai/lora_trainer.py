@@ -1,13 +1,19 @@
 """
 LoRA Fine-Tuning Pipeline for ACT Trading System
 ===================================================
-Two-model fine-tuning matching the Brain v2 architecture:
+Legacy Brain v2 LoRA pipeline (7B/8B class models). Superseded on the
+RTX 5090 box by `src/ai/dual_brain_trainer.py` which drives Unsloth
+QLoRA over the `devstral:24b` + `qwen3:32b` pair (C10b).
 
-  Model 1 (Scanner): Mistral 7B → pattern recognition specialist
-  Model 2 (Analyst): Llama 3.1 8B → trade decision specialist
+Kept here for two reasons:
+  1. Operators still running the 8GB-class workflow (laptop builds,
+     CI pipelines) can fine-tune the 7B scanner + 8B analyst locally.
+  2. The JSONL data-prep + GGUF export + Ollama `create` plumbing is
+     reused by `dual_brain_trainer.py` via import.
 
-Optimized for 8GB GPU using unsloth (2x faster, 60% less VRAM).
-Includes full pipeline: train → merge → GGUF → Ollama deploy → hot-swap.
+If you're on the 5090, prefer C10b's dual_brain_trainer — it pulls
+from `training_data_filter.py` (quality-filtered samples) and goes
+through the `champion_gate` before swapping adapters in Ollama.
 
 Requirements (on the GPU server):
   pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"

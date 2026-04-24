@@ -205,7 +205,7 @@ class OllamaProvider(BaseLLMProvider):
         self._throttle()
         import requests
         base = self.config.base_url or 'http://127.0.0.1:11434'
-        model_id = self.config.model or 'mistral:latest'
+        model_id = self.config.model or 'deepseek-r1:7b'
 
         # Use short connect timeout (3s) — if Ollama isn't running, fail fast
         # Read timeout stays longer (60s) for actual inference
@@ -457,7 +457,7 @@ class LLMRouter:
             )
             self.add_provider('local', LLMConfig(
                 provider='ollama',
-                model='mistral:latest',
+                model='deepseek-r1:7b',
                 base_url=local_base_url,
             ))
 

@@ -789,16 +789,18 @@ class MultiModelConsensus:
     - Llama = Risk Analyst (uses pattern data to make final decision)
 
     This is a TWO-PASS system:
-    Pass 1: Mistral scans for patterns (what do you SEE?)
-    Pass 2: Llama decides using patterns + risk analysis (should we TRADE?)
+    Pass 1: Scanner (right brain) scans for patterns (what do you SEE?)
+    Pass 2: Analyst (left brain) decides using patterns + risk analysis (should we TRADE?)
     """
 
     # Fine-tuned models with trading-specific system prompts, temperature, and output format
-    # Deployed via Ollama custom Modelfiles on GPU server
-    MODEL_SCANNER = "act-scanner"        # QLoRA fine-tuned Mistral: pattern recognition (falls back to nexus-scanner)
-    MODEL_ANALYST = "act-analyst"        # QLoRA fine-tuned Llama: trade decision (falls back to nexus-analyst)
-    MODEL_SCANNER_FALLBACKS = ["nexus-scanner", "mistral:latest"]   # Fallback chain for scanner
-    MODEL_ANALYST_FALLBACKS = ["nexus-analyst", "mistral:latest"]   # Fallback chain for analyst
+    # Deployed via Ollama custom Modelfiles on GPU server.
+    # Fallback chains ordered most-specialized → most-generic; each tier
+    # is only used if Ollama doesn't have the previous one pulled.
+    MODEL_SCANNER = "act-scanner"        # QLoRA fine-tuned scanner (falls back to nexus-scanner → devstral → deepseek-r1:7b)
+    MODEL_ANALYST = "act-analyst"        # QLoRA fine-tuned analyst (falls back to nexus-analyst → qwen3:32b → deepseek-r1:32b)
+    MODEL_SCANNER_FALLBACKS = ["nexus-scanner", "devstral:24b", "deepseek-r1:7b"]
+    MODEL_ANALYST_FALLBACKS = ["nexus-analyst", "qwen3:32b", "deepseek-r1:32b"]
 
     def __init__(self, ollama_base_url: str = "http://localhost:11434"):
         self.ollama_base_url = ollama_base_url.rstrip("/")
