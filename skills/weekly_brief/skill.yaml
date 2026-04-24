@@ -1,0 +1,15 @@
+name: weekly-brief
+description: >
+  Generate a human-readable weekly activity brief — trades taken vs
+  skipped, gate activity, regime shifts, champion strategy status,
+  brain activity, agent leaderboard, learning-mesh summary. Writes
+  `reports/weekly_brief_YYYY-MM-DD.md` suitable for compliance /
+  authority submissions. Pure read — never touches trading state.
+  Default window: last 7 days. Override with args: `days=14` or
+  `start_date=2026-04-17`.
+reversible: true
+requires_confirmation: false
+tags:
+  - reporting
+  - compliance
+  - read_only
