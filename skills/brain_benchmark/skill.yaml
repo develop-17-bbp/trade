@@ -1,0 +1,16 @@
+name: brain-benchmark
+description: >
+  Benchmark ACT's dual-brain against a reference LLM (Claude Haiku 4.5
+  by default). Runs both brains on the same scenarios, scores each
+  plan against the known outcome, reports Brain Quality Score. Target
+  is ≥ 0.644 (beats cited SOTA agentic-finance benchmark). Args:
+  `ref_model=claude-haiku-4-5`, `max_scenarios=50`. Reference calls
+  require ANTHROPIC_API_KEY env var; without it, reference arm falls
+  back to a neutral stub (floor-check rather than ceiling-check).
+  Writes `reports/brain_benchmark_YYYY-MM-DD_HHMM.md`.
+reversible: true
+requires_confirmation: false
+tags:
+  - evaluation
+  - benchmark
+  - read_only

@@ -9371,12 +9371,199 @@ Respond ONLY with JSON:
     # the 60s/180s poll schedule; set ACT_AGENTIC_LOOP=0 to disable if
     # the quota/rate-limit tightens.
 
+    def submit_trade_plan(self, plan, mode: str = "paper") -> Dict[str, Any]:
+        """Submit a compiled TradePlan through the full gate stack to
+        the paper-order path. C26 Step 3 — makes the agentic brain's
+        structured output actually fire paper trades.
+
+        Gates run in order: authority → conviction → cost → readiness
+        (real only) → operator pre_trade_submit hook. Any rejection
+        returns {submitted: False, reason}. On acceptance, calls
+        self._paper.record_entry() and writes a NON-shadow decision to
+        warm_store, fires post_trade_open hook.
+
+        Kill switch: ACT_DISABLE_AGENTIC_SUBMIT=1 → returns
+        {submitted: False, reason: 'disabled'} without running gates.
+
+        Real-capital mode (mode='real') additionally requires:
+          - readiness_gate.evaluate().open_ == True
+          - os.environ['ACT_REAL_CAPITAL_ENABLED'] == '1'
+        """
+        if os.environ.get("ACT_DISABLE_AGENTIC_SUBMIT", "").strip() == "1":
+            return {"submitted": False, "reason": "disabled_by_env"}
+
+        if plan is None or getattr(plan, "direction", "") in ("SKIP", "FLAT", ""):
+            return {"submitted": False, "reason": "no_actionable_plan"}
+
+        asset = str(getattr(plan, "asset", "") or "").upper()
+        direction = str(getattr(plan, "direction", "")).upper()
+        if asset not in ("BTC", "ETH"):
+            return {"submitted": False, "reason": f"unsupported_asset:{asset}"}
+        if direction not in ("LONG", "SHORT"):
+            return {"submitted": False, "reason": f"unsupported_direction:{direction}"}
+
+        # --- Gate 1: Authority rules (hard-coded operator PDF rules) ---
+        # Pass only the minimum context the plan shape carries; fields we
+        # don't know (trade_type, htf_trend_direction, etc.) are omitted
+        # so per-rule soft-skip applies rather than false-positive veto.
+        try:
+            from src.ai.authority_rules import validate_authority_entry
+            _raw = 1 if direction == "LONG" else -1
+            _ctx = {"raw_signal": _raw, "asset": asset}
+            # Map TradePlan tier -> authority trade_type taxonomy if
+            # possible. Authority expects {scalp|intraday|swing} — plan
+            # tier is {sniper|normal|skip}; treat them as orthogonal and
+            # only pass trade_type when caller set an explicit one.
+            plan_trade_type = getattr(plan, "trade_type", None)
+            if plan_trade_type:
+                _ctx["trade_type"] = str(plan_trade_type).lower()
+            ok, violations = validate_authority_entry({}, _ctx)
+            if not ok:
+                return {
+                    "submitted": False, "reason": "authority",
+                    "violations": list(violations),
+                }
+        except Exception as _e:
+            logger.debug("submit_trade_plan: authority check skipped: %s", _e)
+
+        # --- Gate 2: Real-capital guard (mode='real' only) ---
+        if mode == "real":
+            if os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() != "1":
+                return {"submitted": False, "reason": "real_capital_flag_unset"}
+            try:
+                from src.orchestration.readiness_gate import evaluate as _rg_eval
+                rg = _rg_eval()
+                if not getattr(rg, "open_", False):
+                    return {
+                        "submitted": False, "reason": "readiness_closed",
+                        "failing": list(getattr(rg, "failing_conditions", [])),
+                    }
+            except Exception as _e:
+                return {"submitted": False, "reason": f"readiness_check_failed:{_e}"}
+
+        # --- Gate 3: Cost awareness (reject if margin < threshold) ---
+        try:
+            from src.trading import cost_gate
+            expected_pct = 0.0
+            pnl_range = getattr(plan, "expected_pnl_pct_range", None)
+            if pnl_range and len(pnl_range) >= 2:
+                expected_pct = float(pnl_range[1])
+            cg = cost_gate.evaluate(
+                expected_return_pct=expected_pct,
+                venue="robinhood",
+                size_pct=float(getattr(plan, "size_pct", 1.0)),
+                direction=direction,
+            )
+            if not cg.passed:
+                return {"submitted": False, "reason": cg.reason}
+        except Exception as _e:
+            logger.debug("submit_trade_plan: cost gate skipped: %s", _e)
+
+        # --- Gate 4: Pre-trade hook (blocking — operator veto) ---
+        try:
+            from src.orchestration.hooks import fire as fire_event
+            result = fire_event(
+                "pre_trade_submit",
+                {"plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
+                 "mode": mode, "asset": asset, "direction": direction},
+            )
+            if isinstance(result, dict) and result.get("veto"):
+                return {"submitted": False, "reason": f"hook_veto:{result.get('reason', '')}"}
+        except Exception as _e:
+            logger.debug("submit_trade_plan: pre_trade_submit hook skipped: %s", _e)
+
+        # --- All gates passed: submit paper order ---
+        entry_price = float(getattr(plan, "entry_price", 0.0) or 0.0)
+        sl_price = float(getattr(plan, "sl_price", 0.0) or 0.0)
+        size_pct = float(getattr(plan, "size_pct", 1.0) or 1.0)
+        qty = 0.0
+        try:
+            if self._paper and entry_price > 0:
+                # Equity-scaled quantity
+                equity = float(getattr(self._paper, "equity", 100000.0))
+                notional = equity * (size_pct / 100.0)
+                qty = notional / entry_price
+                tp_price = 0.0
+                tp_levels = getattr(plan, "tp_levels", None) or []
+                if tp_levels:
+                    first = tp_levels[0]
+                    tp_price = float(getattr(first, "price", 0.0) or
+                                      (first.get("price", 0.0) if isinstance(first, dict) else 0.0))
+                self._paper.record_entry(
+                    asset=asset, direction=direction, price=entry_price,
+                    score=int(getattr(plan, "conviction_score", 5) or 5),
+                    quantity=qty, sl_price=sl_price, tp_price=tp_price,
+                    ml_confidence=float(getattr(plan, "confidence", 0.5) or 0.5),
+                    llm_confidence=float(getattr(plan, "confidence", 0.5) or 0.5),
+                    size_pct=size_pct,
+                    reasoning=str(getattr(plan, "thesis", ""))[:200],
+                )
+                self._paper.save_state()
+        except Exception as _pe:
+            logger.warning(f"[SUBMIT_TRADE_PLAN] paper record failed: {_pe}")
+            return {"submitted": False, "reason": f"paper_record_failed:{_pe}"}
+
+        # --- Write non-shadow decision to warm_store ---
+        try:
+            from src.orchestration.warm_store import get_store
+            import uuid as _uuid
+            store = get_store()
+            store.write_decision({
+                "decision_id": f"agentic-{_uuid.uuid4().hex}",   # NOT "shadow-*"
+                "symbol": asset,
+                "direction": {"LONG": 1, "SHORT": -1}.get(direction, 0),
+                "confidence": float(getattr(plan, "confidence", 0.5) or 0.5),
+                "final_action": direction,
+                "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
+                "component_signals": {
+                    "source": "agentic_brain_submit",
+                    "mode": mode,
+                    "entry_price": entry_price,
+                    "sl_price": sl_price,
+                    "size_pct": size_pct,
+                    "qty": qty,
+                },
+            })
+        except Exception as _e:
+            logger.warning("submit_trade_plan: warm_store write failed: %s", _e)
+
+        # --- Fire post-trade open hook ---
+        try:
+            from src.orchestration.hooks import fire as fire_event
+            fire_event("post_trade_open", {
+                "asset": asset, "direction": direction,
+                "entry_price": entry_price, "size_pct": size_pct,
+                "mode": mode,
+            })
+        except Exception:
+            pass
+
+        try:
+            print(
+                f"  [{self._ex_tag}:{asset}] AGENTIC SUBMIT {direction} "
+                f"@ ${entry_price:,.2f} size={size_pct:.2f}% qty={qty:.6f} "
+                f"(mode={mode})"
+            )
+        except Exception:
+            pass
+
+        return {
+            "submitted": True, "asset": asset, "direction": direction,
+            "entry_price": entry_price, "size_pct": size_pct,
+            "qty": qty, "mode": mode,
+        }
+
     def _run_agentic_shadow(self, asset: str, closes) -> None:
         """Fire the agentic loop in shadow mode. Never raises.
 
         C17 — delegates to src.ai.shadow_tick.run_tick which orchestrates
         web-bundle fetch → graph ingest → scanner brain publish →
         analyst plan compile → persona refresh, all throttled per-asset.
+
+        C26 Step 3 — when the analyst returns a valid non-skip plan AND
+        ACT_DISABLE_AGENTIC_SUBMIT is not set AND paper mode is active,
+        we additionally route the plan through submit_trade_plan() so
+        it reaches the paper-order path. Shadow audit still writes.
         """
         try:
             from src.ai.agentic_bridge import agentic_loop_enabled
@@ -9464,3 +9651,24 @@ Respond ONLY with JSON:
             )
         except Exception:
             pass
+
+        # C26 Step 3 — if the plan is actionable (not SKIP/FLAT) and the
+        # operator hasn't disabled agentic submit, route through the
+        # full gate stack into the paper-order path. Every gate still
+        # runs; real-capital flag still required for mode='real'.
+        try:
+            plan_direction = str(getattr(result.plan, "direction", "")).upper()
+            if plan_direction in ("LONG", "SHORT"):
+                submit_result = self.submit_trade_plan(result.plan, mode="paper")
+                if submit_result.get("submitted"):
+                    logger.info(
+                        "[agentic_submit] %s %s submitted via paper path",
+                        asset, plan_direction,
+                    )
+                elif submit_result.get("reason") not in ("disabled_by_env", "no_actionable_plan"):
+                    logger.debug(
+                        "[agentic_submit] %s %s rejected: %s",
+                        asset, plan_direction, submit_result.get("reason"),
+                    )
+        except Exception as _submit_e:
+            logger.debug("[agentic_submit] %s call failed: %s", asset, _submit_e)

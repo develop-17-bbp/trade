@@ -184,6 +184,80 @@ def run(args: Optional[Dict[str, Any]] = None) -> SkillResult:
 # ── Helper for other modules to read the overlay ──────────────────────
 
 
+def update_overlay(delta: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Adjust an EXISTING overlay in-place (no-op when overlay absent).
+
+    C26 Step 5 — the autonomous pursuit loop calls this every cycle
+    when it wants to loosen or tighten thresholds by one step toward
+    1%/day. Floors are enforced per the plan:
+      * sniper.min_score ≥ 2
+      * sniper.min_expected_move_pct ≥ 1.0
+      * sniper.min_confluence ≥ 2
+      * cost_gate.min_margin_pct ≥ 0.1
+      * conviction.min_normal_strategies_agreeing ≥ 1
+
+    Real-capital guard: refuses to update when
+    ACT_REAL_CAPITAL_ENABLED=1 is set.
+
+    Returns the updated overlay dict, or None if the overlay doesn't
+    exist yet (operator must first run /paper-soak-loose enable=true).
+    """
+    if os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() == "1":
+        return None
+    if not OVERLAY_FILE.exists():
+        return None
+    try:
+        current = json.loads(OVERLAY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(current, dict):
+        return None
+    delta = dict(delta or {})
+
+    # Apply sniper deltas with floors
+    sniper = current.setdefault("sniper", {})
+    s_delta = delta.get("sniper") or {}
+    if "min_score" in s_delta:
+        new_val = max(2, int(sniper.get("min_score", 4)) + int(s_delta["min_score"]))
+        sniper["min_score"] = new_val
+    if "min_expected_move_pct" in s_delta:
+        new_val = max(1.0, float(sniper.get("min_expected_move_pct", 2.0)) + float(s_delta["min_expected_move_pct"]))
+        sniper["min_expected_move_pct"] = round(new_val, 2)
+    if "min_confluence" in s_delta:
+        new_val = max(2, int(sniper.get("min_confluence", 3)) + int(s_delta["min_confluence"]))
+        sniper["min_confluence"] = new_val
+
+    # Cost gate margin floor
+    cg = current.setdefault("cost_gate", {})
+    cg_delta = delta.get("cost_gate") or {}
+    if "min_margin_pct" in cg_delta:
+        new_val = max(0.1, float(cg.get("min_margin_pct", 0.3)) + float(cg_delta["min_margin_pct"]))
+        cg["min_margin_pct"] = round(new_val, 2)
+
+    # Conviction floor
+    cv = current.setdefault("conviction", {})
+    cv_delta = delta.get("conviction") or {}
+    if "min_normal_strategies_agreeing" in cv_delta:
+        new_val = max(1, int(cv.get("min_normal_strategies_agreeing", 2)) + int(cv_delta["min_normal_strategies_agreeing"]))
+        cv["min_normal_strategies_agreeing"] = new_val
+
+    # Log the adjustment inline for audit
+    adjustments = current.setdefault("adjustments", [])
+    adjustments.append({
+        "at": datetime.now(timezone.utc).isoformat(),
+        "delta": delta,
+        "reason": str(delta.get("reason") or "soak_tune"),
+    })
+    # Cap adjustments history
+    current["adjustments"] = adjustments[-50:]
+
+    try:
+        OVERLAY_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    except Exception:
+        return None
+    return current
+
+
 def get_paper_soak_overlay() -> Optional[Dict[str, Any]]:
     """Return the current overlay dict, or None if disabled.
 

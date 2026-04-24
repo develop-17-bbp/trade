@@ -220,6 +220,102 @@ class AutonomousLoop:
     # Learning-mesh step (C18)
     # ══════════════════════════════════════════════════════════════
 
+    def _pursuit_step(self, metrics: Dict) -> Dict[str, Any]:
+        """C26 Step 5 — keep pressing toward 1%/day every cycle.
+
+        Paper mode only (overlay refuses to update under
+        ACT_REAL_CAPITAL_ENABLED=1). Checks rolling daily PnL vs 1%
+        target; when below target and no submits in last 4h, loosens
+        the soak overlay by one step within floors. When submits are
+        losing, tightens one step back.
+        """
+        out: Dict[str, Any] = {
+            "target_daily_pct": 1.0,
+            "action": "noop",
+            "reason": "",
+        }
+
+        # Skip entirely when overlay is not active (no file) or when
+        # real-capital is enabled.
+        try:
+            from skills.paper_soak_loose.action import (
+                get_paper_soak_overlay, update_overlay,
+            )
+        except Exception:
+            out["reason"] = "overlay helpers unavailable"
+            return out
+
+        overlay = get_paper_soak_overlay()
+        if not overlay:
+            out["reason"] = "overlay not active (run paper-soak-loose enable=true)"
+            return out
+
+        # Read recent decisions — use journal or warm_store
+        recent = metrics.get("recent_trades") or []
+        rolling_pnl_pct = float(metrics.get("rolling_pnl") or 0.0)
+        # Approximate "submits in last 4h" via recent_trades count.
+        submits_4h = len(recent)
+
+        target_pct = 1.0
+        # Daily vs target — metrics['rolling_pnl'] is the rolling-50 PnL
+        # sum; we approximate daily average by dividing by 7 (weekly
+        # window). It's a crude proxy until we have a proper
+        # daily_pct aggregation, but good enough for the pursuit signal.
+        approx_daily_pct = rolling_pnl_pct / 7.0 if rolling_pnl_pct else 0.0
+        out["rolling_pnl_pct"] = round(rolling_pnl_pct, 3)
+        out["approx_daily_pct"] = round(approx_daily_pct, 3)
+        out["submits_4h_approx"] = submits_4h
+
+        # If already at/above 1%/day rolling average, hold steady.
+        if approx_daily_pct >= target_pct:
+            out["action"] = "hold"
+            out["reason"] = f"approx_daily_pct={approx_daily_pct:.2f}% >= target"
+            return out
+
+        # If nothing is firing, loosen one step.
+        if submits_4h == 0:
+            delta = {
+                "sniper": {
+                    "min_score": -1,
+                    "min_expected_move_pct": -0.3,
+                    "min_confluence": 0,        # leave confluence alone initially
+                },
+                "cost_gate": {"min_margin_pct": -0.1},
+                "conviction": {"min_normal_strategies_agreeing": 0},
+                "reason": "pursuit:no_submits_4h",
+            }
+            updated = update_overlay(delta) if not self.dry_run else None
+            out["action"] = "relax_one_step"
+            out["reason"] = "no submits in last 4h → loosen toward target"
+            out["updated_overlay"] = (updated or {}).get("sniper") if updated else None
+            return out
+
+        # If submits are firing BUT rolling PnL is negative, tighten.
+        if rolling_pnl_pct < 0 and submits_4h >= 3:
+            delta = {
+                "sniper": {
+                    "min_score": +1,
+                    "min_expected_move_pct": +0.3,
+                    "min_confluence": 0,
+                },
+                "cost_gate": {"min_margin_pct": +0.1},
+                "conviction": {"min_normal_strategies_agreeing": 0},
+                "reason": "pursuit:losing_streak_tighten",
+            }
+            updated = update_overlay(delta) if not self.dry_run else None
+            out["action"] = "tighten_one_step"
+            out["reason"] = (
+                f"losing with pnl={rolling_pnl_pct:.2f}% over {submits_4h} "
+                "submits → tighten one step"
+            )
+            out["updated_overlay"] = (updated or {}).get("sniper") if updated else None
+            return out
+
+        # Firing + breakeven-ish — hold current thresholds
+        out["action"] = "hold"
+        out["reason"] = "firing at breakeven — hold"
+        return out
+
     def _mesh_step(self, metrics: Dict) -> Dict[str, Any]:
         """Process recent closed trades through the learning mesh.
 
@@ -635,6 +731,10 @@ class AutonomousLoop:
         # 6. Heal
         heal_result = self.heal()
         cycle_report['heal'] = heal_result
+
+        # 7. Pursuit (C26 Step 5) — keep pressing toward 1%/day
+        pursuit_result = self._pursuit_step(metrics)
+        cycle_report['pursuit'] = pursuit_result
 
         # Save state
         elapsed = time.time() - start
