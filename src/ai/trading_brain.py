@@ -27,6 +27,7 @@ Imported and used by executor.py — same interface as v2.0.
 """
 
 import json
+import logging
 import math
 import os
 import re
@@ -38,6 +39,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -793,14 +796,18 @@ class MultiModelConsensus:
     Pass 2: Analyst (left brain) decides using patterns + risk analysis (should we TRADE?)
     """
 
-    # Fine-tuned models with trading-specific system prompts, temperature, and output format
-    # Deployed via Ollama custom Modelfiles on GPU server.
-    # Fallback chains ordered most-specialized → most-generic; each tier
-    # is only used if Ollama doesn't have the previous one pulled.
-    MODEL_SCANNER = "act-scanner"        # QLoRA fine-tuned scanner (falls back to nexus-scanner → devstral → deepseek-r1:7b)
-    MODEL_ANALYST = "act-analyst"        # QLoRA fine-tuned analyst (falls back to nexus-analyst → qwen3:32b → deepseek-r1:32b)
-    MODEL_SCANNER_FALLBACKS = ["nexus-scanner", "devstral:24b", "deepseek-r1:7b"]
-    MODEL_ANALYST_FALLBACKS = ["nexus-analyst", "qwen3:32b", "deepseek-r1:32b"]
+    # ── Deprecated in C26 — unified brain ──
+    # These constants existed when MultiModelConsensus made its own Ollama
+    # calls with bespoke fallback chains. Since C26, scanner+analyst both
+    # route through `dual_brain.scan` / `dual_brain.analyze` which honour
+    # the profile selected by ACT_BRAIN_PROFILE / config.yaml. The values
+    # below are kept ONLY as audit labels in merged result payloads.
+    # Callers that set these to override model selection should migrate
+    # to ACT_SCANNER_MODEL / ACT_ANALYST_MODEL env vars.
+    MODEL_SCANNER = "act-scanner"
+    MODEL_ANALYST = "act-analyst"
+    MODEL_SCANNER_FALLBACKS: List[str] = []    # unused post-C26
+    MODEL_ANALYST_FALLBACKS: List[str] = []    # unused post-C26
 
     def __init__(self, ollama_base_url: str = "http://localhost:11434"):
         self.ollama_base_url = ollama_base_url.rstrip("/")
@@ -846,52 +853,34 @@ class MultiModelConsensus:
 
     def query_two_pass(self, scanner_prompt: str, analyst_prompt_builder, **analyst_kwargs) -> Dict[str, Any]:
         """
-        Two-pass evaluation:
-        1. Mistral scans patterns (Pass 1)
-        2. Llama analyzes risk + decides using Mistral's findings (Pass 2)
-        """
-        # PASS 1: Pattern scan with Mistral (try fine-tuned, fall back through chain)
-        print(f"  [BRAIN:PASS1] Mistral scanning patterns...")
-        pattern_result = None
-        scanner_chain = self._filter_available([self.MODEL_SCANNER] + self.MODEL_SCANNER_FALLBACKS)
-        for _model in scanner_chain:
-            try:
-                pattern_result = self._call_ollama(_model, scanner_prompt)
-                break
-            except Exception as _e:
-                print(f"  [BRAIN:PASS1] {_model} failed: {str(_e)[:60]}")
-                continue
-        if pattern_result is None:
-            print(f"  [BRAIN:PASS1] All scanner models failed — using empty patterns")
-            pattern_result = self._empty_pattern_result()
+        Unified two-pass evaluation (C26 — LLM-centric brain).
 
-        # Validate pattern result
+        Both passes route through dual_brain.scan / dual_brain.analyze so
+        the legacy executor path shares ONE profile + ONE brain_memory
+        with the agentic shadow loop. The scanner's output is published
+        to brain_memory as a ScanReport — the agentic analyst reads the
+        same rationale as this analyst pass.
+
+        Pass 1 (Scanner brain): pattern scan → structured dict
+        Pass 2 (Analyst brain): risk + decision using scanner output
+        """
+        asset = str(analyst_kwargs.get("asset") or "?").upper()
+
+        # PASS 1 — Scanner via dual_brain (profile-driven model pick)
+        print(f"  [BRAIN:PASS1] Scanner via dual_brain (asset={asset})...")
+        pattern_result = self._run_unified_scan(scanner_prompt, asset=asset)
         pattern_result = self._validate_patterns(pattern_result)
+        self._publish_scan_to_brain_memory(asset, pattern_result)
+
         pat_bias = pattern_result.get("pattern_bias", "NEUTRAL")
         pat_strength = pattern_result.get("pattern_strength", 5)
         strongest = pattern_result.get("strongest_signal", "None")
         print(f"  [BRAIN:PASS1] Patterns: bias={pat_bias} strength={pat_strength}/10 key={strongest}")
 
-        # PASS 2: Risk analysis + decision with Llama (try fine-tuned, fall back through chain)
-        print(f"  [BRAIN:PASS2] Llama analyzing risk + deciding...")
+        # PASS 2 — Analyst via dual_brain (same profile, different brain)
+        print(f"  [BRAIN:PASS2] Analyst via dual_brain (asset={asset})...")
         analyst_prompt = analyst_prompt_builder(pattern_scan_result=pattern_result, **analyst_kwargs)
-        decision_result = None
-        analyst_chain = self._filter_available([self.MODEL_ANALYST] + self.MODEL_ANALYST_FALLBACKS)
-        for _model in analyst_chain:
-            try:
-                decision_result = self._call_ollama(_model, analyst_prompt)
-                break
-            except Exception as _e:
-                print(f"  [BRAIN:PASS2] {_model} failed: {str(_e)[:60]}")
-                continue
-        if decision_result is None:
-            print(f"  [BRAIN:PASS2] All analyst models failed — rejecting trade (safe default)")
-            decision_result = {
-                "proceed": False, "confidence": 0.2, "risk_score": 8,
-                "trade_quality": 2, "predicted_l_level": "L1",
-                "bull_case": "Analyst unavailable", "bear_case": "all models failed",
-                "facilitator_verdict": "REJECTED — analyst error",
-            }
+        decision_result = self._run_unified_analyze(analyst_prompt, asset=asset)
 
         # PASS 3 (optional): If Llama says YES, quick Mistral verification
         # "Does the pattern data actually support this decision?"
@@ -939,6 +928,9 @@ class MultiModelConsensus:
             return {"confirmed": True, "reason": ""}
 
     def _call_ollama(self, model: str, prompt: str) -> Dict[str, Any]:
+        """Legacy direct-Ollama path. Kept for backward compatibility
+        with any call-site still wired to it; the unified path below
+        is preferred."""
         url = f"{self.ollama_base_url}/api/generate"
         payload = {
             "model": model,
@@ -951,6 +943,103 @@ class MultiModelConsensus:
         data = resp.json()
         raw_text = data.get("response", "")
         return self._parse_llm_json(raw_text)
+
+    # ── Unified routing (C26): both brains via dual_brain ──────────────
+
+    def _run_unified_scan(self, prompt: str, asset: str = "?") -> Dict[str, Any]:
+        """Scanner via dual_brain. Returns parsed dict shaped like the
+        legacy `_empty_pattern_result` — same downstream consumers."""
+        try:
+            from src.ai.dual_brain import scan as _scan
+            resp = _scan(prompt)
+            text = getattr(resp, "text", "") or ""
+            if not text.strip():
+                logger.warning(
+                    "[BRAIN:PASS1] dual_brain.scan returned empty for asset=%s "
+                    "(model=%s, error=%r) — falling back to empty patterns",
+                    asset, getattr(resp, "model", "?"), getattr(resp, "error", ""),
+                )
+                return self._empty_pattern_result()
+            return self._parse_llm_json(text)
+        except Exception as e:
+            logger.warning("[BRAIN:PASS1] dual_brain.scan exception: %s", e)
+            return self._empty_pattern_result()
+
+    def _run_unified_analyze(self, prompt: str, asset: str = "?") -> Dict[str, Any]:
+        """Analyst via dual_brain. Returns parsed dict shaped like the
+        legacy analyst output."""
+        try:
+            from src.ai.dual_brain import analyze as _analyze
+            resp = _analyze(prompt)
+            text = getattr(resp, "text", "") or ""
+            if not text.strip():
+                logger.warning(
+                    "[BRAIN:PASS2] dual_brain.analyze returned empty for asset=%s "
+                    "(model=%s, error=%r) — returning safe-default skip",
+                    asset, getattr(resp, "model", "?"), getattr(resp, "error", ""),
+                )
+                return {
+                    "proceed": False, "confidence": 0.2, "risk_score": 8,
+                    "trade_quality": 2, "predicted_l_level": "L1",
+                    "bull_case": "Analyst LLM returned empty",
+                    "bear_case": "provider error",
+                    "facilitator_verdict": "REJECTED — analyst error",
+                }
+            return self._parse_llm_json(text)
+        except Exception as e:
+            logger.warning("[BRAIN:PASS2] dual_brain.analyze exception: %s", e)
+            return {
+                "proceed": False, "confidence": 0.2, "risk_score": 8,
+                "trade_quality": 2, "predicted_l_level": "L1",
+                "bull_case": f"Analyst exception: {type(e).__name__}",
+                "bear_case": str(e)[:80],
+                "facilitator_verdict": "REJECTED — analyst exception",
+            }
+
+    def _publish_scan_to_brain_memory(self, asset: str, patterns: Dict[str, Any]) -> None:
+        """After scanner pass, publish a ScanReport into brain_memory
+        so the agentic loop's analyst (running on the same tick) reads
+        the SAME scanner rationale. This is the corpus-callosum between
+        legacy executor path + shadow agentic path — both now share one
+        brain."""
+        try:
+            from src.ai.brain_memory import ScanReport, publish_scan
+            import time as _t
+
+            # Map legacy pattern dict → ScanReport shape.
+            bias = str(patterns.get("pattern_bias", "NEUTRAL")).upper()
+            direction = {"BULLISH": "LONG", "BEARISH": "SHORT"}.get(bias, "FLAT")
+            score = float(patterns.get("pattern_strength", 5)) * 10.0   # 1-10 -> 10-100
+            signals: List[str] = []
+            for k in ("strongest_signal",):
+                v = patterns.get(k)
+                if v and v != "None":
+                    signals.append(str(v)[:60])
+            for p in (patterns.get("candlestick_patterns") or [])[:3]:
+                signals.append(str(p)[:40])
+            rationale = (
+                f"bias={bias} strength={patterns.get('pattern_strength', 5)}/10 "
+                f"structure={patterns.get('structure', '?')} "
+                f"momentum={patterns.get('momentum', '?')} "
+                f"key={patterns.get('strongest_signal', 'None')}"
+            )[:500]
+
+            report = ScanReport(
+                asset=asset.upper(),
+                ts=_t.time(),
+                opportunity_score=min(100.0, max(0.0, score)),
+                proposed_direction=direction,
+                top_signals=signals[:5],
+                rationale=rationale,
+                raw={
+                    "source": "trading_brain_v2_unified",
+                    "pattern_bias": bias,
+                    "pattern_strength": patterns.get("pattern_strength", 5),
+                },
+            )
+            publish_scan(report)
+        except Exception as e:
+            logger.debug("publish_scan_to_brain_memory failed: %s", e)
 
     def _parse_llm_json(self, text: str) -> Dict[str, Any]:
         text = text.strip()
@@ -1156,7 +1245,7 @@ class TradingBrainV2:
         self._finetune_enricher = finetune_enricher
 
         cal_report = self.calibrator.get_calibration_report()
-        print(f"[BRAIN] TradingBrainV2.1 ACTIVE — 2-pass (Mistral=scanner + Llama=analyst)")
+        print(f"[BRAIN] TradingBrainV2.1 UNIFIED — scanner+analyst via dual_brain profile; brain_memory shared with agentic loop")
         print(f"[BRAIN] Confidence calibration: {cal_report}")
         print(f"[BRAIN] Winner DNA: {self.winner_dna.get_dna()[:120]}")
         if self._economic_intelligence:
