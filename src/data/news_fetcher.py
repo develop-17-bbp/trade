@@ -84,9 +84,19 @@ class NewsFetcher:
     def __init__(self, user_agent: str = 'CryptoTradeBot/2.0',
                  newsapi_key: Optional[str] = None,
                  cryptopanic_token: Optional[str] = None):
+        import os as _os
         self.headers = {'User-Agent': user_agent}
-        self.newsapi_key = newsapi_key
-        self.cryptopanic_token = cryptopanic_token
+        # Fall back to env vars when not explicitly passed. Most callers
+        # (web_context, executor, etc.) instantiate NewsFetcher() with no
+        # args and rely on env-var loading from .env / setx; previously
+        # that meant NewsAPI + CryptoPanic were silently disabled.
+        self.newsapi_key = newsapi_key or _os.environ.get('NEWSAPI_KEY', '').strip() or None
+        self.cryptopanic_token = (
+            cryptopanic_token
+            or _os.environ.get('CRYPTOPANIC_TOKEN', '').strip()
+            or _os.environ.get('CRYPTOPANIC_KEY', '').strip()
+            or None
+        )
         self.reddit_api = 'https://www.reddit.com/r/{}/hot.json'
         self._cache: Dict[str, tuple] = {}  # source -> (timestamp, items)
         self._cache_ttl = 120  # seconds
