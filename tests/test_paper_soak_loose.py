@@ -92,3 +92,25 @@ def test_get_overlay_safe_under_real_capital(tmp_path, monkeypatch):
     }), encoding="utf-8")
     monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     assert mod.get_paper_soak_overlay() is None
+
+
+def test_overlay_includes_bypass_macro_crisis_default(tmp_path, monkeypatch):
+    mod = _load_action()
+    overlay_file = tmp_path / "paper_soak_loose.json"
+    monkeypatch.setattr(mod, "OVERLAY_FILE", overlay_file)
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = mod.run({"enable": True})
+    assert r.ok is True
+    payload = json.loads(overlay_file.read_text(encoding="utf-8"))
+    assert payload["conviction"]["bypass_macro_crisis"] is True
+
+
+def test_overlay_bypass_macro_crisis_disabled_when_requested(tmp_path, monkeypatch):
+    mod = _load_action()
+    overlay_file = tmp_path / "paper_soak_loose.json"
+    monkeypatch.setattr(mod, "OVERLAY_FILE", overlay_file)
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = mod.run({"enable": True, "bypass_macro_crisis": False})
+    assert r.ok is True
+    payload = json.loads(overlay_file.read_text(encoding="utf-8"))
+    assert payload["conviction"]["bypass_macro_crisis"] is False

@@ -139,14 +139,29 @@ def evaluate(
     reasons: List[str] = []
 
     # ── Macro crisis — absolute override ────────────────────────────────
+    # In live trading this is a hard reject; no overrides. In paper-
+    # soak mode the operator may opt to bypass via
+    # /paper-soak-loose enable=true (the overlay is paper-only so
+    # real capital is untouched by this path).
     if macro_bias is not None and macro_bias.crisis:
+        overlay_early = _soak_overlay()
+        bypass_crisis = False
+        if overlay_early:
+            bypass_crisis = bool(
+                (overlay_early.get("conviction") or {}).get("bypass_macro_crisis")
+            )
+        if not bypass_crisis:
+            checks["macro_crisis_free"] = False
+            reasons.append("macro_crisis")
+            return ConvictionResult(
+                tier="reject", passed=False, direction=d, size_multiplier=0.0,
+                checks=checks, reasons=reasons,
+            )
+        # Bypass path — still flag in checks/reasons for audit.
         checks["macro_crisis_free"] = False
-        reasons.append("macro_crisis")
-        return ConvictionResult(
-            tier="reject", passed=False, direction=d, size_multiplier=0.0,
-            checks=checks, reasons=reasons,
-        )
-    checks["macro_crisis_free"] = True
+        reasons.append("paper_soak_bypass_macro_crisis")
+    else:
+        checks["macro_crisis_free"] = True
 
     # ── TF alignment (1h + 4h agree with trade direction) ──────────────
     tf_1h = (tf_1h_direction or "").upper()

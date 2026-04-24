@@ -113,6 +113,18 @@ def run(args: Optional[Dict[str, Any]] = None) -> SkillResult:
     except (TypeError, ValueError):
         min_cost_margin_pct = 0.3
 
+    # Paper-soak can optionally bypass the conviction-gate macro-crisis
+    # absolute-reject. Real-capital path ignores this flag (the overlay
+    # is already paper-gated), so there's no way to turn this on for
+    # live money.
+    bypass_macro_crisis_raw = args.get("bypass_macro_crisis", True)
+    if isinstance(bypass_macro_crisis_raw, str):
+        bypass_macro_crisis = bypass_macro_crisis_raw.strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+    else:
+        bypass_macro_crisis = bool(bypass_macro_crisis_raw)
+
     overlay = {
         "enabled_at": datetime.now(timezone.utc).isoformat(),
         "reason": str(args.get("reason", "operator-enabled for soak visibility")),
@@ -123,6 +135,7 @@ def run(args: Optional[Dict[str, Any]] = None) -> SkillResult:
         },
         "conviction": {
             "min_normal_strategies_agreeing": min_normal_strategies,
+            "bypass_macro_crisis": bypass_macro_crisis,
         },
         "cost_gate": {
             "min_margin_pct": min_cost_margin_pct,
