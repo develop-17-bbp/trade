@@ -1,0 +1,16 @@
+name: paper-soak-loose
+description: >
+  Loosen sniper + conviction thresholds so paper trades actually fire
+  during soak. Works by writing a runtime overlay to
+  data/paper_soak_loose.json; executor reads it on every tick. Never
+  affects real-capital path (still gated by ACT_REAL_CAPITAL_ENABLED).
+  Args: `enable=true|false` (required), `min_score=4`,
+  `min_move_pct=2.0`, `min_confluence=3`. Call with `enable=false`
+  to revert to strict gates. Non-destructive — removes the overlay
+  file on disable.
+reversible: true
+requires_confirmation: false
+tags:
+  - soak
+  - paper
+  - config

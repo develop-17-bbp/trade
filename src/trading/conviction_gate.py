@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional  # noqa: F401 — Any used by helper
 
 from src.trading.macro_bias import MacroBias
 
@@ -56,6 +56,16 @@ SNIPER_MIN_STRATEGY_AGREEING = 5
 NORMAL_MIN_STRATEGY_AGREEING = 3
 SNIPER_MIN_MACRO_MAGNITUDE = 0.20
 TRENDING_REGIMES = {"trending", "strong_trend", "trend"}
+
+
+def _soak_overlay() -> Optional[Dict[str, Any]]:
+    """Best-effort read of paper-soak loose overlay. Returns None when
+    disabled or when real-capital is enabled (overlay is paper-only)."""
+    try:
+        from skills.paper_soak_loose.action import get_paper_soak_overlay
+        return get_paper_soak_overlay()
+    except Exception:
+        return None
 
 # ── Regime-dependent hysteresis (C19, WebCryptoAgent-inspired) ─────────
 # θ_adopt > θ_hold so entering a position needs a stronger signal than
@@ -163,6 +173,14 @@ def evaluate(
     agreeing = n_long if d == "LONG" else n_short
     sniper_strategy_floor = HOLD_SNIPER_STRATEGY_FLOOR if in_position else SNIPER_MIN_STRATEGY_AGREEING
     normal_strategy_floor = HOLD_NORMAL_STRATEGY_FLOOR if in_position else NORMAL_MIN_STRATEGY_AGREEING
+    # Paper-soak loose overlay (C22) — only applied when real-capital
+    # is disabled AND the operator has explicitly enabled loose mode.
+    overlay = _soak_overlay()
+    if overlay:
+        ov = (overlay.get("conviction") or {}).get("min_normal_strategies_agreeing")
+        if isinstance(ov, (int, float)):
+            normal_strategy_floor = min(normal_strategy_floor, int(ov))
+        reasons.append(f"paper_soak_loose_overlay:applied")
     checks["multi_strategy_normal_floor"] = agreeing >= normal_strategy_floor
     checks["multi_strategy_sniper_floor"] = agreeing >= sniper_strategy_floor
     # Back-compat aliases so existing downstream readers don't break.

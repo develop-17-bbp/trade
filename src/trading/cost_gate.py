@@ -157,6 +157,17 @@ def _impact_pct(size_pct: float) -> float:
 
 
 def _min_margin_default() -> float:
+    # Paper-soak loose overlay (C22) takes precedence when paper mode
+    # and operator has enabled loose gates.
+    try:
+        from skills.paper_soak_loose.action import get_paper_soak_overlay
+        overlay = get_paper_soak_overlay()
+        if overlay:
+            ov = (overlay.get("cost_gate") or {}).get("min_margin_pct")
+            if isinstance(ov, (int, float)):
+                return max(0.0, float(ov))
+    except Exception:
+        pass
     env = (os.environ.get("ACT_COST_MIN_MARGIN_PCT") or "").strip()
     if env:
         try:
