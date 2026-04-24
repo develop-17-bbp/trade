@@ -139,7 +139,7 @@ class LoRATrainer:
                 except Exception:
                     continue
 
-        logger.info(f"[TRAINER] Prepared {count} {self.model_type} examples → {formatted_path}")
+        logger.info(f"[TRAINER] Prepared {count} {self.model_type} examples -> {formatted_path}")
         return str(formatted_path)
 
     def train(self, epochs: int = 3, batch_size: int = 2,

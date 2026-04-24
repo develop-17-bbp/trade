@@ -437,7 +437,24 @@ def step4_retrain_models():
 
 
 def step4b_finetune_llm():
-    """Fine-tune LLM models on collected trade outcome data."""
+    """Fine-tune LLM models on collected trade outcome data.
+
+    ACT_DISABLE_LORA_LEGACY=1 (recommended) bypasses the legacy
+    Mistral LoRA path entirely. That path uses
+    `unsloth/mistral-7b-instruct-v0.3-bnb-4bit` which conflicts with
+    the C26 unified brain (DeepSeek/Qwen) and hits a pickler error on
+    Python 3.14. The proper fine-tune path is
+    `python -m src.skills.cli run fine-tune-brain confirm=true`
+    (C10 dual_brain_trainer) — operator-triggered, brain-pair-aware.
+    """
+    if os.environ.get("ACT_DISABLE_LORA_LEGACY", "1").strip() == "1":
+        print("\n" + "="*60)
+        print("  STEP 4b: LEGACY MISTRAL LORA — DISABLED by default (C26)")
+        print("="*60)
+        print("  Use /fine-tune-brain skill for the C26 unified-brain path.")
+        print("  Re-enable legacy path (not recommended): "
+              "setx ACT_DISABLE_LORA_LEGACY 0")
+        return
     print("\n" + "="*60)
     print("  STEP 4b: FINE-TUNING LLM MODELS ON TRADE OUTCOMES")
     print("="*60)

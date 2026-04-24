@@ -84,11 +84,14 @@ $geneticInterval = [math]::Round([math]::Max(0.25, $adaptInterval), 2)
 # Population: scales linearly with compute score
 $geneticPop = [math]::Min(500, [math]::Max(10, [math]::Floor($computeScore * 2)))
 
-# ── Dual-brain models (C5d profile default: qwen3_r1 per 2026-04 rankings) ──
-# ACT_BRAIN_PROFILE can override which pair we pull; the operator can
-# also pin per-role via ACT_SCANNER_MODEL / ACT_ANALYST_MODEL.
+# ── Dual-brain models — default dense_r1 for 32GB RTX 5090 safety ──
+# qwen3_r1 (qwen3:32b + deepseek-r1:32b) needs ~42 GB and OOMs on 32 GB.
+# dense_r1 (deepseek-r1:7b + deepseek-r1:32b ~= 26 GB) fits.
+# moe_agentic (qwen2.5-coder:7b + qwen3-coder:30b ~= 24 GB) also fits.
+# Operator can override to qwen3_r1 on >40 GB hardware via
+# `setx ACT_BRAIN_PROFILE qwen3_r1`.
 $brainProfile = $env:ACT_BRAIN_PROFILE
-if (-not $brainProfile) { $brainProfile = "qwen3_r1" }
+if (-not $brainProfile) { $brainProfile = "dense_r1" }
 
 switch ($brainProfile) {
     "qwen3_r1"             { $scannerModel = "qwen3:32b";          $analystModel = "deepseek-r1:32b" }
@@ -96,9 +99,30 @@ switch ($brainProfile) {
     "moe_agentic"          { $scannerModel = "qwen2.5-coder:7b";   $analystModel = "qwen3-coder:30b" }
     "devstral_qwen3coder"  { $scannerModel = "devstral:24b";       $analystModel = "qwen3-coder:30b" }
     default {
-        WARN "Unknown ACT_BRAIN_PROFILE=$brainProfile -- defaulting to qwen3_r1"
-        $scannerModel = "qwen3:32b"; $analystModel = "deepseek-r1:32b"
+        WARN "Unknown ACT_BRAIN_PROFILE=$brainProfile -- defaulting to dense_r1"
+        $brainProfile = "dense_r1"
+        $scannerModel = "deepseek-r1:7b"; $analystModel = "deepseek-r1:32b"
     }
+}
+
+# ── Safety: reject profiles that won't fit 32 GB VRAM ──
+# qwen3_r1 needs ~42 GB. On cards <40 GB VRAM, auto-downgrade to
+# dense_r1 before the Python process even starts to prevent the
+# "empty LLM response → parse_failures → zero trades" chain.
+try {
+    $vramLine = & nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null | Select-Object -First 1
+    if ($vramLine) {
+        $vramGiB = [int]$vramLine / 1024.0
+        if ($brainProfile -eq "qwen3_r1" -and $vramGiB -lt 40) {
+            WARN "Profile qwen3_r1 needs ~42 GB VRAM but only $([int]$vramGiB) GB detected - auto-downgrading to dense_r1"
+            $brainProfile = "dense_r1"
+            $scannerModel = "deepseek-r1:7b"
+            $analystModel = "deepseek-r1:32b"
+            _SetEnvPersistent "ACT_BRAIN_PROFILE" "dense_r1"
+        }
+    }
+} catch {
+    # nvidia-smi missing or failed; skip the safety check silently
 }
 
 # Per-role env overrides always win.
