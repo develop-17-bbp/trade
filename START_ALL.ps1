@@ -323,20 +323,26 @@ if (-not $env:ACT_AGENTIC_LOOP) { _SetEnvPersistent "ACT_AGENTIC_LOOP" "1" }
 if (-not $env:ACT_BRAIN_PROFILE) { _SetEnvPersistent "ACT_BRAIN_PROFILE" $brainProfile }
 if (-not $env:ACT_SCANNER_MODEL) { _SetEnvPersistent "ACT_SCANNER_MODEL" $scannerModel }
 if (-not $env:ACT_ANALYST_MODEL) { _SetEnvPersistent "ACT_ANALYST_MODEL" $analystModel }
-# OLLAMA_NUM_PARALLEL=1 forces sequential model serving so the
-# scanner (7B) and analyst (32B) don't fight for VRAM via concurrent
-# inference slots. Was 4 — operator hit empty-response storms because
-# Ollama tried to keep multiple models warm and hit OOM. Sequential
-# load means scanner finishes, then analyst loads, then scanner reloads
-# next tick. ~5-10s slower per cycle but reliable.
+# OLLAMA_MAX_LOADED_MODELS=2 keeps BOTH the scanner (7B) and the
+# analyst (32B) warm in VRAM simultaneously. Default in older Ollama
+# is 1 which causes scanner -> analyst -> scanner model swaps every
+# tick (each swap ~20-60s, killing throughput). With max=2 + ctx=8192
+# both models fit on a 32 GB RTX 5090 (5 + 20 = 25 GB; 6 GB headroom)
+# and no swap fires per tick.
+if (-not $env:OLLAMA_MAX_LOADED_MODELS) { _SetEnvPersistent "OLLAMA_MAX_LOADED_MODELS" "2" }
+# OLLAMA_NUM_PARALLEL controls concurrent requests per model (batch
+# size, NOT model count). =1 means each model handles one request at
+# a time — fine for ACT since scanner + analyst calls per tick are
+# sequential by design. Crank to 2 only if you observe queue backlog
+# in the scheduler.
 if (-not $env:OLLAMA_NUM_PARALLEL) { _SetEnvPersistent "OLLAMA_NUM_PARALLEL" "1" }
 # OLLAMA_NUM_CTX=8192 caps the per-call KV-cache instead of letting
 # Ollama use the model's max context (32K-128K). Reduces 7B from
-# 8.2 GB to ~5 GB and 32B from 23 GB to ~20 GB on operator's RTX 5090.
+# 8.2 GB to ~5 GB and 32B from 31 GB to ~20 GB on RTX 5090.
 if (-not $env:OLLAMA_NUM_CTX) { _SetEnvPersistent "OLLAMA_NUM_CTX" "8192" }
 # Generous timeouts for first-load of 32B from disk
 if (-not $env:OLLAMA_READ_TIMEOUT_S) { _SetEnvPersistent "OLLAMA_READ_TIMEOUT_S" "180" }
-OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel OLLAMA_NUM_PARALLEL=$($env:OLLAMA_NUM_PARALLEL) OLLAMA_NUM_CTX=$($env:OLLAMA_NUM_CTX)"
+OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel MAX_LOADED=$($env:OLLAMA_MAX_LOADED_MODELS) PARALLEL=$($env:OLLAMA_NUM_PARALLEL) CTX=$($env:OLLAMA_NUM_CTX)"
 OK "Env vars persisted via setx (open a new terminal to pick them up for diagnostics like /status)."
 
 Write-Host ""
