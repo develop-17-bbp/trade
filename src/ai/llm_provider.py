@@ -205,7 +205,16 @@ class OllamaProvider(BaseLLMProvider):
         self._throttle()
         import requests
         base = self.config.base_url or 'http://127.0.0.1:11434'
-        model_id = self.config.model or 'deepseek-r1:7b'
+        # Final fallback: prefer the pinned analyst (OLLAMA_REMOTE_MODEL,
+        # which START_ALL sets to the active profile's analyst model)
+        # over the deepseek-r1:7b hardcoded default. Without this,
+        # legacy paths cause Ollama to load deepseek-r1:7b on top of
+        # the pinned qwen pair and evict them.
+        model_id = (
+            self.config.model
+            or os.environ.get('OLLAMA_REMOTE_MODEL', '').strip()
+            or 'deepseek-r1:7b'
+        )
 
         # Connect timeout 10s + read timeout 180s — covers 32B model first-
         # load (which takes 20-60s from cold disk) and long inference on

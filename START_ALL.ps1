@@ -378,6 +378,12 @@ if (-not $env:ACT_ANALYST_MODEL) { _SetEnvPersistent "ACT_ANALYST_MODEL" $analys
 # both models fit on a 32 GB RTX 5090 (5 + 20 = 25 GB; 6 GB headroom)
 # and no swap fires per tick.
 if (-not $env:OLLAMA_MAX_LOADED_MODELS) { _SetEnvPersistent "OLLAMA_MAX_LOADED_MODELS" "2" }
+# OLLAMA_REMOTE_MODEL points the legacy LLMRouter `remote_gpu`
+# provider at the analyst we just pinned. Without this, legacy code
+# paths (agentic_strategist, TradingBrainV2 fallback) fall through to
+# deepseek-r1:7b default, which evicts our pinned qwen pair on every
+# call. Force-aligning prevents the eviction loop.
+_SetEnvPersistent "OLLAMA_REMOTE_MODEL" $analystModel
 # OLLAMA_NUM_PARALLEL controls concurrent requests per model (batch
 # size, NOT model count). =1 means each model handles one request at
 # a time — fine for ACT since scanner + analyst calls per tick are
