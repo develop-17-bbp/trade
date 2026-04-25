@@ -848,16 +848,23 @@ STRATEGY RULES:
             os.environ.get("LLM_BASE_URL", "").strip()
             or os.environ.get("OLLAMA_BASE_URL", "").strip()
         ).rstrip("/")
+        # Order: Ollama native /api/generate FIRST (it honors
+        # options.num_ctx). The OpenAI-compat /v1/chat/completions shim
+        # silently drops num_ctx, causing Ollama to fall back to the
+        # model's bake-in default (32K for deepseek-r1:7b). On a 32 GB
+        # card with both brains resident, that ctx size evicts the 32B
+        # analyst from VRAM — which is exactly what `ollama ps` shows
+        # when only the 7B remains loaded.
         if configured_base:
             endpoints = [
-                f"{configured_base}/v1/chat/completions",
                 f"{configured_base}/api/generate",
+                f"{configured_base}/v1/chat/completions",
             ]
         else:
             endpoints = [
+                "http://127.0.0.1:11434/api/generate",
                 "http://127.0.0.1:11434/v1/chat/completions",
-                "http://127.0.0.1:1234/v1/chat/completions",
-                "http://127.0.0.1:11434/api/generate" # Basic Ollama fallback
+                "http://127.0.0.1:1234/v1/chat/completions",  # LM Studio
             ]
         
         # num_ctx cap so this path doesn't trigger Ollama's 32K default
@@ -883,14 +890,20 @@ STRATEGY RULES:
                         },
                     }
                 else:
-                    # OpenAI compatible API format
+                    # OpenAI compatible API format. Ollama accepts an
+                    # `options` extension for Ollama-specific params;
+                    # standard OpenAI APIs ignore unknown fields.
                     payload = {
                         "model": model_id,
                         "messages": [
                             {"role": "system", "content": "You are a helpful crypto trading assistant. Return only valid JSON."},
                             {"role": "user", "content": prompt}
                         ],
-                        "temperature": 0.1
+                        "temperature": 0.1,
+                        "options": {
+                            "num_ctx": _num_ctx,
+                            "num_predict": 1500,
+                        },
                     }
                 resp = requests.post(url, json=payload, timeout=(10, 180))
                 if resp.status_code == 200:

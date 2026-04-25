@@ -266,9 +266,16 @@ class UnslothQLoRABackend:
             return False
 
         try:
+            # Honor OLLAMA_NUM_CTX (set by START_ALL to 16384) so a
+            # fine-tune output doesn't bake in a 32K ctx that would
+            # evict the resident base models on its first request.
+            try:
+                _num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
+            except (ValueError, TypeError):
+                _num_ctx = 16384
             modelfile_path.write_text(
                 f"FROM {gguf_path.as_posix()}\n"
-                f"PARAMETER num_ctx 32000\n"
+                f"PARAMETER num_ctx {_num_ctx}\n"
                 f"PARAMETER temperature 0.3\n",
                 encoding="utf-8",
             )

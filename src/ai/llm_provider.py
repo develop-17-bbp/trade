@@ -227,10 +227,19 @@ class OllamaProvider(BaseLLMProvider):
             _ct, _rt = 10.0, 180.0
         local_timeout = (_ct, _rt)
 
-        # Try OpenAI-compatible endpoint first
+        # Order matters: try Ollama-native /api/generate FIRST.
+        # The /v1/chat/completions OpenAI-compat shim silently drops
+        # `options.num_ctx`, so any request that lands on it uses the
+        # model's bake-in default (32K for deepseek-r1:7b, 128K for
+        # qwen3-coder). At those context sizes, the 7B+32B pair
+        # exceeds 32 GB VRAM and Ollama evicts the analyst — leaving
+        # only the 7B scanner resident, which is exactly what the
+        # operator sees in `ollama ps`. Native /api/generate honors
+        # options.num_ctx, so we ask there first and fall back to
+        # OpenAI-compat only on connection failure.
         endpoints = [
-            f'{base}/v1/chat/completions',
             f'{base}/api/generate',
+            f'{base}/v1/chat/completions',
         ]
 
         # Cap context window at OLLAMA_NUM_CTX or 16384 (default).
@@ -279,11 +288,18 @@ class OllamaProvider(BaseLLMProvider):
                         data = resp.json()
                         return self._parse_json(data.get('response', '{}'))
                 else:
+                    # OpenAI-compat fallback. Ollama 0.1.32+ accepts an
+                    # `options` extension here too; standard OpenAI APIs
+                    # ignore unknown fields, so this is safe both ways.
                     payload = {
                         'model': model_id,
                         'messages': [],
                         'temperature': self.config.temperature,
                         'max_tokens': self.config.max_tokens,
+                        'options': {
+                            'num_ctx': _num_ctx,
+                            'num_predict': _num_predict,
+                        },
                     }
                     if system_prompt:
                         payload['messages'].append({'role': 'system', 'content': system_prompt})

@@ -967,33 +967,60 @@ class MultiModelConsensus:
 
     def _run_unified_analyze(self, prompt: str, asset: str = "?") -> Dict[str, Any]:
         """Analyst via dual_brain. Returns parsed dict shaped like the
-        legacy analyst output."""
-        try:
-            from src.ai.dual_brain import analyze as _analyze
-            resp = _analyze(prompt)
-            text = getattr(resp, "text", "") or ""
-            if not text.strip():
-                logger.warning(
-                    "[BRAIN:PASS2] dual_brain.analyze returned empty for asset=%s "
-                    "(model=%s, error=%r) — returning safe-default skip",
-                    asset, getattr(resp, "model", "?"), getattr(resp, "error", ""),
-                )
-                return {
-                    "proceed": False, "confidence": 0.2, "risk_score": 8,
-                    "trade_quality": 2, "predicted_l_level": "L1",
-                    "bull_case": "Analyst LLM returned empty",
-                    "bear_case": "provider error",
-                    "facilitator_verdict": "REJECTED — analyst error",
-                }
-            return self._parse_llm_json(text)
-        except Exception as e:
-            logger.warning("[BRAIN:PASS2] dual_brain.analyze exception: %s", e)
+        legacy analyst output.
+
+        On empty response, retry once with the prompt trimmed in half —
+        empty replies usually indicate the analyst OOMed or got
+        evicted from VRAM during a context-size renegotiation. A
+        smaller prompt fits in whatever ctx headroom Ollama just
+        renegotiated, so the retry typically succeeds.
+        """
+        from src.ai.dual_brain import analyze as _analyze
+
+        def _try(p: str):
+            try:
+                return _analyze(p)
+            except Exception as e:
+                logger.warning("[BRAIN:PASS2] dual_brain.analyze exception: %s", e)
+                return None
+
+        resp = _try(prompt)
+        text = (getattr(resp, "text", "") or "") if resp is not None else ""
+
+        if not text.strip():
+            half = max(2000, len(prompt) // 2)
+            logger.warning(
+                "[BRAIN:PASS2] dual_brain.analyze empty for asset=%s "
+                "(model=%s, error=%r) — retrying with prompt halved (%d→%d chars)",
+                asset, getattr(resp, "model", "?"),
+                getattr(resp, "error", ""), len(prompt), half,
+            )
+            resp = _try(prompt[-half:])
+            text = (getattr(resp, "text", "") or "") if resp is not None else ""
+
+        if not text.strip():
+            logger.warning(
+                "[BRAIN:PASS2] analyst still empty after retry for asset=%s — REJECTING",
+                asset,
+            )
             return {
                 "proceed": False, "confidence": 0.2, "risk_score": 8,
                 "trade_quality": 2, "predicted_l_level": "L1",
-                "bull_case": f"Analyst exception: {type(e).__name__}",
+                "bull_case": "Analyst LLM returned empty (after retry)",
+                "bear_case": "provider error",
+                "facilitator_verdict": "REJECTED -- analyst error",
+            }
+
+        try:
+            return self._parse_llm_json(text)
+        except Exception as e:
+            logger.warning("[BRAIN:PASS2] parse failure on analyst output: %s", e)
+            return {
+                "proceed": False, "confidence": 0.2, "risk_score": 8,
+                "trade_quality": 2, "predicted_l_level": "L1",
+                "bull_case": f"Analyst parse exception: {type(e).__name__}",
                 "bear_case": str(e)[:80],
-                "facilitator_verdict": "REJECTED — analyst exception",
+                "facilitator_verdict": "REJECTED -- analyst parse exception",
             }
 
     def _publish_scan_to_brain_memory(self, asset: str, patterns: Dict[str, Any]) -> None:
