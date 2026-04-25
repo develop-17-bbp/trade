@@ -24,6 +24,13 @@ WARM_STORE = REPO_ROOT / "data" / "warm_store.sqlite"
 BRAIN_MEMORY = REPO_ROOT / "data" / "brain_memory.sqlite"
 SOAK_OVERLAY = REPO_ROOT / "data" / "paper_soak_loose.json"
 
+# Make `src.*` importable when this script runs from anywhere -- the
+# original version relied on the caller running from REPO_ROOT, which
+# breaks /diagnose-noop and readiness_gate imports when invoked from
+# scripts/.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 OLLAMA_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 EXPECTED_PROFILE = os.environ.get("ACT_BRAIN_PROFILE", "dense_r1")
 EXPECTED_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
@@ -62,11 +69,55 @@ def check_ollama_models() -> Tuple[bool, str]:
     names = [m.get("name", "") for m in models]
     ctxs = [m.get("context_length") or m.get("size_vram") or "?" for m in models]
     print(f"    resident: {list(zip(names, ctxs))}")
+
+    # Detect "ghost-loaded" models -- ones that don't match the
+    # current ACT_BRAIN_PROFILE's pair. Common cause: a prior
+    # START_ALL pinned deepseek with keep_alive=-1, then operator
+    # switched ACT_BRAIN_PROFILE, then ran START_ALL again without
+    # STOP_ALL first. The old deepseek stays pinned because Ollama
+    # honored its keep_alive contract; new qwen pair gets requested
+    # and evicts whichever ghost has lower priority.
+    expected = []
+    try:
+        sys.path.insert(0, str(REPO_ROOT))
+        from src.ai.dual_brain import _resolve, SCANNER, ANALYST  # type: ignore
+        expected = [
+            _resolve(None, SCANNER).model.lower(),
+            _resolve(None, ANALYST).model.lower(),
+        ]
+    except Exception:
+        pass
+    forbidden_env = os.environ.get("ACT_FORBID_MODELS", "").lower()
+    forbidden_set = {s.strip() for s in forbidden_env.split(",") if s.strip()}
+    ghosts = []
+    for n in names:
+        nl = n.lower()
+        head = nl.split(":")[0]
+        if expected and nl not in expected and not any(
+            e for e in expected if e and e.split(":")[0] == head
+        ):
+            ghosts.append(n)
+        for f in forbidden_set:
+            if f == nl or f == head or f in nl:
+                ghosts.append(n)
+                break
+    if ghosts:
+        _warn(
+            f"GHOST models resident from a prior session: {sorted(set(ghosts))}. "
+            "These were keep_alive=-1 pinned and never evicted. Run STOP_ALL "
+            "(with ACT_PURGE_FORBIDDEN_MODELS=1 if you want them gone from "
+            "disk too) before START_ALL."
+        )
+
     if len(models) >= 2:
         _ok(f"{len(models)} models resident")
         return True, "ok"
     _fail("only 1 model resident -- the other was evicted.")
-    _warn("Most likely: a python path is still passing num_ctx that exceeds VRAM.")
+    _warn(
+        "Most likely: a python path is still passing num_ctx that exceeds "
+        "VRAM, OR a ghost model from a prior session is taking up the slot "
+        "(see the GHOST warning above)."
+    )
     return False, "evicted"
 
 
@@ -78,8 +129,10 @@ def check_brain_memory() -> Tuple[bool, str]:
     try:
         c = sqlite3.connect(str(BRAIN_MEMORY))
         c.row_factory = sqlite3.Row
+        # scan_reports schema: scan_id, asset, ts, payload (JSON).
+        # opportunity_score lives inside payload.
         rows = c.execute(
-            "SELECT asset, ts, opportunity_score FROM scan_reports "
+            "SELECT asset, ts, payload FROM scan_reports "
             "ORDER BY ts DESC LIMIT 5"
         ).fetchall()
         c.close()
@@ -91,8 +144,14 @@ def check_brain_memory() -> Tuple[bool, str]:
         return False, "empty"
     most_recent = rows[0]["ts"]
     age = time.time() - float(most_recent)
+    score = "?"
+    try:
+        payload = json.loads(rows[0]["payload"] or "{}")
+        score = payload.get("opportunity_score", "?")
+    except (json.JSONDecodeError, TypeError):
+        pass
     print(f"    most recent scan: {age:.0f}s ago, asset={rows[0]['asset']}, "
-          f"score={rows[0]['opportunity_score']}")
+          f"score={score}")
     if age > 600:
         _warn(f"most recent scan is {age:.0f}s old (>10 min). Scanner may be stalled.")
         return False, "stale"
@@ -134,9 +193,10 @@ def check_warm_store_decisions() -> Tuple[bool, str]:
             "SELECT COUNT(*) FROM decisions "
             "WHERE decision_id NOT LIKE 'shadow-%'"
         ).fetchone()[0]
+        # Schema uses `symbol` (not `asset`) and `ts_ns` (not `ts`).
         recent = c.execute(
-            "SELECT decision_id, asset, ts FROM decisions "
-            "ORDER BY ts DESC LIMIT 5"
+            "SELECT decision_id, symbol, ts_ns FROM decisions "
+            "ORDER BY ts_ns DESC LIMIT 5"
         ).fetchall()
         c.close()
     except sqlite3.OperationalError as e:
@@ -181,14 +241,14 @@ def check_readiness_gate() -> Tuple[bool, str]:
 def check_diagnose_noop() -> Tuple[bool, str]:
     print("\n[6/6] /diagnose-noop: top blocker (if any)")
     try:
-        from src.skills.cli import _resolve_skill, _normalize_args  # type: ignore
-        skill = _resolve_skill("diagnose-noop")
-        if skill is None:
+        from src.skills.registry import get_registry  # type: ignore
+        reg = get_registry()
+        if reg.get("diagnose-noop") is None:
             _warn("/diagnose-noop skill not registered -- skipping.")
             return True, "missing"
-        result = skill.run({})
+        result = reg.dispatch("diagnose-noop", {})
         msg = getattr(result, "message", "") or getattr(result, "error", "") or ""
-        for line in str(msg).splitlines()[:8]:
+        for line in str(msg).splitlines()[:10]:
             print(f"    {line}")
         return True, "ok"
     except Exception as e:  # pragma: no cover
