@@ -247,7 +247,12 @@ OK "Models: $($ollamaModels -join ' + ')"
 # warm before the trading bot even tries.
 CHECK "Pre-loading brain models into VRAM (keep_alive=-1)..."
 $ollamaUrl = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL.TrimEnd('/') } else { 'http://127.0.0.1:11434' }
-$ctxNum = if ($env:OLLAMA_NUM_CTX) { $env:OLLAMA_NUM_CTX } else { '8192' }
+# Pre-load context MUST match what the python bot uses (16384, set
+# below as OLLAMA_NUM_CTX). If they differ, Ollama reloads the model
+# at the larger context on the first python request and evicts the
+# other resident model — leaving only one brain in VRAM, which is
+# exactly the failure mode `ollama ps` reported (only 7B at ctx=32768).
+$ctxNum = if ($env:OLLAMA_NUM_CTX) { $env:OLLAMA_NUM_CTX } else { '16384' }
 foreach ($mod in $ollamaModels) {
     $payload = @{
         model       = $mod
@@ -374,9 +379,9 @@ if (-not $env:ACT_ANALYST_MODEL) { _SetEnvPersistent "ACT_ANALYST_MODEL" $analys
 # OLLAMA_MAX_LOADED_MODELS=2 keeps BOTH the scanner (7B) and the
 # analyst (32B) warm in VRAM simultaneously. Default in older Ollama
 # is 1 which causes scanner -> analyst -> scanner model swaps every
-# tick (each swap ~20-60s, killing throughput). With max=2 + ctx=8192
-# both models fit on a 32 GB RTX 5090 (5 + 20 = 25 GB; 6 GB headroom)
-# and no swap fires per tick.
+# tick (each swap ~20-60s, killing throughput). With max=2 + ctx=16384
+# both models fit on a 32 GB RTX 5090 (~7 + ~22 = ~29 GB; ~3 GB
+# headroom) and no swap fires per tick.
 if (-not $env:OLLAMA_MAX_LOADED_MODELS) { _SetEnvPersistent "OLLAMA_MAX_LOADED_MODELS" "2" }
 # OLLAMA_REMOTE_MODEL points the legacy LLMRouter `remote_gpu`
 # provider at the analyst we just pinned. Without this, legacy code
