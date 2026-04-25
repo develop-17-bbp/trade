@@ -408,6 +408,54 @@ if (-not $env:OLLAMA_READ_TIMEOUT_S) { _SetEnvPersistent "OLLAMA_READ_TIMEOUT_S"
 OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel MAX_LOADED=$($env:OLLAMA_MAX_LOADED_MODELS) PARALLEL=$($env:OLLAMA_NUM_PARALLEL) CTX=$($env:OLLAMA_NUM_CTX)"
 OK "Env vars persisted via setx (open a new terminal to pick them up for diagnostics like /status)."
 
+# ── Paper-soak-loose auto-enable ───────────────────────────────────
+# Without the loose overlay, paper trades fire only on sniper-tier
+# setups (>=2% expected move, >=4 strategies agreeing). On ranging
+# days that means zero shadow rows for 24h+ and operators see "still
+# no trades" -- which is exactly what just happened on this rig.
+# The overlay loosens thresholds in PAPER MODE ONLY (real-capital
+# gate is unaffected; the helper refuses to write when
+# ACT_REAL_CAPITAL_ENABLED=1). Auto-enable keeps soak visibility
+# high. Operators who want strict paper gates can either:
+#   - set ACT_DISABLE_PAPER_SOAK_LOOSE=1 before launch, OR
+#   - run `python -m src.skills.cli run paper-soak-loose enable=false`
+# after launch.
+$soakOverlay = Join-Path $dir "data\paper_soak_loose.json"
+if ($env:ACT_REAL_CAPITAL_ENABLED -eq "1") {
+    WARN "ACT_REAL_CAPITAL_ENABLED=1 -- skipping paper-soak-loose auto-enable (real money mode)."
+} elseif ($env:ACT_DISABLE_PAPER_SOAK_LOOSE -eq "1") {
+    WARN "ACT_DISABLE_PAPER_SOAK_LOOSE=1 -- skipping paper-soak-loose auto-enable (operator opt-out)."
+} elseif (Test-Path $soakOverlay) {
+    OK "paper-soak-loose overlay already present at data/paper_soak_loose.json (keeping operator's settings)."
+} else {
+    $overlayObj = [ordered]@{
+        enabled_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffK")
+        reason = "START_ALL auto-enable (override with ACT_DISABLE_PAPER_SOAK_LOOSE=1)"
+        sniper = [ordered]@{
+            min_score = 4
+            min_expected_move_pct = 2.0
+            min_confluence = 3
+        }
+        conviction = [ordered]@{
+            min_normal_strategies_agreeing = 2
+            bypass_macro_crisis = $true
+        }
+        cost_gate = [ordered]@{
+            min_margin_pct = 0.3
+        }
+        requires_paper_mode = $true
+    }
+    try {
+        if (-not (Test-Path (Split-Path $soakOverlay -Parent))) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $soakOverlay -Parent) | Out-Null
+        }
+        $overlayObj | ConvertTo-Json -Depth 5 | Set-Content -Path $soakOverlay -Encoding UTF8
+        OK "paper-soak-loose ENABLED (sniper.min_score=4, min_move=2%, confluence=3)."
+    } catch {
+        WARN "Failed to write paper-soak-loose overlay: $($_.Exception.Message). Run manually: python -m src.skills.cli run paper-soak-loose enable=true"
+    }
+}
+
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "  LAUNCHING 7 PARALLEL PROCESSES ($tier)" -ForegroundColor Cyan
