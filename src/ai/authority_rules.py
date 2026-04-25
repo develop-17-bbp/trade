@@ -64,6 +64,53 @@ AUTHORITY_MAX_HOLD_HOURS: Dict[str, float] = {
 DEFAULT_MAX_HOLD_HOURS: float = 48.0
 
 
+# ═══════════════════════════════════════════════════════════════
+# Regime tag normalization
+# ═══════════════════════════════════════════════════════════════
+#
+# Different producers emit different vocabularies for what's
+# semantically the same regime:
+#   * HMM agent (regime_intelligence_agent.py) emits lowercase
+#     "bull"/"bear"/"sideways"/"crisis"
+#   * LLM scanner emits any of the 9 tags from prompt_constraints.ALLOWED_REGIMES
+#     ("TRENDING"/"RANGING"/"VOLATILE"/"CHOPPY"/"BULL"/"BEAR"/"SIDEWAYS"/"CRISIS"/"UNKNOWN")
+#   * Quant indicators emit "CHOP"/"LOW_VOL"/"HIGH_VOL"
+#
+# Without normalization, an HMM "sideways" reading was being checked
+# against ['CHOP', 'LOW_VOL', 'RANGING'] in
+# STRATEGY_REGIME_MEAN_REVERSION.allowed_regimes, failing the
+# membership test, and silently blocking every mean-reversion entry
+# during a range-bound market -- exactly the silent filter the
+# 2026-04-25 diagnosis flagged.
+_REGIME_ALIASES = {
+    "RANGING":   "SIDEWAYS",
+    "CHOP":      "SIDEWAYS",
+    "CHOPPY":    "SIDEWAYS",
+    "LOW_VOL":   "SIDEWAYS",
+    "BULL":      "BULL",
+    "TRENDING":  "TRENDING",
+    "BEAR":      "BEAR",
+    "VOLATILE":  "VOLATILE",
+    "HIGH_VOL":  "VOLATILE",
+    "CRISIS":    "CRISIS",
+    "SIDEWAYS":  "SIDEWAYS",
+    "UNKNOWN":   "UNKNOWN",
+    "":          "UNKNOWN",
+}
+
+
+def _normalize_regime(tag: str) -> str:
+    """Canonicalize a regime tag from any producer to one of the
+    bucket labels: SIDEWAYS / TRENDING / BULL / BEAR / VOLATILE /
+    CRISIS / UNKNOWN. Unknown input passes through upper-cased so
+    rules that compare on raw strings still see something.
+    """
+    if tag is None:
+        return "UNKNOWN"
+    upper = str(tag).strip().upper()
+    return _REGIME_ALIASES.get(upper, upper or "UNKNOWN")
+
+
 def get_max_hold_hours(asset: str) -> float:
     """Return the authority-mandated max hold in hours for `asset`.
 
@@ -101,9 +148,16 @@ STRATEGY_THREE_CANDLE = {
 
 STRATEGY_REGIME_MEAN_REVERSION = {
     'name': 'regime_gated_mean_reversion',
-    'description': 'Mean reversion ONLY in CHOP or LOW_VOL regime — non-negotiable',
+    'description': 'Mean reversion ONLY in non-directional regimes — non-negotiable',
     'indicators': ['RSI_14', 'BBANDS_20', 'MA_20'],
-    'allowed_regimes': ['CHOP', 'LOW_VOL', 'RANGING'],
+    # SIDEWAYS, CHOPPY, and CHOP/RANGING are aliases used by different
+    # producers: HMM agent emits "sideways", LLM scanner emits any of
+    # "RANGING/SIDEWAYS/CHOPPY", quant indicators emit "CHOP/LOW_VOL".
+    # Allow all of them so the authority rule doesn't silently filter
+    # mean-reversion entries during a range-bound regime just because
+    # the upstream tag was a synonym. (BULL/BEAR/TRENDING/CRISIS still
+    # block — those are directional and dangerous for mean-reversion.)
+    'allowed_regimes': ['CHOP', 'LOW_VOL', 'RANGING', 'SIDEWAYS', 'CHOPPY'],
     'long_entry': 'RSI(14) < 25 AND price at lower Bollinger Band on 15m',
     'short_entry': 'RSI(14) > 75 AND price at upper Bollinger Band on 15m',
     'target': 'Return to 20-period MA (exit at mean, NOT opposite band)',
@@ -287,7 +341,8 @@ def validate_authority_entry(
     # ── Rule 8: Mean-reversion strategy used outside allowed regime ──
     strategy = str(context.get('strategy', '')).lower()
     if 'mean_reversion' in strategy or 'reversion' in strategy:
-        regime = str(quant_state.get('regime', context.get('regime', ''))).upper()
+        raw_regime = str(quant_state.get('regime', context.get('regime', '')))
+        regime = _normalize_regime(raw_regime)
         allowed_regimes = STRATEGY_REGIME_MEAN_REVERSION['allowed_regimes']
         if regime and regime not in [r.upper() for r in allowed_regimes]:
             violations.append(

@@ -175,3 +175,60 @@ def test_btc_has_all_three_permissions():
 def test_eth_missing_swing_permission():
     assert "swing" not in ASSET_TRADE_PERMISSIONS["ETH"]
     assert "intraday" in ASSET_TRADE_PERMISSIONS["ETH"]
+
+
+# ── Regime alias normalization (Rule 8) ────────────────────────────────
+#
+# The HMM agent emits lowercase "sideways" while the LLM scanner
+# emits "RANGING/SIDEWAYS/CHOPPY" and quant indicators emit
+# "CHOP/LOW_VOL". Before normalization these all failed the
+# membership test in STRATEGY_REGIME_MEAN_REVERSION.allowed_regimes
+# and silently blocked every mean-reversion entry during the actual
+# regime they're designed for. These tests pin the alias map.
+
+
+@pytest.mark.parametrize("tag", [
+    "sideways", "SIDEWAYS", "RANGING", "ranging",
+    "CHOP", "chop", "CHOPPY", "LOW_VOL", "low_vol",
+])
+def test_mean_reversion_allowed_in_sideways_aliases(tag):
+    ok, viols = validate_authority_entry(
+        quant_state={"regime": tag},
+        context={
+            "raw_signal": 1, "asset": "BTC",
+            "trade_type": "intraday", "strategy": "mean_reversion",
+        },
+    )
+    assert not any("REVERSION_REGIME" in v for v in viols), (
+        f"regime={tag!r} should allow mean-reversion but got: {viols}"
+    )
+
+
+@pytest.mark.parametrize("tag", ["bull", "BULL", "bear", "BEAR", "TRENDING", "CRISIS"])
+def test_mean_reversion_blocked_in_directional_regimes(tag):
+    ok, viols = validate_authority_entry(
+        quant_state={"regime": tag},
+        context={
+            "raw_signal": 1, "asset": "BTC",
+            "trade_type": "intraday", "strategy": "mean_reversion",
+        },
+    )
+    assert any("REVERSION_REGIME" in v for v in viols), (
+        f"regime={tag!r} should block mean-reversion but did not: {viols}"
+    )
+
+
+def test_normalize_regime_helper():
+    from src.ai.authority_rules import _normalize_regime
+    # Sideways family collapses to SIDEWAYS
+    for tag in ("sideways", "RANGING", "chop", "CHOPPY", "LOW_VOL"):
+        assert _normalize_regime(tag) == "SIDEWAYS", tag
+    # Directional regimes preserved
+    assert _normalize_regime("bull") == "BULL"
+    assert _normalize_regime("BEAR") == "BEAR"
+    assert _normalize_regime("trending") == "TRENDING"
+    # Volatile family collapses
+    assert _normalize_regime("HIGH_VOL") == "VOLATILE"
+    # Empty / None safe
+    assert _normalize_regime("") == "UNKNOWN"
+    assert _normalize_regime(None) == "UNKNOWN"
