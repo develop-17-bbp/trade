@@ -95,7 +95,7 @@ class AgenticStrategist:
     Features: Structured Output, Fact-Checking, and Bayesian Confidence Calibration.
     """
 
-    def __init__(self, provider: str = "local", model: str = "deepseek-r1:7b", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
+    def __init__(self, provider: str = "local", model: str = "", memory_path: str = "memory/experience_vault", use_local_on_failure: bool = False):
         self.use_local_on_failure = use_local_on_failure
         self.provider = provider
         self.model_name = model
@@ -822,26 +822,40 @@ STRATEGY RULES:
         """Shared logic to execute prompt against local Ollama / LM Studio."""
         import requests
 
-        # Resolve model in priority order:
+        # Resolution chain (first non-empty AND non-forbidden wins):
         #   1. router's configured 'local' provider (LLMConfig.model)
-        #   2. self.model_name (constructor arg)
-        #   3. OLLAMA_REMOTE_MODEL env (set by START_ALL to the pinned analyst)
-        #   4. ACT_ANALYST_MODEL env (the unified-brain analyst)
-        #   5. final safe default
-        # Without env-aware fallback, this legacy path defaulted to
-        # deepseek-r1:7b at Ollama's 32K ctx, evicting the pinned qwen
-        # pair on every call.
-        model_id = (
-            os.environ.get("OLLAMA_REMOTE_MODEL", "").strip()
-            or os.environ.get("ACT_ANALYST_MODEL", "").strip()
-            or "deepseek-r1:7b"
-        )
+        #   2. OLLAMA_REMOTE_MODEL env (set by START_ALL to pinned analyst)
+        #   3. ACT_ANALYST_MODEL env (the unified-brain analyst)
+        #   4. ACT_SCANNER_MODEL env (last-resort scanner)
+        #   5. self.model_name (constructor arg)
+        # ACT_FORBID_MODELS removes blocked candidates from the chain
+        # so e.g. switching to moe_agentic + forbidding deepseek-r1
+        # truly stops every legacy path from re-loading deepseek.
+        from src.ai.model_guard import resolve_safe_model, is_forbidden
+        router_cfg_model = ""
         if self._llm_router and 'local' in self._llm_router.providers:
-            cfg_model = (self._llm_router.providers['local'].config.model or "").strip()
-            if cfg_model:
-                model_id = cfg_model
-        elif self.model_name:
-            model_id = self.model_name
+            router_cfg_model = (self._llm_router.providers['local'].config.model or "").strip()
+        model_id = resolve_safe_model([
+            router_cfg_model,
+            os.environ.get("OLLAMA_REMOTE_MODEL", "").strip(),
+            os.environ.get("ACT_ANALYST_MODEL", "").strip(),
+            os.environ.get("ACT_SCANNER_MODEL", "").strip(),
+            self.model_name,
+        ])
+        if not model_id:
+            self.logger.error(
+                "[LOCAL-LLM] no usable model -- set ACT_ANALYST_MODEL "
+                "or OLLAMA_REMOTE_MODEL, and ensure ACT_FORBID_MODELS=%r "
+                "doesn't block all candidates",
+                os.environ.get("ACT_FORBID_MODELS", ""),
+            )
+            raise ConnectionError("agentic_strategist: no resolvable LLM model")
+        if is_forbidden(model_id):
+            self.logger.error(
+                "[LOCAL-LLM] refusing forbidden model %r (ACT_FORBID_MODELS=%r)",
+                model_id, os.environ.get("ACT_FORBID_MODELS", ""),
+            )
+            raise ConnectionError(f"agentic_strategist: model_forbidden:{model_id}")
         self.logger.info(f"[LOCAL-LLM] Calling Local Reasoning Engine: {model_id}")
 
         configured_base = (

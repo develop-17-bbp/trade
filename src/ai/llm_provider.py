@@ -205,16 +205,36 @@ class OllamaProvider(BaseLLMProvider):
         self._throttle()
         import requests
         base = self.config.base_url or 'http://127.0.0.1:11434'
-        # Final fallback: prefer the pinned analyst (OLLAMA_REMOTE_MODEL,
-        # which START_ALL sets to the active profile's analyst model)
-        # over the deepseek-r1:7b hardcoded default. Without this,
-        # legacy paths cause Ollama to load deepseek-r1:7b on top of
-        # the pinned qwen pair and evict them.
-        model_id = (
-            self.config.model
-            or os.environ.get('OLLAMA_REMOTE_MODEL', '').strip()
-            or 'deepseek-r1:7b'
-        )
+        # Resolution chain: explicit config -> pinned analyst env ->
+        # scanner env -> empty (errors out below). The previous hardcoded
+        # `'deepseek-r1:7b'` fallback caused Ollama to load deepseek
+        # on top of the pinned profile pair and evict them. Now the
+        # chain is purely env-driven; if every link is empty we error
+        # rather than silently picking a model the operator has
+        # retired. ACT_FORBID_MODELS additionally rejects any link
+        # the operator has banned.
+        from src.ai.model_guard import resolve_safe_model, is_forbidden
+        model_id = resolve_safe_model([
+            self.config.model,
+            os.environ.get('OLLAMA_REMOTE_MODEL', '').strip(),
+            os.environ.get('ACT_ANALYST_MODEL', '').strip(),
+            os.environ.get('ACT_SCANNER_MODEL', '').strip(),
+        ])
+        if not model_id:
+            logger.error(
+                "OllamaProvider: no usable model -- set OLLAMA_REMOTE_MODEL "
+                "(or ACT_ANALYST_MODEL / ACT_SCANNER_MODEL) and ensure it's "
+                "not blocked by ACT_FORBID_MODELS=%r",
+                os.environ.get('ACT_FORBID_MODELS', ''),
+            )
+            return {'error': 'no_model_resolved'}
+        if is_forbidden(model_id):
+            logger.error(
+                "OllamaProvider: refusing to call forbidden model %r "
+                "(ACT_FORBID_MODELS=%r)",
+                model_id, os.environ.get('ACT_FORBID_MODELS', ''),
+            )
+            return {'error': f'model_forbidden:{model_id}'}
 
         # Connect timeout 10s + read timeout 180s — covers 32B model first-
         # load (which takes 20-60s from cold disk) and long inference on
@@ -504,29 +524,45 @@ class LLMRouter:
         ]
 
         # ── Remote Ollama GPU is the PRIMARY and ONLY LLM ──
+        # Both remote and local registrations leave `model=""` so the
+        # OllamaProvider's per-call resolver picks from env at request
+        # time. This avoids baking `deepseek-r1:7b` into the provider
+        # config when the operator has switched profiles to qwen --
+        # which used to trigger eviction storms because the registered
+        # model name diverged from the pinned analyst.
         remote_ollama_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
         if remote_ollama_url:
-            # Treat empty-string env as absent so operators can clear
-            # a stale override (e.g. `setx OLLAMA_REMOTE_MODEL ""`)
-            # and get the sane default rather than an empty-model
-            # registration that silently fails downstream.
-            _remote_model = os.environ.get('OLLAMA_REMOTE_MODEL', '').strip() or 'deepseek-r1:7b'
+            from src.ai.model_guard import resolve_safe_model
+            _remote_model = resolve_safe_model([
+                os.environ.get('OLLAMA_REMOTE_MODEL', '').strip(),
+                os.environ.get('ACT_ANALYST_MODEL', '').strip(),
+                os.environ.get('ACT_SCANNER_MODEL', '').strip(),
+            ]) or ''
             self.add_provider('remote_gpu', LLMConfig(
                 provider='ollama',
                 model=_remote_model,
                 base_url=remote_ollama_url,
                 timeout=120,
             ))
-            logger.info(f"Registered remote Ollama GPU: {remote_ollama_url}")
+            logger.info(
+                f"Registered remote Ollama GPU: {remote_ollama_url} "
+                f"model={_remote_model or '<env-resolved-per-call>'}"
+            )
         else:
             # Fallback: try local Ollama if no remote URL
             local_base_url = (
                 os.environ.get('LLM_BASE_URL', '').strip()
                 or os.environ.get('OLLAMA_BASE_URL', '').strip()
             )
+            from src.ai.model_guard import resolve_safe_model
+            _local_model = resolve_safe_model([
+                os.environ.get('OLLAMA_REMOTE_MODEL', '').strip(),
+                os.environ.get('ACT_ANALYST_MODEL', '').strip(),
+                os.environ.get('ACT_SCANNER_MODEL', '').strip(),
+            ]) or ''
             self.add_provider('local', LLMConfig(
                 provider='ollama',
-                model='deepseek-r1:7b',
+                model=_local_model,
                 base_url=local_base_url,
             ))
 

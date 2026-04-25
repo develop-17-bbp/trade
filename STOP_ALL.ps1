@@ -58,6 +58,38 @@ try {
     Write-Host "  Ollama not reachable for unload (fine if Ollama service is down)." -ForegroundColor Gray
 }
 
+# Forbidden-model purge. If ACT_PURGE_FORBIDDEN_MODELS=1 AND
+# ACT_FORBID_MODELS is set, also `ollama rm` each forbidden model so
+# it's truly removed from disk -- not just unloaded from VRAM. This
+# completes the "totally remove deepseek-r1" workflow: set
+#   ACT_FORBID_MODELS=deepseek-r1:7b,deepseek-r1:32b
+#   ACT_PURGE_FORBIDDEN_MODELS=1
+# then STOP_ALL once. Default off so a normal stop preserves the cache.
+$forbidRaw = $env:ACT_FORBID_MODELS
+if ($forbidRaw -and $env:ACT_PURGE_FORBIDDEN_MODELS -eq '1') {
+    $forbidList = $forbidRaw.ToLower().Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    Write-Host "  Purging forbidden Ollama models from disk..." -ForegroundColor Yellow
+    try {
+        $listed = & ollama list 2>$null
+        foreach ($line in $listed) {
+            $parts = $line.ToString().Trim() -split '\s+'
+            if ($parts.Count -lt 1) { continue }
+            $name = $parts[0].ToLower()
+            if (-not $name -or $name -eq 'name') { continue }
+            $head = $name.Split(":")[0]
+            foreach ($entry in $forbidList) {
+                if ($entry -eq $name -or $entry -eq $head -or $name.Contains($entry)) {
+                    Write-Host "    Removing: $name" -ForegroundColor Yellow
+                    & ollama rm $name 2>$null | Out-Null
+                    break
+                }
+            }
+        }
+    } catch {
+        Write-Host "    Purge skipped: $($_.Exception.Message)" -ForegroundColor Gray
+    }
+}
+
 # Stop the observability stack (Grafana + Prometheus + Tempo + Redis + OTel).
 # Use `down` (not `down -v`) so Prometheus TSDB + Grafana dashboards + Redis
 # AOF survive the restart.

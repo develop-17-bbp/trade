@@ -131,6 +131,39 @@ if ($env:ACT_ANALYST_MODEL) { $analystModel = $env:ACT_ANALYST_MODEL }
 
 $ollamaModels = @($analystModel, $scannerModel) | Select-Object -Unique
 
+# ── Forbidden-model filter (ACT_FORBID_MODELS) ──────────────────
+# When the operator has retired a model family, drop it from the
+# pre-load list so START_ALL doesn't keep loading something
+# downstream code is now configured to refuse. Same env var the
+# python model_guard reads -- single source of truth.
+$forbidRaw = $env:ACT_FORBID_MODELS
+if ($forbidRaw) {
+    $forbidList = $forbidRaw.ToLower().Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    $filtered = @()
+    foreach ($m in $ollamaModels) {
+        $ml = $m.ToLower()
+        $head = $ml.Split(":")[0]
+        $blocked = $false
+        foreach ($entry in $forbidList) {
+            if ($entry -eq $ml -or $entry -eq $head -or $ml.Contains($entry)) {
+                $blocked = $true; break
+            }
+        }
+        if ($blocked) {
+            Write-Host "[INFO] ACT_FORBID_MODELS dropped $m from pre-load" -ForegroundColor Yellow
+        } else {
+            $filtered += $m
+        }
+    }
+    if ($filtered.Count -eq 0) {
+        Write-Host "[ERROR] ACT_FORBID_MODELS blocked every profile model -- check your env" -ForegroundColor Red
+        Start-Sleep 3; exit 1
+    }
+    $ollamaModels = $filtered
+    if ($filtered -notcontains $analystModel) { $analystModel = $filtered[0] }
+    if ($filtered -notcontains $scannerModel) { $scannerModel = $filtered[-1] }
+}
+
 # On very small GPUs (<8 GB), the 32B analyst won't fit even at Q4_K_M.
 # Downshift the whole profile to 7B-only mode with a warning.
 if ($gpuVRAM -lt 8 -and $gpuVRAM -gt 0) {
