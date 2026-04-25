@@ -98,12 +98,38 @@ def main():
         logger.info("=" * 60)
         logger.info("Starting genetic evolution cycle...")
         run_evolution_cycle(args.population_size)
-        logger.info(f"Cycle complete. Next in {args.interval}h.")
 
         if args.once:
             break
 
-        time.sleep(interval_sec)
+        # C9 brain-to-body cadence. Refresh the controller from live
+        # brain_memory + warm_store, then ask for the suggested
+        # genetic cadence. Bound it to [interval/4, interval*2] so a
+        # stress signal can speed up cycles (down to ~30 min on a 2h
+        # baseline) without diverging wildly from the operator's CLI
+        # setting. Falls back to interval_sec on any error.
+        sleep_s = interval_sec
+        try:
+            from src.learning.brain_to_body import (
+                get_controller, current_genetic_cadence_s,
+            )
+            get_controller().refresh()
+            dynamic = current_genetic_cadence_s(default=float(interval_sec))
+            lo = max(900.0, interval_sec / 4.0)
+            hi = float(interval_sec * 2)
+            sleep_s = int(max(lo, min(hi, dynamic)))
+        except Exception:
+            sleep_s = interval_sec
+
+        next_h = sleep_s / 3600.0
+        if abs(sleep_s - interval_sec) > 60:
+            logger.info(
+                f"Cycle complete. Next in {next_h:.2f}h "
+                f"(brain-to-body adjusted from {args.interval}h)."
+            )
+        else:
+            logger.info(f"Cycle complete. Next in {args.interval}h.")
+        time.sleep(sleep_s)
 
 
 if __name__ == '__main__':

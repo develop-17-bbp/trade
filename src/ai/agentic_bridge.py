@@ -223,6 +223,25 @@ def compile_agentic_plan(
         if brain_block:
             quant_data = (quant_data + "\n\n" + brain_block) if quant_data else brain_block
 
+        # C9 — body-controls priority agents. The brain-to-body controller
+        # picks 1-5 agent tools from the scanner's top_signals (e.g.
+        # "breakout" -> ask_trend_momentum). Surface that priority list so
+        # the analyst's ReAct loop calls those tools first instead of
+        # walking the registry in declaration order. Never blocks tool
+        # access -- it's a hint, not a whitelist.
+        try:
+            from src.learning.brain_to_body import current_priority_agents
+            priority = current_priority_agents()
+            if priority:
+                pa_block = (
+                    "\n\n## PRIORITY TOOLS THIS TICK\n"
+                    "Based on the scanner's top signals, call these tools "
+                    "first when relevant: " + ", ".join(priority[:5]) + "."
+                )
+                quant_data = (quant_data + pa_block) if quant_data else pa_block.lstrip()
+        except Exception as _e:  # pragma: no cover - best-effort hint only
+            logger.debug("agentic_bridge priority injection skipped: %s", _e)
+
         registry = registry or build_default_registry()
         context = context or AgenticContext(asset=asset)
         llm_call = llm_call or build_llm_call()
