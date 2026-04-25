@@ -318,12 +318,25 @@ def validate_authority_entry(
         violations.append("WICK_ENTRY: entry based on wick — wait for close")
 
     # ── Rule 4: Never enter on a small-body candle ──
+    # Authority intent: avoid weak/indecisive candles.
+    # Default ratio is 1.0 (current literal reading: body must exceed rolling avg).
+    # Operator can soften via ACT_SMALL_BODY_RATIO env (e.g., 0.5 = "body must be at
+    # least half the rolling avg") if regime / measurement shows the literal threshold
+    # is over-strict. Default behavior unchanged — no implicit relaxation.
+    import os as _os_for_smallbody
+    try:
+        _sb_ratio = float(_os_for_smallbody.getenv('ACT_SMALL_BODY_RATIO', '1.0'))
+        if _sb_ratio <= 0 or _sb_ratio > 5:
+            _sb_ratio = 1.0  # sanity-clamp; bad input falls back to strict
+    except Exception:
+        _sb_ratio = 1.0
     body_pct = context.get('candle_body_pct')
     avg_body_pct = context.get('avg_body_pct_10_50')
     if body_pct is not None and avg_body_pct is not None and avg_body_pct > 0:
-        if body_pct < avg_body_pct:
+        if body_pct < (_sb_ratio * avg_body_pct):
             violations.append(
-                f"SMALL_BODY: candle body {body_pct:.4f} below avg {avg_body_pct:.4f}"
+                f"SMALL_BODY: candle body {body_pct:.4f} below "
+                f"{_sb_ratio:.2f}*avg {avg_body_pct:.4f}"
             )
 
     # ── Rule 5: Never widen a stop ──
