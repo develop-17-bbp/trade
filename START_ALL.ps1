@@ -174,7 +174,7 @@ Write-Host ""
 function OK($m) { Write-Host "[OK] " -ForegroundColor Green -NoNewline; Write-Host $m }
 function WARN($m) { Write-Host "[WARN] " -ForegroundColor Yellow -NoNewline; Write-Host $m }
 function CHECK($m) { Write-Host "[CHECK] " -ForegroundColor Yellow -NoNewline; Write-Host $m }
-function STEP($n,$m) { Write-Host "[$n/7] " -ForegroundColor Yellow -NoNewline; Write-Host $m -ForegroundColor Cyan }
+function STEP($n,$m) { Write-Host "[$n/8] " -ForegroundColor Yellow -NoNewline; Write-Host $m -ForegroundColor Cyan }
 
 # ── Verify Ollama ──
 CHECK "Verifying Ollama..."
@@ -528,11 +528,26 @@ if ($namedTunnelService -and $namedTunnelService.Status -eq 'Running') {
     OK "Quick tunnel PID=$($p7.Id)"
 }
 
+# 8: MCP server (Normal) — re-launches start_mcp.ps1 so STOP_ALL kills it
+# cleanly and START_ALL brings it back. This closes the "restart_bot kills
+# its own server" gap: previously STOP_ALL killed the MCP python process
+# but START_ALL only relaunched the 7 trading processes, leaving MCP dead
+# until the operator manually re-ran start_mcp.ps1.
+STEP 8 "MCP Server (port 9100) [Normal]"
+$mcpScript = Join-Path $PSScriptRoot "scripts\start_mcp.ps1"
+if (Test-Path $mcpScript) {
+    $p8 = Start-Process cmd.exe -ArgumentList "/k","title ACT - MCP Server && powershell -ExecutionPolicy Bypass -File `"$mcpScript`"" -PassThru
+    Start-Sleep 2
+    OK "MCP Server PID=$($p8.Id) (uvicorn on http://127.0.0.1:9100)"
+} else {
+    WARN "scripts\start_mcp.ps1 not found - MCP server NOT started. Claude Code MCP will be unreachable."
+}
+
 # ── Summary ──
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "   ALL 7 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
+Write-Host "   ALL 8 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
 Write-Host ""
 Write-Host "   #  Process        Priority      Interval  GPU Use" -ForegroundColor White
 Write-Host "   1  API Server     AboveNormal   always    none" -ForegroundColor White
@@ -542,6 +557,7 @@ Write-Host "   4  Auto Loop      Normal        ${autoInterval}h      health chec
 Write-Host "   5  Genetic Loop   BelowNormal   ${geneticInterval}h        CPU backtest" -ForegroundColor White
 Write-Host "   6  Frontend       BelowNormal   always    none" -ForegroundColor White
 Write-Host "   7  Tunnel         Idle          always    none" -ForegroundColor White
+Write-Host "   8  MCP Server     Normal        always    none" -ForegroundColor White
 Write-Host ""
 Write-Host "   VRAM: Ollama ~$([math]::Min($gpuVRAM-2, 12))GB | LoRA ~$([math]::Max(2, $gpuVRAM-14))GB | System ~2GB" -ForegroundColor Yellow
 Write-Host "   Dashboard:  http://localhost:5173" -ForegroundColor Green
