@@ -289,29 +289,44 @@ DEFAULT_STRIP_THINK_TAGS_FROM_SCANNER = True    # compact scanner output
 
 
 # ── Shared performance target (injected into both brains) ─────────────
-# Operator goal: simple (not compounded) 1%/day on seed capital =
-# 7%/week = 30%/month = 365%/year. Realistic Robinhood ceiling is ~37%
-# annual simple due to the 1.69% round-trip spread; the target is
-# above that structural cap, so the goal is implicitly "squeeze the
-# ceiling + hunt outlier 1%+ days" rather than "average 1%/day every
-# day." Both brains get this context so they optimize coherently.
-PERFORMANCE_TARGET = (
-    "## PERFORMANCE TARGET\n"
-    "Operator goal: simple +1%/day → +7%/week → +30%/month → "
-    "+365%/year on seed capital (on Robinhood spot BTC + ETH).\n"
-    "Reality: Robinhood's 1.69% round-trip spread caps sustained "
-    "average around ~0.10-0.15%/day (~37% annual). The target is "
-    "above that, so your job is to:\n"
-    "  1. SKIP confidently on low-conviction days (most days).\n"
-    "  2. HUNT outlier 1%+ days with sniper-tier sizing when evidence "
-    "is strong (multi-TF alignment, macro bias, clean setup, "
-    "liquidity, regime confirmation, no authority violations).\n"
-    "  3. NEVER force a trade to hit a daily number — oversizing or "
-    "stop-tightening to reach the target destroys the ceiling faster "
-    "than it helps.\n"
-    "  4. The dashboard tracks today_pct, rolling_7d_avg, best_day, "
-    "gap_to_1pct_day — outlier wins are celebrated alongside average."
-)
+# Operator directive (non-negotiable): 1%/day on ANY venue, ANY spread.
+# Cost awareness is a tool the brain uses to filter unprofitable
+# setups — it is NOT a ceiling that lowers ambition. Per memory rule
+# `feedback_target_is_non_negotiable`, never frame the spread as a
+# structural cap and never inject "honest caveats" that would lower
+# the brain's hunt threshold. The brain's job is to FIND setups that
+# clear whatever friction exists and hit the target.
+def _format_performance_target() -> str:
+    try:
+        from src.trading.cost_gate import _resolve_venue_costs  # noqa: PLC0415
+        spread_pct = float(_resolve_venue_costs("robinhood").get("spread_pct", 1.69))
+    except Exception:
+        spread_pct = 1.69
+    min_move_pct = max(2.0, spread_pct * 1.5)
+    return (
+        "## PERFORMANCE TARGET\n"
+        "Operator goal (non-negotiable): simple +1%/day -> +7%/week -> "
+        "+30%/month -> +365%/year on seed capital. Hit it on ANY venue, "
+        "ANY spread.\n"
+        f"Cost context: current venue round-trip is {spread_pct:.2f}% "
+        f"(operator-tunable via ACT_ROBINHOOD_SPREAD_PCT). Use this as a "
+        f"hard floor for setup quality -- expected move must exceed "
+        f"~{min_move_pct:.2f}% so the trade can clear friction with edge "
+        "left over. This is a filter, not a ceiling.\n"
+        "Your job:\n"
+        "  1. HUNT every tick for setups whose expected move clears "
+        "friction with conviction.\n"
+        "  2. SKIP confidently when the evidence is mixed -- a missed "
+        "trade costs nothing; a forced trade costs spread + loss.\n"
+        "  3. SIZE for the conviction, not for the daily number. "
+        "Outlier 1%+ days come from clean sniper-tier setups, not from "
+        "stop-tightening.\n"
+        "  4. The dashboard tracks today_pct, rolling_7d_avg, best_day, "
+        "gap_to_1pct_day -- outlier wins are celebrated alongside average."
+    )
+
+
+PERFORMANCE_TARGET = _format_performance_target()
 
 
 SCANNER_SYSTEM = (

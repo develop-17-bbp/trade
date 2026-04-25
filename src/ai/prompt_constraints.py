@@ -61,7 +61,22 @@ ALLOWED_ACTIONS = ['LONG', 'SHORT', 'FLAT', 'HOLD', 'REDUCE', 'EXIT']
 # System Prompts (immutable safety layer)
 # ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT_BASE = """You are a QUANTITATIVE TRADING ANALYST embedded in an automated trading system.
+def _runtime_spread_pct() -> float:
+    """Return the live Robinhood round-trip spread in percent.
+
+    Reads the cost_gate venue preset, which honors the
+    ACT_ROBINHOOD_SPREAD_PCT env override. Falls back to the
+    1.69% historical default if cost_gate is unavailable.
+    """
+    try:
+        from src.trading.cost_gate import _resolve_venue_costs
+        preset = _resolve_venue_costs("robinhood")
+        return float(preset.get("spread_pct", 1.69))
+    except Exception:
+        return 1.69
+
+
+_SYSTEM_PROMPT_BASE_TEMPLATE = """You are a QUANTITATIVE TRADING ANALYST embedded in an automated trading system.
 
 ## ABSOLUTE RULES (NEVER VIOLATE):
 
@@ -143,17 +158,42 @@ SYSTEM_PROMPT_BASE = """You are a QUANTITATIVE TRADING ANALYST embedded in an au
 
 9. **ROBINHOOD EXCHANGE RULES (INVIOLABLE when exchange=robinhood)**:
 
-   This exchange has 1.69% ROUND-TRIP SPREAD. Every trade starts -1.69% underwater.
+   This exchange has {spread_pct:.2f}% ROUND-TRIP SPREAD. Every trade starts
+   -{spread_pct:.2f}% underwater. Cost-gate downstream validates the math —
+   your job is to find setups whose expected move clears it.
 
-   - LONGS ONLY. Never recommend SHORT/PUT direction. SHORTs lose 70%+ after spread.
-   - Minimum confidence 0.75 (spread cost demands high conviction only).
-   - Only recommend trades where expected move > 7% (covers 1.69% spread + meaningful profit).
-   - Risk score must be <= 5 (spread amplifies every loss by 1.69%).
-   - Trade quality must be >= 6 (no marginal setups — they're guaranteed losers).
-   - If unsure, proceed=false. Missing a trade costs $0. A losing trade costs 1.69% + the loss.
-   - Small moves (<3%) are IMPOSSIBLE to profit from. Do NOT recommend them.
-   - Only multi-day trend breakouts and strong momentum trades are viable.
+   - LONGS ONLY on spot. Robinhood retail does not allow SHORTs on BTC/ETH
+     spot. SHORT signals must be skipped or routed to a perp venue (when wired).
+   - Minimum expected move {min_move_pct:.2f}% (1.5x spread + 50% buffer). Setups
+     under that are spread-killed before any edge can show.
+   - Minimum confidence 0.75. High conviction only — no maybe-trades.
+   - Trade quality must be >= 6 (no marginal setups).
+   - Risk score must be <= 5.
+   - If unsure, proceed=false. Missing a trade costs $0; a losing trade
+     costs the spread + the loss.
 """
+
+
+def _render_system_prompt_base() -> str:
+    """Render SYSTEM_PROMPT_BASE with runtime spread values.
+
+    Computed thresholds:
+      * spread_pct        — live cost_gate.robinhood preset
+      * min_move_pct      — 1.5 x spread (covers spread + 50% buffer)
+    """
+    spread_pct = _runtime_spread_pct()
+    min_move_pct = max(2.0, spread_pct * 1.5)
+    # Escape `{` `}` outside the substitution markers.
+    return _SYSTEM_PROMPT_BASE_TEMPLATE.format(
+        spread_pct=spread_pct,
+        min_move_pct=min_move_pct,
+    )
+
+
+# Back-compat: keep SYSTEM_PROMPT_BASE module-level for any external
+# importers, but render it lazily once on first access.
+SYSTEM_PROMPT_BASE = _render_system_prompt_base()
+
 
 TASK_PROMPTS = {
     'trade_analysis': """## TASK: Analyze current market state and recommend action.
@@ -260,8 +300,11 @@ class PromptConstraintEngine:
                 + "Cite every number as [METRIC=VALUE] from the VERIFIED QUANT DATA block."
             )
         else:
-            # Full: authority directives first, then base strategy/safety content.
-            prompt = AUTHORITY_SYSTEM_PROMPT + "\n\n" + SYSTEM_PROMPT_BASE
+            # Full: authority directives first, then base strategy/safety
+            # content. Re-render on every call so an operator
+            # `setx ACT_ROBINHOOD_SPREAD_PCT 1.0` propagates into the LLM
+            # prompt at the next tick — no module reload required.
+            prompt = AUTHORITY_SYSTEM_PROMPT + "\n\n" + _render_system_prompt_base()
 
         if self.custom_system_prompt:
             prompt += f"\n\n## ADDITIONAL INSTRUCTIONS:\n{self.custom_system_prompt}"
