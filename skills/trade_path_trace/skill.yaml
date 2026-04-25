@@ -1,0 +1,14 @@
+name: trade-path-trace
+description: >
+  X-ray for the bot's last N decisions. For each row in warm_store
+  (shadow or non-shadow), prints the scanner score, analyst verdict,
+  every gate's pass/fail outcome with values, and the executor's
+  final action. Use to understand WHY a candidate trade fired or
+  was rejected -- complements diagnose-noop (which audits the stack)
+  and show-brain-trace (which audits the LLM rationale).
+reversible: true
+requires_confirmation: false
+tags:
+  - ops
+  - read_only
+  - diagnostic
