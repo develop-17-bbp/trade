@@ -170,54 +170,130 @@ def _vram_estimate_gb(model: str) -> float:
     return _MODEL_VRAM_GB.get(str(model or "").lower(), 10.0)
 
 
+def _profile_uses_forbidden_models(profile: Dict[str, Any]) -> bool:
+    """True if ACT_FORBID_MODELS would block either of this profile's
+    pair. Used by auto-downgrade to skip a fallback the operator has
+    explicitly retired."""
+    try:
+        from src.ai.model_guard import is_forbidden  # noqa: PLC0415
+        for k in ("scanner_model", "analyst_model"):
+            m = profile.get(k, "")
+            if m and is_forbidden(m):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Pick the active profile: env > config > default. Unknown names
     fall back to the default so typos don't break the runtime.
 
     AUTO-DOWNGRADE: if the resolved profile needs more VRAM than the
-    detected GPU has + 2 GB headroom, automatically substitute
-    `dense_r1` (which fits 32 GB cards). This prevents silent Ollama
-    OOM → empty LLM responses → parse_failures → zero trades —
-    the failure mode operators kept hitting because their persisted
-    env var was stale. Operators on >40 GB hardware are unaffected
-    (no downgrade triggered).
+    detected GPU has + 2 GB headroom, automatically substitute a
+    smaller profile. The fallback chain is:
+        1. dense_r1   (deepseek-r1:7b + 32b ~26 GB)
+        2. moe_agentic (qwen2.5-coder:7b + qwen3-coder:30b ~24 GB)
+
+    Each candidate is skipped if ACT_FORBID_MODELS blocks either of
+    its models -- so an operator who has retired deepseek (`setx
+    ACT_FORBID_MODELS deepseek-r1:7b,deepseek-r1:32b`) auto-downgrades
+    qwen3_r1 -> moe_agentic instead of qwen3_r1 -> dense_r1. Without
+    that check the auto-downgrade was the very thing re-summoning the
+    forbidden family on every tick.
     """
     name = os.environ.get(PROFILE_ENV, "").strip()
+    source = "env(ACT_BRAIN_PROFILE)"
     if not name and isinstance(config, dict):
         cfg = (config.get("ai") or {}).get("dual_brain") or {}
         name = str(cfg.get("profile") or "").strip()
+        if name:
+            source = "config.yaml(ai.dual_brain.profile)"
     if not name or name not in BRAIN_PROFILES:
         if name and name not in BRAIN_PROFILES:
             logger.warning("unknown brain profile %r; falling back to %s",
                            name, DEFAULT_PROFILE)
         name = DEFAULT_PROFILE
+        source = "DEFAULT_PROFILE"
     profile = BRAIN_PROFILES[name]
+    _emit_profile_source_once(name, source, profile)
     _emit_vram_warning_once(name, profile)
 
-    # Auto-downgrade if VRAM doesn't fit and we're not already on
-    # dense_r1. Cap detection at 2 GB headroom so we don't downgrade
-    # on cards that are exactly tight (e.g. 24 GB analyst + 6 GB
-    # scanner = 30 GB on a 32 GB card — fits with 2 GB headroom).
-    fallback_safe = "dense_r1"
-    if name != fallback_safe and os.environ.get(
-        "ACT_DISABLE_VRAM_AUTODOWNGRADE", ""
-    ).strip() != "1":
-        cap = _detect_vram_gb()
-        if cap > 0:
-            scanner = profile.get("scanner_model", "")
-            analyst = profile.get("analyst_model", "")
-            needed = _vram_estimate_gb(scanner) + _vram_estimate_gb(analyst)
-            if needed > cap + 2:
-                logger.warning(
-                    "[BRAIN] AUTO-DOWNGRADE: profile %r needs ~%.1f GB but "
-                    "only %.1f GB available; switching to %r at runtime. "
-                    "Set ACT_DISABLE_VRAM_AUTODOWNGRADE=1 to override "
-                    "(not recommended unless you've manually verified VRAM).",
-                    name, needed, cap, fallback_safe,
-                )
-                return BRAIN_PROFILES[fallback_safe]
+    # Auto-downgrade chain: try dense_r1, then moe_agentic. Skip any
+    # candidate whose models are blocked by ACT_FORBID_MODELS so the
+    # operator's retired family is never re-summoned by the safety
+    # rail.
+    if os.environ.get("ACT_DISABLE_VRAM_AUTODOWNGRADE", "").strip() == "1":
+        return profile
 
+    cap = _detect_vram_gb()
+    if cap <= 0:
+        return profile
+
+    scanner = profile.get("scanner_model", "")
+    analyst = profile.get("analyst_model", "")
+    needed = _vram_estimate_gb(scanner) + _vram_estimate_gb(analyst)
+    if needed <= cap + 2:
+        return profile
+
+    # Profile doesn't fit. Walk fallback chain.
+    for fallback_name in ("dense_r1", "moe_agentic"):
+        if fallback_name == name:
+            continue   # already on this one; don't loop
+        candidate = BRAIN_PROFILES.get(fallback_name)
+        if candidate is None:
+            continue
+        if _profile_uses_forbidden_models(candidate):
+            logger.warning(
+                "[BRAIN] AUTO-DOWNGRADE: skipping fallback %r -- one of its "
+                "models is in ACT_FORBID_MODELS=%r",
+                fallback_name, os.environ.get("ACT_FORBID_MODELS", ""),
+            )
+            continue
+        logger.warning(
+            "[BRAIN] AUTO-DOWNGRADE: profile %r needs ~%.1f GB but only "
+            "%.1f GB available; switching to %r at runtime. "
+            "Set ACT_DISABLE_VRAM_AUTODOWNGRADE=1 to override (not "
+            "recommended unless you've manually verified VRAM).",
+            name, needed, cap, fallback_name,
+        )
+        return candidate
+
+    # Every fallback was forbidden. Stick with the original choice
+    # (which will likely error at the LLM call) so the operator
+    # surfaces the contradiction rather than silently using a model
+    # they banned.
+    logger.error(
+        "[BRAIN] AUTO-DOWNGRADE: every fallback (dense_r1, moe_agentic) "
+        "is blocked by ACT_FORBID_MODELS=%r AND profile %r doesn't fit "
+        "in %.1f GB. Either widen the forbid list or shrink the profile.",
+        os.environ.get("ACT_FORBID_MODELS", ""), name, cap,
+    )
     return profile
+
+
+_PROFILE_SOURCE_LOGGED: Dict[str, bool] = {}
+
+
+def _emit_profile_source_once(name: str, source: str, profile: Dict[str, Any]) -> None:
+    """Log which env / config / default chose the active profile.
+
+    One-shot per (name,source) pair so the truth is visible exactly
+    once per process. Without this, operators wonder why dual_brain
+    is using a profile they thought they replaced -- it could be a
+    persistent setx, a config.yaml fallback, or the hardcoded
+    DEFAULT_PROFILE, and previously there was no audit trail.
+    """
+    key = f"{name}|{source}"
+    if _PROFILE_SOURCE_LOGGED.get(key):
+        return
+    _PROFILE_SOURCE_LOGGED[key] = True
+    logger.info(
+        "[BRAIN] resolved profile=%r source=%s scanner=%r analyst=%r",
+        name, source,
+        profile.get("scanner_model", ""),
+        profile.get("analyst_model", ""),
+    )
 
 
 _VRAM_CACHE_GB: Dict[str, float] = {}
