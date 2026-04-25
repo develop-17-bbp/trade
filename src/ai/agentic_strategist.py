@@ -822,10 +822,24 @@ STRATEGY RULES:
         """Shared logic to execute prompt against local Ollama / LM Studio."""
         import requests
 
-        # Resolve model: prefer router's configured local model, then self.model_name, then safe default
-        model_id = "deepseek-r1:7b"  # safe default — matches dense_r1 brain profile
+        # Resolve model in priority order:
+        #   1. router's configured 'local' provider (LLMConfig.model)
+        #   2. self.model_name (constructor arg)
+        #   3. OLLAMA_REMOTE_MODEL env (set by START_ALL to the pinned analyst)
+        #   4. ACT_ANALYST_MODEL env (the unified-brain analyst)
+        #   5. final safe default
+        # Without env-aware fallback, this legacy path defaulted to
+        # deepseek-r1:7b at Ollama's 32K ctx, evicting the pinned qwen
+        # pair on every call.
+        model_id = (
+            os.environ.get("OLLAMA_REMOTE_MODEL", "").strip()
+            or os.environ.get("ACT_ANALYST_MODEL", "").strip()
+            or "deepseek-r1:7b"
+        )
         if self._llm_router and 'local' in self._llm_router.providers:
-            model_id = self._llm_router.providers['local'].config.model or model_id
+            cfg_model = (self._llm_router.providers['local'].config.model or "").strip()
+            if cfg_model:
+                model_id = cfg_model
         elif self.model_name:
             model_id = self.model_name
         self.logger.info(f"[LOCAL-LLM] Calling Local Reasoning Engine: {model_id}")
@@ -846,6 +860,13 @@ STRATEGY RULES:
                 "http://127.0.0.1:11434/api/generate" # Basic Ollama fallback
             ]
         
+        # num_ctx cap so this path doesn't trigger Ollama's 32K default
+        # which would evict pinned models from VRAM on a 32 GB card.
+        try:
+            _num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
+        except ValueError:
+            _num_ctx = 16384
+
         response = None
         for url in endpoints:
             try:
@@ -855,7 +876,11 @@ STRATEGY RULES:
                         "model": model_id,
                         "prompt": prompt,
                         "stream": False,
-                        "options": {"temperature": 0.1}
+                        "options": {
+                            "temperature": 0.1,
+                            "num_ctx": _num_ctx,
+                            "num_predict": 1500,
+                        },
                     }
                 else:
                     # OpenAI compatible API format
@@ -867,7 +892,7 @@ STRATEGY RULES:
                         ],
                         "temperature": 0.1
                     }
-                resp = requests.post(url, json=payload, timeout=(3, 60))
+                resp = requests.post(url, json=payload, timeout=(10, 180))
                 if resp.status_code == 200:
                     response = resp
                     break
