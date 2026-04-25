@@ -50,7 +50,12 @@ logger = logging.getLogger(__name__)
 # cost in percent (entry + exit combined). Overridable per-call.
 #
 # Sources:
-#   robinhood    — 1.69% round-trip spread, no commission
+#   robinhood    — historical preset 1.69% round-trip; public retail
+#                  data (bitget academy, 2026-Q1) shows real BTC/ETH
+#                  spread is 0.35-0.85% per side + 0-0.6% commission,
+#                  putting typical round-trip closer to ~1.0%. Operator
+#                  should measure with scripts/measure_spread.py and
+#                  override via ACT_ROBINHOOD_SPREAD_PCT env if needed.
 #   bybit_spot   — 0.055% taker, maker rebates possible
 #   bybit_perp   — 0.02% maker / 0.06% taker per side; funding separate
 #   polymarket   — ~1% spread + 2% protocol fee on binary markets
@@ -61,6 +66,24 @@ VENUE_COSTS: Dict[str, Dict[str, float]] = {
     "bybit_perp": {"spread_pct": 0.04, "fees_pct": 0.12},
     "polymarket": {"spread_pct": 1.00, "fees_pct": 2.00},
     "kraken":     {"spread_pct": 0.20, "fees_pct": 0.26},
+}
+
+# Per-venue env overrides. When set, override the preset above without
+# requiring a code change. Format: percent (1.0 == 1.0%). The override
+# applies to ALL evaluate() calls for that venue unless the caller
+# passes an explicit `spread_pct` / `fees_pct` argument.
+#
+#   ACT_ROBINHOOD_SPREAD_PCT  ACT_ROBINHOOD_FEES_PCT
+#   ACT_BYBIT_SPOT_SPREAD_PCT ACT_BYBIT_SPOT_FEES_PCT
+#   ACT_BYBIT_PERP_SPREAD_PCT ACT_BYBIT_PERP_FEES_PCT
+#   ACT_POLYMARKET_SPREAD_PCT ACT_POLYMARKET_FEES_PCT
+#   ACT_KRAKEN_SPREAD_PCT     ACT_KRAKEN_FEES_PCT
+_VENUE_OVERRIDE_PREFIX_BY_KEY = {
+    "robinhood":  "ACT_ROBINHOOD",
+    "bybit_spot": "ACT_BYBIT_SPOT",
+    "bybit_perp": "ACT_BYBIT_PERP",
+    "polymarket": "ACT_POLYMARKET",
+    "kraken":     "ACT_KRAKEN",
 }
 
 # Default minimum margin (expected - frictional). 1.0% means every
@@ -140,7 +163,21 @@ class CostGateResult:
 
 def _resolve_venue_costs(venue: Optional[str]) -> Dict[str, float]:
     key = (venue or "robinhood").strip().lower()
-    return dict(VENUE_COSTS.get(key, VENUE_COSTS["robinhood"]))
+    base = dict(VENUE_COSTS.get(key, VENUE_COSTS["robinhood"]))
+    prefix = _VENUE_OVERRIDE_PREFIX_BY_KEY.get(key)
+    if prefix:
+        for field_name, env_suffix in (("spread_pct", "_SPREAD_PCT"),
+                                       ("fees_pct", "_FEES_PCT")):
+            raw = os.environ.get(prefix + env_suffix, "").strip()
+            if raw:
+                try:
+                    base[field_name] = max(0.0, float(raw))
+                except ValueError:
+                    logger.warning(
+                        "cost_gate: ignoring non-numeric %s%s=%r",
+                        prefix, env_suffix, raw,
+                    )
+    return base
 
 
 def _impact_pct(size_pct: float) -> float:
