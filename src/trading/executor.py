@@ -6251,6 +6251,15 @@ class TradingExecutor:
             print(f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {_active_min_confidence:.2f}")
             return
 
+        # ── Compute ml_confidence once, reused for the hard gate AND paper record below.
+        # Prefer calibrated meta_prob; fall back to raw lgbm_confidence; else 0.0.
+        # 0.0 means "ML signal unavailable" (not "ML says no") — gate skips ML checks at 0.0.
+        ml_confidence = float(
+            ml_context.get('meta_prob')
+            or ml_context.get('lgbm_confidence')
+            or 0.0
+        )
+
         # ── ROBINHOOD HARD GATE — LLM cannot override these constraints ──
         # Skip when quality override is active (it already verified minimum thresholds,
         # and LGBM entry_score penalties would block every ranging-market override)
@@ -6259,6 +6268,7 @@ class TradingExecutor:
                 asset=asset, action=action, confidence=confidence,
                 risk_score=risk_score, trade_quality=unified.get('trade_quality', 5),
                 entry_score=entry_score, price=price, atr=current_atr,
+                ml_conf=ml_confidence,
             )
             if not _rh_ok:
                 print(f"  [{self._ex_tag}:{asset}] ROBINHOOD GATE BLOCKED: {_rh_reason}")
@@ -6829,15 +6839,8 @@ class TradingExecutor:
             'rl_agent': _mlp_rl,
         }
 
-        # ml_confidence for paper-record telemetry. Prefer calibrated meta-prob,
-        # fall back to raw lgbm confidence, else 0. The previous `'ml_confidence'
-        # in dir() else 0` guard at the record_entry call always fell to 0
-        # because the variable was never defined in this scope.
-        ml_confidence = float(
-            ml_context.get('meta_prob')
-            or ml_context.get('lgbm_confidence')
-            or 0.0
-        )
+        # ml_confidence is already computed earlier (before the Robinhood hard gate)
+        # and reused here for the paper record. See block above the gate call.
 
         # Record position (with chosen timeframe for scaled SL management)
         self.positions[asset] = {
@@ -6973,10 +6976,14 @@ class TradingExecutor:
     # ------------------------------------------------------------------
     def _robinhood_hard_gate(self, asset: str, action: str, confidence: float,
                               risk_score: int, trade_quality: int, entry_score: int,
-                              price: float, atr: float) -> tuple:
+                              price: float, atr: float, ml_conf: float = 0.0) -> tuple:
         """
         HARD CONSTRAINTS for Robinhood — LLM cannot override these.
         These are math-verified gates based on spread economics.
+
+        ml_conf: calibrated ML confidence (meta_prob or lgbm_confidence). 0.0 means
+        "unavailable" — divergence checks below skip when ml_conf == 0.0 to preserve
+        existing behavior on code paths where ML signal isn't computed.
 
         Returns:
             (proceed: bool, reason: str)
@@ -7016,6 +7023,21 @@ class TradingExecutor:
         # 6. RISK SCORE <= 7 (market ranges naturally push risk to 6; only block extreme risk)
         if risk_score > 7:
             return False, f"risk {risk_score} > 7 max on Robinhood"
+
+        # 7. LLM/ML DIVERGENCE FILTER (H1) — only apply when ML signal is available.
+        # ml_conf == 0.0 means "ML model didn't run / unavailable" → skip ML checks.
+        if ml_conf > 0.0:
+            # 7a. Hard floor: if ML actively says "no" (calibrated prob < 0.10), don't enter
+            #     even on a high-LLM-confidence signal. Catastrophic-disagreement guard.
+            if ml_conf < 0.10:
+                return False, f"ml_conf {ml_conf:.2f} < 0.10 (ML model says no, vetoes LLM-only signal)"
+            # 7b. Joint floor: both LLM and ML must clear 0.35.
+            if min(confidence, ml_conf) < 0.35:
+                return False, f"min(llm_conf={confidence:.2f}, ml_conf={ml_conf:.2f}) < 0.35 (joint-floor)"
+            # 7c. Strong-divergence guard: if the two disagree by > 0.45, refuse the entry.
+            #     Smaller divergence is OK — sizing is reduced upstream by caution-marker parser.
+            if abs(confidence - ml_conf) > 0.45:
+                return False, f"|llm_conf - ml_conf| = {abs(confidence - ml_conf):.2f} > 0.45 (strong divergence)"
 
         return True, "passed all Robinhood gates"
 
