@@ -549,6 +549,20 @@ class TradingExecutor:
                     break
         except Exception:
             pass
+        # Env override applies to BOTH the early ROI-table init and the
+        # later hard-gate init -- otherwise the protections layer is
+        # working with a stale 1.69% target while cost_gate is using
+        # the env-overridden 1.0%, and trades get closed at a "profit"
+        # that's actually a spread loss.
+        try:
+            _ek = f"ACT_{self._exchange_name.upper().replace(' ', '_')}_SPREAD_PCT"
+            _ev = os.environ.get(_ek, "").strip()
+            if _ev:
+                _vv = float(_ev)
+                if _vv > 0:
+                    self._round_trip_spread = _vv
+        except (ValueError, TypeError):
+            pass
 
         # ── Trade Protections (freqtrade-inspired) ──
         self._protections = None
@@ -1045,6 +1059,26 @@ class TradingExecutor:
                 self._rh_tf_alignment_override = _ex_cfg.get('tf_alignment_override', False)
                 self._rh_compound_pct = _ex_cfg.get('compound_pct', 0)
                 break
+
+        # Env override (matches cost_gate). When the operator runs
+        # `setx ACT_ROBINHOOD_SPREAD_PCT 1.0` we want the executor's
+        # internal _round_trip_spread (used by the Robinhood hard
+        # gate's atr_move_pct floor) to follow, not just the cost
+        # gate. Without this, the legacy hard gate at line ~7012 still
+        # demands `1.5 * 1.69 = 2.5%` ATR move while cost_gate is
+        # already happy with `1.5 * 1.0 = 1.5%`, and the more strict
+        # one wins -- silent over-filter.
+        _env_key = f"ACT_{self._exchange_name.upper().replace(' ', '_')}_SPREAD_PCT"
+        _env_spread = os.environ.get(_env_key, "").strip()
+        if _env_spread:
+            try:
+                _v = float(_env_spread)
+                if _v > 0:
+                    print(f"  [SPREAD] env override {_env_key}={_v}% applied "
+                          f"(was {self._round_trip_spread:.2f}% from config)")
+                    self._round_trip_spread = _v
+            except ValueError:
+                pass
         if self._round_trip_spread > 1.0:
             print(f"  [SPREAD] HIGH-SPREAD EXCHANGE: {self._exchange_name} | per-side={self._spread_per_side:.2f}% | round-trip={self._round_trip_spread:.2f}%")
             if self._longs_only:
