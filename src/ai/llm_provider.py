@@ -270,10 +270,15 @@ class OllamaProvider(BaseLLMProvider):
         # Truncation -> garbled model output -> parse_failures.
         # 16K is comfortable on a 32 GB RTX 5090: 7B uses ~5 GB and
         # 32B uses ~22 GB at 16K context.
+        # 8K default. 16K was OOMing the moe_agentic pair on a 32 GB
+        # card -- both qwen models silently returned empty. 8K fits
+        # the typical agentic prompt (system + evidence + tools +
+        # 2-3 turns ~4-6K tokens). Operators can override via
+        # OLLAMA_NUM_CTX=16384 on >40 GB hardware.
         try:
-            _num_ctx = int(os.environ.get('OLLAMA_NUM_CTX', '16384'))
+            _num_ctx = int(os.environ.get('OLLAMA_NUM_CTX', '8192'))
         except ValueError:
-            _num_ctx = 16384
+            _num_ctx = 8192
         # Reasonable max-tokens cap so a runaway model doesn't hold a
         # generation slot forever; 1500 covers our JSON envelopes.
         _num_predict = self.config.max_tokens or 1500

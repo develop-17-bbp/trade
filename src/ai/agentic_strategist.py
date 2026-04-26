@@ -884,10 +884,13 @@ STRATEGY RULES:
         
         # num_ctx cap so this path doesn't trigger Ollama's 32K default
         # which would evict pinned models from VRAM on a 32 GB card.
+        # 8K default to fit moe_agentic pair on 32 GB cards (16K
+        # caused both qwen models to silently return empty). Override
+        # via OLLAMA_NUM_CTX env when on bigger hardware.
         try:
-            _num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
+            _num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
         except ValueError:
-            _num_ctx = 16384
+            _num_ctx = 8192
 
         response = None
         for url in endpoints:

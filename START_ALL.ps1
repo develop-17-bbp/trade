@@ -285,7 +285,16 @@ $ollamaUrl = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL.TrimEnd('/') } els
 # at the larger context on the first python request and evicts the
 # other resident model — leaving only one brain in VRAM, which is
 # exactly the failure mode `ollama ps` reported (only 7B at ctx=32768).
-$ctxNum = if ($env:OLLAMA_NUM_CTX) { $env:OLLAMA_NUM_CTX } else { '16384' }
+# 8192 default (was 16384). On a 32 GB RTX 5090 with the moe_agentic
+# pair (qwen3-coder:30b ~22 GB + qwen2.5-coder:7b ~5 GB) PLUS PyTorch
+# overhead (PatchTST + LSTM ensemble x2 + RL agents x2 + MiniLM
+# sentence-transformer + Kalman + GARCH x2 ~3-5 GB), 16K ctx pushed
+# Ollama past the VRAM ceiling and BOTH qwen models silently returned
+# empty -- causing parse_failure and zero trades. 8K ctx is enough
+# for our prompts (system + evidence + tools + 3 turns ~5K tokens)
+# and frees ~3 GB. Operators on >40 GB hardware can override:
+# `setx OLLAMA_NUM_CTX 16384` before launch.
+$ctxNum = if ($env:OLLAMA_NUM_CTX) { $env:OLLAMA_NUM_CTX } else { '8192' }
 foreach ($mod in $ollamaModels) {
     $payload = @{
         model       = $mod
@@ -435,7 +444,7 @@ if (-not $env:OLLAMA_NUM_PARALLEL) { _SetEnvPersistent "OLLAMA_NUM_PARALLEL" "1"
 # -> parse_failures. 16K still fits on RTX 5090 (7B ~5 GB, 32B
 # ~22 GB at 16K = ~27 GB total). Operators on smaller cards or
 # lighter prompts can drop back to 8192 manually.
-if (-not $env:OLLAMA_NUM_CTX) { _SetEnvPersistent "OLLAMA_NUM_CTX" "16384" }
+if (-not $env:OLLAMA_NUM_CTX) { _SetEnvPersistent "OLLAMA_NUM_CTX" "8192" }
 # Generous timeouts for first-load of 32B from disk
 if (-not $env:OLLAMA_READ_TIMEOUT_S) { _SetEnvPersistent "OLLAMA_READ_TIMEOUT_S" "180" }
 OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel MAX_LOADED=$($env:OLLAMA_MAX_LOADED_MODELS) PARALLEL=$($env:OLLAMA_NUM_PARALLEL) CTX=$($env:OLLAMA_NUM_CTX)"
