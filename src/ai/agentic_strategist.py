@@ -831,7 +831,7 @@ STRATEGY RULES:
         # ACT_FORBID_MODELS removes blocked candidates from the chain
         # so e.g. switching to moe_agentic + forbidding deepseek-r1
         # truly stops every legacy path from re-loading deepseek.
-        from src.ai.model_guard import resolve_safe_model, is_forbidden
+        from src.ai.model_guard import resolve_safe_model, is_forbidden, resolve_pinned_analyst
         router_cfg_model = ""
         if self._llm_router and 'local' in self._llm_router.providers:
             router_cfg_model = (self._llm_router.providers['local'].config.model or "").strip()
@@ -841,6 +841,7 @@ STRATEGY RULES:
             os.environ.get("ACT_ANALYST_MODEL", "").strip(),
             os.environ.get("ACT_SCANNER_MODEL", "").strip(),
             self.model_name,
+            resolve_pinned_analyst(),  # final fallback: active profile
         ])
         if not model_id:
             self.logger.error(

@@ -213,12 +213,13 @@ class OllamaProvider(BaseLLMProvider):
         # rather than silently picking a model the operator has
         # retired. ACT_FORBID_MODELS additionally rejects any link
         # the operator has banned.
-        from src.ai.model_guard import resolve_safe_model, is_forbidden
+        from src.ai.model_guard import resolve_safe_model, is_forbidden, resolve_pinned_analyst
         model_id = resolve_safe_model([
             self.config.model,
             os.environ.get('OLLAMA_REMOTE_MODEL', '').strip(),
             os.environ.get('ACT_ANALYST_MODEL', '').strip(),
             os.environ.get('ACT_SCANNER_MODEL', '').strip(),
+            resolve_pinned_analyst(),  # final fallback: active profile's analyst
         ])
         if not model_id:
             logger.error(
@@ -532,11 +533,12 @@ class LLMRouter:
         # model name diverged from the pinned analyst.
         remote_ollama_url = os.environ.get('OLLAMA_REMOTE_URL', '').strip()
         if remote_ollama_url:
-            from src.ai.model_guard import resolve_safe_model
+            from src.ai.model_guard import resolve_safe_model, resolve_pinned_analyst
             _remote_model = resolve_safe_model([
                 os.environ.get('OLLAMA_REMOTE_MODEL', '').strip(),
                 os.environ.get('ACT_ANALYST_MODEL', '').strip(),
                 os.environ.get('ACT_SCANNER_MODEL', '').strip(),
+                resolve_pinned_analyst(),
             ]) or ''
             self.add_provider('remote_gpu', LLMConfig(
                 provider='ollama',

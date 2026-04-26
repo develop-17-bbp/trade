@@ -45,6 +45,29 @@ _KNOWN_PROFILE_NAMES = {
 }
 
 
+def resolve_pinned_analyst() -> Optional[str]:
+    """Last-resort: ask dual_brain what analyst model the active profile
+    wants. Useful as the final link in env-driven resolution chains so
+    a fully-empty env (no OLLAMA_REMOTE_MODEL, no ACT_*_MODEL) still
+    produces a real model name instead of a `no_model_resolved` error.
+
+    Imports lazily to avoid a circular import (dual_brain may use
+    model_guard at module-load time).
+    """
+    try:
+        from src.ai.dual_brain import _resolve_profile  # noqa: PLC0415
+        profile = _resolve_profile()
+        analyst = (profile.get("analyst_model") or "").strip()
+        if analyst and is_well_formed_model_tag(analyst) and not is_forbidden(analyst):
+            return analyst
+        scanner = (profile.get("scanner_model") or "").strip()
+        if scanner and is_well_formed_model_tag(scanner) and not is_forbidden(scanner):
+            return scanner
+    except Exception:
+        pass
+    return None
+
+
 def is_well_formed_model_tag(model_id: Optional[str]) -> bool:
     """True iff `model_id` looks like a real Ollama model tag.
 
