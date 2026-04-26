@@ -269,6 +269,31 @@ def evaluate(
             checks=checks,
             reasons=reasons + [f"normal:strategies={agreeing}"],
         )
+
+    # Paper-mode advisory tier: macro-misalignment and hurst:random
+    # are SOFT rejects in paper mode -- the LLM brain has already
+    # weighed every macro layer + 14 agents + 36 strategies + 371
+    # trade-memory examples and produced a TradePlan. The conviction
+    # gate's job in paper mode is to surface signals, not block. Real
+    # capital path keeps the reject (returns below). Hard rejects
+    # (TF misalign, multistrat weak, AUTHORITY rules) still apply.
+    if not is_real_capital and checks["tf_alignment_1h_4h"] and \
+            checks.get("multi_strategy_ge_3"):
+        soft_reasons = []
+        if not checks.get("macro_aligned", True):
+            soft_reasons.append("paper_advisory_macro_misaligned")
+        if not checks.get("hurst_trending", True):
+            soft_reasons.append(f"paper_advisory_hurst:{regime or 'unknown'}")
+        if soft_reasons:
+            return ConvictionResult(
+                tier="normal", passed=True, direction=d,
+                size_multiplier=0.5,  # half size when only paper-advisory passed
+                checks=checks,
+                reasons=reasons + soft_reasons + [
+                    f"paper_normal_advisory:strategies={agreeing}"
+                ],
+            )
+
     return ConvictionResult(
         tier="reject", passed=False, direction=d, size_multiplier=0.0,
         checks=checks, reasons=reasons,

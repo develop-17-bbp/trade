@@ -101,8 +101,9 @@ def test_paper_mode_macro_crisis_advisory(monkeypatch):
     )
 
 
-def test_reject_when_macro_misaligned_with_direction():
-    """LONG trade but macro bias strongly BEARISH → reject."""
+def test_reject_when_macro_misaligned_real_capital(monkeypatch):
+    """REAL CAPITAL: LONG trade but macro bias strongly BEARISH → hard reject."""
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     r = evaluate(
         direction="LONG",
         tf_1h_direction="RISING", tf_4h_direction="RISING",
@@ -112,6 +113,24 @@ def test_reject_when_macro_misaligned_with_direction():
     )
     assert r.tier == "reject"
     assert any("macro_misaligned" in x for x in r.reasons)
+
+
+def test_paper_mode_macro_misaligned_advisory_pass(monkeypatch):
+    """PAPER MODE: macro misalign downgrades to half-size advisory pass
+    so the brain's plan reaches the executor. Real-capital path above
+    still hard-rejects."""
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = evaluate(
+        direction="LONG",
+        tf_1h_direction="RISING", tf_4h_direction="RISING",
+        hurst_regime="trending",
+        multi_strategy_counts={"long": 6, "short": 1, "flat": 29},
+        macro_bias=_bias(signed=-0.5),
+    )
+    assert r.tier == "normal"
+    assert r.passed is True
+    assert r.size_multiplier == 0.5  # half size for advisory pass
+    assert any("paper_advisory_macro_misaligned" in x for x in r.reasons)
 
 
 def test_normal_with_neutral_macro_still_passes():

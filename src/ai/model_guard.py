@@ -40,6 +40,37 @@ def _read_forbid_list() -> List[str]:
     return [s.strip().lower() for s in raw.split(",") if s.strip()]
 
 
+_KNOWN_PROFILE_NAMES = {
+    "dense_r1", "moe_agentic", "qwen3_r1", "hybrid", "devstral_qwen3coder",
+}
+
+
+def is_well_formed_model_tag(model_id: Optional[str]) -> bool:
+    """True iff `model_id` looks like a real Ollama model tag.
+
+    Ollama tags follow the `family:size` shape (e.g. `qwen3-coder:30b`,
+    `deepseek-r1:7b`). A bare profile name like `moe_agentic` is a
+    common operator typo (`setx OLLAMA_REMOTE_MODEL moe_agentic`
+    instead of the actual tag) and Ollama 404s it -- producing
+    `All Ollama endpoints failed for model moe_agentic` and silent
+    parse_failures downstream.
+
+    Heuristics:
+      * has at least one colon (every Ollama tag does)
+      * not equal to a known dual_brain profile name
+    """
+    if not model_id:
+        return False
+    s = str(model_id).strip()
+    if not s:
+        return False
+    if s.lower() in _KNOWN_PROFILE_NAMES:
+        return False
+    if ":" not in s:
+        return False
+    return True
+
+
 def is_forbidden(model_id: Optional[str]) -> bool:
     """Return True if `model_id` matches any entry in ACT_FORBID_MODELS.
 
@@ -108,6 +139,14 @@ def resolve_safe_model(
             continue
         c_str = str(c).strip()
         if not c_str:
+            continue
+        if not is_well_formed_model_tag(c_str):
+            logger.warning(
+                "model_guard: skipping malformed candidate %r "
+                "(not a valid Ollama tag -- expected family:size like "
+                "'qwen3-coder:30b'; common typo: profile name in env)",
+                c_str,
+            )
             continue
         if _is_blocked(c_str):
             logger.warning(
