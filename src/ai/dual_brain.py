@@ -219,6 +219,35 @@ def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     _emit_profile_source_once(name, source, profile)
     _emit_vram_warning_once(name, profile)
 
+    # If the SELECTED profile (not just the auto-downgrade fallback)
+    # uses forbidden models, jump to a non-forbidden alternative
+    # immediately. Otherwise the resolver returns a profile whose
+    # every call will fail with `no_model_resolved` -- which is
+    # exactly what the operator hit when ACT_BRAIN_PROFILE was unset
+    # (DEFAULT_PROFILE=dense_r1 = deepseek pair, all blocked).
+    if _profile_uses_forbidden_models(profile):
+        for alt_name in ("moe_agentic", "dense_r1", "qwen3_r1", "hybrid"):
+            if alt_name == name:
+                continue
+            alt = BRAIN_PROFILES.get(alt_name)
+            if alt is None or _profile_uses_forbidden_models(alt):
+                continue
+            logger.warning(
+                "[BRAIN] selected profile %r uses forbidden models "
+                "(ACT_FORBID_MODELS=%r); switching to %r at runtime",
+                name, os.environ.get("ACT_FORBID_MODELS", ""), alt_name,
+            )
+            return alt
+        logger.error(
+            "[BRAIN] EVERY available profile is blocked by "
+            "ACT_FORBID_MODELS=%r. Either widen the forbid list, set "
+            "ACT_BRAIN_PROFILE explicitly to an unblocked profile, or "
+            "clear the forbid list. Returning %r unchanged -- LLM "
+            "calls will fail until this is resolved.",
+            os.environ.get("ACT_FORBID_MODELS", ""), name,
+        )
+        return profile
+
     # Auto-downgrade chain: try dense_r1, then moe_agentic. Skip any
     # candidate whose models are blocked by ACT_FORBID_MODELS so the
     # operator's retired family is never re-summoned by the safety

@@ -263,14 +263,20 @@ def get_paper_soak_overlay() -> Optional[Dict[str, Any]]:
 
     Called by executor / conviction_gate / cost_gate each tick.
     Silent on any failure — never crashes the trade loop.
+
+    Reads with `utf-8-sig` so a BOM-prefixed file (which PowerShell
+    5.1's `Set-Content -Encoding UTF8` adds by default) loads cleanly.
+    Without that, START_ALL.ps1's auto-write produced a file that
+    json.load rejected, get_paper_soak_overlay returned None, and
+    conviction_gate's bypass_macro_crisis flag was silently ignored
+    -- causing macro_crisis rejects on every paper-mode tick.
     """
     try:
         if not OVERLAY_FILE.exists():
             return None
-        # Safety guard — overlay is explicitly paper-only.
         if os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() == "1":
             return None
-        text = OVERLAY_FILE.read_text(encoding="utf-8")
+        text = OVERLAY_FILE.read_text(encoding="utf-8-sig")
         overlay = json.loads(text)
         if overlay.get("requires_paper_mode") is True:
             return overlay

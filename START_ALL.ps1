@@ -482,7 +482,13 @@ if ($env:ACT_REAL_CAPITAL_ENABLED -eq "1") {
         if (-not (Test-Path (Split-Path $soakOverlay -Parent))) {
             New-Item -ItemType Directory -Force -Path (Split-Path $soakOverlay -Parent) | Out-Null
         }
-        $overlayObj | ConvertTo-Json -Depth 5 | Set-Content -Path $soakOverlay -Encoding UTF8
+        # PS 5.1 `-Encoding UTF8` writes a BOM that json.load rejects,
+        # which makes the overlay invisible to the python reader and
+        # silently disables paper_soak_loose on every tick. Use .NET
+        # File.WriteAllText with a BOM-free UTF8Encoding instead.
+        $jsonStr = $overlayObj | ConvertTo-Json -Depth 5
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($soakOverlay, $jsonStr, $utf8NoBom)
         OK "paper-soak-loose ENABLED (sniper.min_score=4, min_move=2%, confluence=3)."
     } catch {
         WARN "Failed to write paper-soak-loose overlay: $($_.Exception.Message). Run manually: python -m src.skills.cli run paper-soak-loose enable=true"
