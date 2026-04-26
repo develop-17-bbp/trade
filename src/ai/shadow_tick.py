@@ -81,14 +81,45 @@ def _run_scanner(asset: str, quant_digest: str, bundle_block: str) -> bool:
         logger.debug("shadow_tick: scan imports unavailable: %s", e)
         return False
 
+    # Defensive: when quant_digest is empty AND bundle_block is empty,
+    # the model receives a prompt with no substantive content and
+    # produces empty/garbage output. Audit finding (2026-04-27): this
+    # was a real failure mode -- on cold-boot the executor passed an
+    # empty quant_digest before the first quant computation completed.
+    quant_digest = (quant_digest or "").strip()
+    bundle_block = (bundle_block or "").strip()
+    if not quant_digest and not bundle_block:
+        # Fall back to whatever the brain_memory has (even if stale)
+        # so the model has at least price + regime context to
+        # rationalize over rather than emitting empty JSON.
+        try:
+            from src.ai.brain_memory import get_brain_memory
+            mem = get_brain_memory()
+            latest = mem.read_latest_scan(asset, max_age_s=86400.0)
+            if latest is not None and latest.rationale:
+                quant_digest = (
+                    f"[stale scan ts={latest.ts:.0f}] "
+                    f"prior_score={latest.opportunity_score:.0f} "
+                    f"prior_direction={latest.proposed_direction} "
+                    f"prior_rationale={latest.rationale[:200]}"
+                )
+        except Exception:
+            pass
+        if not quant_digest:
+            quant_digest = (
+                f"[no quant digest yet -- first tick of session] "
+                f"asset={asset} -- emit FLAT proposal until next tick "
+                f"populates the digest."
+            )
+
     prompt = (
         f"Asset: {asset}\n\n"
         f"Quant digest:\n{quant_digest}\n\n"
-        f"Web context:\n{bundle_block}\n\n"
+        f"Web context:\n{bundle_block or '(no web context this tick)'}\n\n"
         f"Respond with ONE JSON object only: "
         f'{{"opportunity_score": 0-100, "proposed_direction": "LONG"|"SHORT"|"FLAT", '
         f'"top_signals": ["s1","s2","s3"], "rationale": "<=200 chars"}}. '
-        f"Be terse — NO prose, NO <think> trace, ONLY the JSON."
+        f"Be terse -- NO prose, NO <think> trace, ONLY the JSON."
     )
     try:
         resp = scan(prompt)
