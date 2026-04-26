@@ -296,49 +296,91 @@ class OllamaProvider(BaseLLMProvider):
                 approx_prompt_tokens, _num_ctx, model_id, full_prompt_chars,
             )
 
-        for url in endpoints:
-            try:
-                if '/api/generate' in url:
-                    payload = {
-                        'model': model_id,
-                        'prompt': f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
-                        'stream': False,
-                        'options': {
-                            'temperature': self.config.temperature,
-                            'num_ctx': _num_ctx,
-                            'num_predict': _num_predict,
-                        },
-                    }
-                    resp = requests.post(url, json=payload, timeout=local_timeout)
-                    if resp.ok:
-                        data = resp.json()
-                        return self._parse_json(data.get('response', '{}'))
-                else:
-                    # OpenAI-compat fallback. Ollama 0.1.32+ accepts an
-                    # `options` extension here too; standard OpenAI APIs
-                    # ignore unknown fields, so this is safe both ways.
-                    payload = {
-                        'model': model_id,
-                        'messages': [],
-                        'temperature': self.config.temperature,
-                        'max_tokens': self.config.max_tokens,
-                        'options': {
-                            'num_ctx': _num_ctx,
-                            'num_predict': _num_predict,
-                        },
-                    }
-                    if system_prompt:
-                        payload['messages'].append({'role': 'system', 'content': system_prompt})
-                    payload['messages'].append({'role': 'user', 'content': prompt})
+        # keep_alive=-1 pins the model in VRAM indefinitely. Without
+        # this, Ollama's 5-minute idle default unloads the model
+        # between ticks; the next request reloads it from disk
+        # (~30-60s for a 30B), which often evicts the OTHER model in
+        # the pair to make room. Result: at any given moment only one
+        # of the pair is resident, and the second LLM call returns an
+        # empty response while Ollama is still swapping. Operators can
+        # override with `setx OLLAMA_KEEP_ALIVE 30m` if they want
+        # idle-unload behavior back.
+        _keep_alive = os.environ.get('OLLAMA_KEEP_ALIVE', '-1').strip() or '-1'
+        try:
+            _keep_alive_val: object = int(_keep_alive)
+        except ValueError:
+            _keep_alive_val = _keep_alive  # accept "30m", "1h", etc.
 
-                    resp = requests.post(url, json=payload, timeout=local_timeout)
-                    if resp.ok:
-                        data = resp.json()
-                        text = data['choices'][0]['message']['content']
-                        return self._parse_json(text)
-            except Exception as e:
-                logger.debug(f"Endpoint {url} failed: {e}")
-                continue
+        # Retry once on empty response. Ollama returns
+        # `{"response": "", "done": true}` (HTTP 200) when a model
+        # was evicted/reloaded mid-request. The second call lands on
+        # a now-warm model and succeeds. Without retry, the first
+        # tick after pre-load consistently fails.
+        for attempt in range(2):
+            for url in endpoints:
+                try:
+                    if '/api/generate' in url:
+                        payload = {
+                            'model': model_id,
+                            'prompt': f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
+                            'stream': False,
+                            'keep_alive': _keep_alive_val,
+                            'options': {
+                                'temperature': self.config.temperature,
+                                'num_ctx': _num_ctx,
+                                'num_predict': _num_predict,
+                            },
+                        }
+                        resp = requests.post(url, json=payload, timeout=local_timeout)
+                        if resp.ok:
+                            data = resp.json()
+                            response_text = data.get('response') or ''
+                            if not response_text.strip():
+                                logger.warning(
+                                    "[OllamaProvider] empty response for model=%s (attempt %d/2) "
+                                    "-- likely VRAM eviction during model swap; retrying",
+                                    model_id, attempt + 1,
+                                )
+                                break  # break url loop, retry whole thing
+                            return self._parse_json(response_text)
+                    else:
+                        # OpenAI-compat fallback. Ollama 0.1.32+ accepts an
+                        # `options` + `keep_alive` extension here too;
+                        # standard OpenAI APIs ignore unknown fields, so
+                        # this is safe both ways.
+                        payload = {
+                            'model': model_id,
+                            'messages': [],
+                            'temperature': self.config.temperature,
+                            'max_tokens': self.config.max_tokens,
+                            'keep_alive': _keep_alive_val,
+                            'options': {
+                                'num_ctx': _num_ctx,
+                                'num_predict': _num_predict,
+                            },
+                        }
+                        if system_prompt:
+                            payload['messages'].append({'role': 'system', 'content': system_prompt})
+                        payload['messages'].append({'role': 'user', 'content': prompt})
+
+                        resp = requests.post(url, json=payload, timeout=local_timeout)
+                        if resp.ok:
+                            data = resp.json()
+                            text = (data['choices'][0]['message']['content'] or '').strip()
+                            if not text:
+                                logger.warning(
+                                    "[OllamaProvider] empty content for model=%s (attempt %d/2)",
+                                    model_id, attempt + 1,
+                                )
+                                break
+                            return self._parse_json(text)
+                except Exception as e:
+                    logger.debug(f"Endpoint {url} failed: {e}")
+                    continue
+            # Brief pause before retry so Ollama finishes whatever
+            # swap was in progress.
+            if attempt == 0:
+                time.sleep(2)
 
         logger.error(f"All Ollama endpoints failed for model {model_id}")
         return {'error': 'all_endpoints_failed'}

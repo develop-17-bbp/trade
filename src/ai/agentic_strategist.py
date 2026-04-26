@@ -892,15 +892,24 @@ STRATEGY RULES:
         except ValueError:
             _num_ctx = 8192
 
+        # keep_alive=-1 pins the model in VRAM (matches OllamaProvider).
+        # Without this Ollama unloads after 5 min idle and the next
+        # request hits a cold model -> empty response on first call.
+        _keep_alive = os.environ.get('OLLAMA_KEEP_ALIVE', '-1').strip() or '-1'
+        try:
+            _keep_alive_val: object = int(_keep_alive)
+        except ValueError:
+            _keep_alive_val = _keep_alive
+
         response = None
         for url in endpoints:
             try:
                 if "/api/generate" in url:
-                    # Ollama native API format
                     payload = {
                         "model": model_id,
                         "prompt": prompt,
                         "stream": False,
+                        "keep_alive": _keep_alive_val,
                         "options": {
                             "temperature": 0.1,
                             "num_ctx": _num_ctx,
@@ -908,9 +917,6 @@ STRATEGY RULES:
                         },
                     }
                 else:
-                    # OpenAI compatible API format. Ollama accepts an
-                    # `options` extension for Ollama-specific params;
-                    # standard OpenAI APIs ignore unknown fields.
                     payload = {
                         "model": model_id,
                         "messages": [
@@ -918,6 +924,7 @@ STRATEGY RULES:
                             {"role": "user", "content": prompt}
                         ],
                         "temperature": 0.1,
+                        "keep_alive": _keep_alive_val,
                         "options": {
                             "num_ctx": _num_ctx,
                             "num_predict": 1500,
