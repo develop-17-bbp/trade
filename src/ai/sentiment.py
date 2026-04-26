@@ -434,7 +434,13 @@ class SentimentPipeline:
         _load_transformers()
         if not self._embedder_loaded and _SentenceTransformer and _SentenceTransformer is not False:
             try:
-                self.embedder = _SentenceTransformer(self.embed_model_name)
+                # CPU by default -- see memory_vault.py for rationale.
+                # Frees GPU VRAM for Ollama's brain models.
+                import os as _os_st
+                _device = _os_st.environ.get("ACT_EMBEDDER_DEVICE", "cpu").strip() or "cpu"
+                self.embedder = _SentenceTransformer(
+                    self.embed_model_name, device=_device,
+                )
                 self._embedder_loaded = True
             except Exception as e:
                 print(f"Warning: Failed to load embedder: {e}")

@@ -50,11 +50,18 @@ class MemoryVault:
 
     @property
     def model(self):
-        """Lazy-load the embedding model."""
+        """Lazy-load the embedding model -- on CPU by default to keep
+        GPU memory exclusive for Ollama. MiniLM is small (~80 MB) and
+        runs fine on CPU; embedding latency is irrelevant compared to
+        the 30B analyst's inference time. Operators on big GPUs can
+        opt back in via ACT_EMBEDDER_DEVICE=cuda:0."""
         if self._model is None:
+            import os as _os
             from sentence_transformers import SentenceTransformer
-            # Using a lightweight model
-            self._model = SentenceTransformer('all-MiniLM-L6-v2')
+            _device = _os.environ.get("ACT_EMBEDDER_DEVICE", "cpu").strip() or "cpu"
+            self._model = SentenceTransformer(
+                'all-MiniLM-L6-v2', device=_device,
+            )
         return self._model
 
     def store_trade(self, trace: TradeTrace) -> None:

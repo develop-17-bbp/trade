@@ -283,16 +283,41 @@ class OllamaProvider(BaseLLMProvider):
         # generation slot forever; 1500 covers our JSON envelopes.
         _num_predict = self.config.max_tokens or 1500
 
-        # Approx token count = char_count / 3.5 (English, roughly). Used
-        # only for the warning when prompt approaches num_ctx so silent
-        # truncation is visible.
+        # Approx token count = char_count / 3.5 (English, roughly).
         full_prompt_chars = len(prompt) + len(system_prompt or "")
         approx_prompt_tokens = int(full_prompt_chars / 3.5)
-        if approx_prompt_tokens > _num_ctx * 0.85:
+
+        # Hard truncation when the prompt exceeds num_ctx headroom.
+        # Without this, Ollama silently truncates input and emits an
+        # empty response field -- exactly the failure mode the
+        # operator hit at runtime: LLM-GATE passed (30-char prompt)
+        # but actual tick prompts (system + evidence + tools + history,
+        # ~5-15K tokens) exceeded the 8K context. We trim from the
+        # FRONT of the user prompt so the most recent context (system
+        # rules + latest tool results) is preserved. Reserve ~20% of
+        # ctx for the model's response.
+        _max_prompt_chars = int(_num_ctx * 3.5 * 0.75)
+        if full_prompt_chars > _max_prompt_chars and prompt:
+            sys_chars = len(system_prompt or "")
+            avail_for_user = max(500, _max_prompt_chars - sys_chars)
+            if len(prompt) > avail_for_user:
+                trimmed = prompt[-avail_for_user:]
+                logger.warning(
+                    "[OllamaProvider] truncating user prompt %d -> %d chars "
+                    "to fit num_ctx=%d (model=%s). Without this, Ollama "
+                    "would silently emit empty.",
+                    len(prompt), avail_for_user, _num_ctx, model_id,
+                )
+                prompt = (
+                    "[... earlier context truncated to fit context window ...]\n"
+                    + trimmed
+                )
+                full_prompt_chars = len(prompt) + sys_chars
+                approx_prompt_tokens = int(full_prompt_chars / 3.5)
+        elif approx_prompt_tokens > _num_ctx * 0.85:
             logger.warning(
                 "[OllamaProvider] prompt ~%d tokens approaches num_ctx=%d "
-                "(model=%s, chars=%d). Output may be silently truncated. "
-                "Consider raising OLLAMA_NUM_CTX or trimming prompts.",
+                "(model=%s, chars=%d). Output may be truncated.",
                 approx_prompt_tokens, _num_ctx, model_id, full_prompt_chars,
             )
 
