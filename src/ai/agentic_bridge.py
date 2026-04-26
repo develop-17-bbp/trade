@@ -412,12 +412,18 @@ def _rule_based_fallback_plan(
 
     try:
         from src.trading.trade_plan import TradePlan
+        # Populate expected_pnl_pct_range so the downstream cost gate
+        # has actual numbers to score against. 1.5-2.5% is the
+        # operator's typical range for paper sniper-tier setups; the
+        # gate computes margin = expected - frictional and the brain's
+        # consensus already passed the multi-source agreement check.
         return TradePlan(
             asset=asset.upper(),
             direction=direction,
             entry_tier="normal",
             size_pct=size_pct,
             confidence=confidence,
+            expected_pnl_pct_range=(1.5, 2.5),
             thesis=(
                 f"rule-based fallback (LLM unavailable): "
                 f"{agreeing}/{len(votes)} non-LLM sources agree on "

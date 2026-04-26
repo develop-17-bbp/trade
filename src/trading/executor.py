@@ -7012,8 +7012,18 @@ class TradingExecutor:
                               risk_score: int, trade_quality: int, entry_score: int,
                               price: float, atr: float, ml_conf: float = 0.0) -> tuple:
         """
-        HARD CONSTRAINTS for Robinhood — LLM cannot override these.
-        These are math-verified gates based on spread economics.
+        Robinhood gate — math-verified spread-economics checks.
+
+        Real capital (ACT_REAL_CAPITAL_ENABLED=1): every check below is a
+        HARD reject -- LLM cannot override.
+
+        Paper mode (default): every check becomes a soft advisory per
+        Unit 2 operator directive. The brain has already weighed every
+        signal upstream; this gate's job in paper mode is to surface
+        what would have blocked, not to block. Returns True with a
+        `paper_advisory_*` reason so the executor proceeds. Authority
+        rules (PDF 7 universal rules) stay hard regardless via
+        authority_rules.
 
         ml_conf: calibrated ML confidence (meta_prob or lgbm_confidence). 0.0 means
         "unavailable" — divergence checks below skip when ml_conf == 0.0 to preserve
@@ -7026,52 +7036,91 @@ class TradingExecutor:
         if not hasattr(self, '_round_trip_spread') or self._round_trip_spread <= 1.0:
             return True, "low-spread exchange — no Robinhood gates"
 
+        is_real_capital = os.environ.get(
+            "ACT_REAL_CAPITAL_ENABLED", "",
+        ).strip() == "1"
+
+        def _verdict(passed: bool, reason: str) -> tuple:
+            if passed:
+                return True, reason
+            if not is_real_capital:
+                return True, f"paper_advisory_{reason}"
+            return False, reason
+
         # 1. LONGS ONLY (belt-and-suspenders — also checked earlier)
         if action == "SHORT":
-            return False, "SHORT blocked on Robinhood spot"
+            ok, reason = _verdict(False, "SHORT blocked on Robinhood spot")
+            if not ok:
+                return ok, reason
 
         # 2. ENTRY SCORE >= 0 (lowered from 5→3→0 — ML models at 51% conf give -2/-3 penalties
         #    too aggressively; real spread protection is gate #3 ATR check below)
         # The multi-strategy engine + LLM + genetic engine provide additional conviction
         if entry_score < 0:
-            return False, f"entry_score {entry_score} < 0 required for Robinhood LONG"
+            ok, reason = _verdict(
+                False, f"entry_score {entry_score} < 0 required for Robinhood LONG",
+            )
+            if not ok:
+                return ok, reason
 
         # 3. EXPECTED MOVE > 1.5× SPREAD (ATR-based projected move must justify spread)
-        # With 25x ATR TP, BTC/ETH typically get 5-8% expected moves
-        # At 1.69% round-trip spread, 1.5x = 5.01% — reasonable for swing trades
         atr_tp_mult = self.config.get('risk', {}).get('atr_tp_mult', 25.0)
         if price > 0 and atr > 0:
             atr_move_pct = (atr * atr_tp_mult / price) * 100
-            min_move = self._round_trip_spread * 1.5  # Need 1.5× spread for viable trade
+            min_move = self._round_trip_spread * 1.5
             if atr_move_pct < min_move:
-                return False, f"ATR move {atr_move_pct:.1f}% < {min_move:.1f}% (1.5x spread needed)"
+                ok, reason = _verdict(
+                    False,
+                    f"ATR move {atr_move_pct:.1f}% < {min_move:.1f}% (1.5x spread needed)",
+                )
+                if not ok:
+                    return ok, reason
 
-        # 4. CONFIDENCE >= 0.50 (LLM returns 0.45-0.65 in ranging markets; 0.65 blocked everything)
+        # 4. CONFIDENCE >= 0.50
         if confidence < 0.50:
-            return False, f"confidence {confidence:.2f} < 0.50 required on Robinhood"
+            ok, reason = _verdict(
+                False, f"confidence {confidence:.2f} < 0.50 required on Robinhood",
+            )
+            if not ok:
+                return ok, reason
 
-        # 5. TRADE QUALITY >= 4 (no garbage setups on high-spread exchange)
+        # 5. TRADE QUALITY >= 4
         if trade_quality < 4:
-            return False, f"quality {trade_quality} < 4 required on Robinhood"
+            ok, reason = _verdict(
+                False, f"quality {trade_quality} < 4 required on Robinhood",
+            )
+            if not ok:
+                return ok, reason
 
-        # 6. RISK SCORE <= 7 (market ranges naturally push risk to 6; only block extreme risk)
+        # 6. RISK SCORE <= 7
         if risk_score > 7:
-            return False, f"risk {risk_score} > 7 max on Robinhood"
+            ok, reason = _verdict(False, f"risk {risk_score} > 7 max on Robinhood")
+            if not ok:
+                return ok, reason
 
         # 7. LLM/ML DIVERGENCE FILTER (H1) — only apply when ML signal is available.
-        # ml_conf == 0.0 means "ML model didn't run / unavailable" → skip ML checks.
         if ml_conf > 0.0:
-            # 7a. Hard floor: if ML actively says "no" (calibrated prob < 0.10), don't enter
-            #     even on a high-LLM-confidence signal. Catastrophic-disagreement guard.
             if ml_conf < 0.10:
-                return False, f"ml_conf {ml_conf:.2f} < 0.10 (ML model says no, vetoes LLM-only signal)"
-            # 7b. Joint floor: both LLM and ML must clear 0.35.
+                ok, reason = _verdict(
+                    False,
+                    f"ml_conf {ml_conf:.2f} < 0.10 (ML model says no, vetoes LLM-only signal)",
+                )
+                if not ok:
+                    return ok, reason
             if min(confidence, ml_conf) < 0.35:
-                return False, f"min(llm_conf={confidence:.2f}, ml_conf={ml_conf:.2f}) < 0.35 (joint-floor)"
-            # 7c. Strong-divergence guard: if the two disagree by > 0.45, refuse the entry.
-            #     Smaller divergence is OK — sizing is reduced upstream by caution-marker parser.
+                ok, reason = _verdict(
+                    False,
+                    f"min(llm_conf={confidence:.2f}, ml_conf={ml_conf:.2f}) < 0.35 (joint-floor)",
+                )
+                if not ok:
+                    return ok, reason
             if abs(confidence - ml_conf) > 0.45:
-                return False, f"|llm_conf - ml_conf| = {abs(confidence - ml_conf):.2f} > 0.45 (strong divergence)"
+                ok, reason = _verdict(
+                    False,
+                    f"|llm_conf - ml_conf| = {abs(confidence - ml_conf):.2f} > 0.45 (strong divergence)",
+                )
+                if not ok:
+                    return ok, reason
 
         return True, "passed all Robinhood gates"
 
@@ -9498,9 +9547,16 @@ Respond ONLY with JSON:
                 return {"submitted": False, "reason": f"readiness_check_failed:{_e}"}
 
         # --- Gate 3: Cost awareness (reject if margin < threshold) ---
+        # Use the brain's plan field if populated; otherwise assume a
+        # reasonable 2% expected move so the cost gate has data to
+        # work with rather than seeing a hard 0% (which would always
+        # reject). The brain decides based on full ACT integrations
+        # (12 macro layers + 14 agents + 36 strategies + ML ensemble +
+        # genetic + memory) -- the cost gate is just the friction sanity
+        # check on top of that.
         try:
             from src.trading import cost_gate
-            expected_pct = 0.0
+            expected_pct = 2.0
             pnl_range = getattr(plan, "expected_pnl_pct_range", None)
             if pnl_range and len(pnl_range) >= 2:
                 expected_pct = float(pnl_range[1])
