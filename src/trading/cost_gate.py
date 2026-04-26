@@ -339,7 +339,28 @@ def evaluate(
     passed = margin >= threshold
 
     usd_note = f" usd={usd_drift:+.2f}%" if abs(usd_drift) > 0.01 else ""
-    if passed:
+
+    # Paper-mode soft reject: per operator directive, the brain has
+    # already weighed cost across every layer (12 macro signals, 14
+    # agents, 36 strategies, 371 trade memory) before producing this
+    # plan. The cost gate's job in paper mode is to SURFACE the
+    # frictional math, not OVERRIDE the brain. We pass the trade with
+    # an "advisory_below_margin" warning when expected return is at
+    # least covering frictional cost (margin >= 0) -- only reject when
+    # the trade is mathematically guaranteed to lose money (margin <
+    # 0). Real capital path stays strict: ACT_REAL_CAPITAL_ENABLED=1
+    # keeps the original `margin >= threshold` requirement.
+    is_real_capital = os.environ.get(
+        "ACT_REAL_CAPITAL_ENABLED", ""
+    ).strip() == "1"
+    if not passed and not is_real_capital and margin >= 0:
+        passed = True
+        reason = (
+            f"cost_advisory:margin={margin:+.2f}% < {threshold:.2f}% "
+            f"(paper-mode soft pass; real capital would reject; "
+            f"exp={exp:.2f}% frictional={total:.2f}%{usd_note})"
+        )
+    elif passed:
         reason = f"cost_ok:{margin:+.2f}%>={threshold:.2f}%{usd_note}"
     else:
         reason = (

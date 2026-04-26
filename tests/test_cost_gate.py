@@ -21,10 +21,41 @@ def test_breakdown_sums_all_components_including_usd():
     assert b.total_pct == pytest.approx(1.945, abs=1e-3)
 
 
-def test_robinhood_blocks_2pct_move_below_margin():
-    """On Robinhood (1.69% spread + slippage), a 2% move doesn't clear 1% margin."""
+def test_robinhood_real_capital_blocks_2pct_move_below_margin(monkeypatch):
+    """REAL CAPITAL: 2% move on Robinhood (1.69% spread + slippage) doesn't
+    clear the 1% margin requirement -- hard reject."""
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     r = evaluate(
         expected_return_pct=2.0, venue="robinhood", atr_pct=0.3,
+        size_pct=1.0, usd_drift_pct_per_day=0.0, direction="LONG",
+    )
+    assert r.passed is False
+    assert "cost_reject" in r.reason
+
+
+def test_robinhood_paper_mode_soft_passes_marginal_trade(monkeypatch):
+    """PAPER MODE: same 2% move soft-passes with `cost_advisory` so the
+    brain's plan reaches the executor. Per operator directive, the LLM
+    brain has already weighed cost across every layer; cost gate's job
+    in paper mode is to surface frictional math, not block."""
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = evaluate(
+        expected_return_pct=2.0, venue="robinhood", atr_pct=0.3,
+        size_pct=1.0, usd_drift_pct_per_day=0.0, direction="LONG",
+    )
+    assert r.passed is True
+    assert "cost_advisory" in r.reason
+    # Margin must still be non-negative (genuinely lossy trades reject).
+    assert r.margin_pct >= 0
+
+
+def test_paper_mode_still_blocks_genuinely_lossy_trade(monkeypatch):
+    """PAPER MODE: when expected return doesn't even cover frictional
+    cost (margin < 0), still reject -- soft mode trusts the brain on
+    marginal trades, NOT on guaranteed losers."""
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = evaluate(
+        expected_return_pct=1.0, venue="robinhood", atr_pct=0.3,
         size_pct=1.0, usd_drift_pct_per_day=0.0, direction="LONG",
     )
     assert r.passed is False

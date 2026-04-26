@@ -8,6 +8,26 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_overlays(monkeypatch, tmp_path):
+    """Tests must not see the operator's local data/paper_soak_loose.json
+    or local env state. Without this, conviction_gate / cost_gate tests
+    see whatever overlay happens to be on disk and assert against
+    moving thresholds. Redirect the overlay to a tmp path (won't exist,
+    so reader returns None) and clear paper/real mode env vars so each
+    test sets exactly what it needs."""
+    overlay_path = tmp_path / "paper_soak_loose.json"
+    try:
+        from skills.paper_soak_loose import action as _psl_action
+        monkeypatch.setattr(_psl_action, "OVERLAY_FILE", overlay_path,
+                            raising=False)
+    except Exception:
+        pass
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    monkeypatch.delenv("ACT_FORBID_MODELS", raising=False)
+    yield
+
+
 @pytest.fixture
 def stub_dual_brain(monkeypatch):
     """Shared fixture — tests that stub src.ai.dual_brain.analyze /

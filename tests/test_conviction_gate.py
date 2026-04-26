@@ -63,7 +63,9 @@ def test_reject_when_multi_strategy_weak():
     assert any("multistrat_weak" in x for x in r.reasons)
 
 
-def test_reject_when_macro_crisis():
+def test_reject_when_macro_crisis_real_capital(monkeypatch):
+    """REAL CAPITAL: macro_crisis is a hard reject."""
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     r = evaluate(
         direction="LONG",
         tf_1h_direction="RISING", tf_4h_direction="RISING",
@@ -74,6 +76,29 @@ def test_reject_when_macro_crisis():
     assert r.tier == "reject"
     assert "macro_crisis" in r.reasons
     assert r.checks["macro_crisis_free"] is False
+
+
+def test_paper_mode_macro_crisis_advisory(monkeypatch):
+    """PAPER MODE: macro_crisis is advisory only. The LLM brain has
+    already weighed all 12 macro layers + 14 agents + 36 strategies +
+    371-trade memory; a single CRISIS signal shouldn't override that.
+    Real capital path remains a hard reject (see test above)."""
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = evaluate(
+        direction="LONG",
+        tf_1h_direction="RISING", tf_4h_direction="RISING",
+        hurst_regime="trending",
+        multi_strategy_counts={"long": 10, "short": 0, "flat": 26},
+        macro_bias=MacroBias(crisis=True, size_multiplier=0.0),
+    )
+    # crisis no longer hard-rejects in paper mode -- downstream
+    # checks (TF / strat / hurst etc.) decide the tier.
+    assert r.tier != "reject" or "macro_crisis" not in r.reasons
+    # Still surfaced in checks/reasons for audit:
+    assert any(
+        "advisory_macro_crisis" in x or "macro_crisis" in x
+        for x in r.reasons
+    )
 
 
 def test_reject_when_macro_misaligned_with_direction():

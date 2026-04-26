@@ -138,28 +138,43 @@ def evaluate(
     checks: Dict[str, bool] = {}
     reasons: List[str] = []
 
-    # ── Macro crisis — absolute override ────────────────────────────────
-    # In live trading this is a hard reject; no overrides. In paper-
-    # soak mode the operator may opt to bypass via
-    # /paper-soak-loose enable=true (the overlay is paper-only so
-    # real capital is untouched by this path).
+    # ── Macro crisis ────────────────────────────────────────────────────
+    # Real capital: HARD reject -- crisis blocks every entry, no overrides.
+    # Paper mode: ADVISORY only -- the brain has already weighed every
+    # macro layer (12 of them) plus news, sentiment, regime, and 371
+    # trade-memory examples; second-guessing it on a single CRISIS
+    # signal blocks legitimate setups during macro chop. Per operator
+    # directive `feedback_target_is_non_negotiable`: cost / macro
+    # awareness is a tool the brain uses, not a ceiling that overrides
+    # it. Real capital path (ACT_REAL_CAPITAL_ENABLED=1) ignores this
+    # and stays a hard reject. The overlay's bypass_macro_crisis flag
+    # is now redundant in paper mode -- the bypass is automatic --
+    # but kept for back-compat so explicit overlay edits continue to
+    # work.
+    is_real_capital = os.environ.get(
+        "ACT_REAL_CAPITAL_ENABLED", ""
+    ).strip() == "1"
     if macro_bias is not None and macro_bias.crisis:
-        overlay_early = _soak_overlay()
-        bypass_crisis = False
-        if overlay_early:
-            bypass_crisis = bool(
-                (overlay_early.get("conviction") or {}).get("bypass_macro_crisis")
-            )
-        if not bypass_crisis:
+        if is_real_capital:
+            overlay_early = _soak_overlay()
+            bypass_crisis = False
+            if overlay_early:
+                bypass_crisis = bool(
+                    (overlay_early.get("conviction") or {}).get("bypass_macro_crisis")
+                )
+            if not bypass_crisis:
+                checks["macro_crisis_free"] = False
+                reasons.append("macro_crisis")
+                return ConvictionResult(
+                    tier="reject", passed=False, direction=d, size_multiplier=0.0,
+                    checks=checks, reasons=reasons,
+                )
             checks["macro_crisis_free"] = False
-            reasons.append("macro_crisis")
-            return ConvictionResult(
-                tier="reject", passed=False, direction=d, size_multiplier=0.0,
-                checks=checks, reasons=reasons,
-            )
-        # Bypass path — still flag in checks/reasons for audit.
-        checks["macro_crisis_free"] = False
-        reasons.append("paper_soak_bypass_macro_crisis")
+            reasons.append("real_capital_overlay_bypass_macro_crisis")
+        else:
+            # Paper mode: brain is authority; macro_crisis is advisory.
+            checks["macro_crisis_free"] = False
+            reasons.append("paper_mode_advisory_macro_crisis")
     else:
         checks["macro_crisis_free"] = True
 
