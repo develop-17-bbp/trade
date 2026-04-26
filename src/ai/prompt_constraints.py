@@ -62,16 +62,11 @@ ALLOWED_ACTIONS = ['LONG', 'SHORT', 'FLAT', 'HOLD', 'REDUCE', 'EXIT']
 # ─────────────────────────────────────────────────────────────
 
 def _runtime_spread_pct() -> float:
-    """Return the live Robinhood round-trip spread in percent.
-
-    Reads the cost_gate venue preset, which honors the
-    ACT_ROBINHOOD_SPREAD_PCT env override. Falls back to the
-    1.69% historical default if cost_gate is unavailable.
-    """
+    """Return the live Robinhood round-trip spread in percent. Thin
+    wrapper around cost_gate.get_spread_pct (single source of truth)."""
     try:
-        from src.trading.cost_gate import _resolve_venue_costs
-        preset = _resolve_venue_costs("robinhood")
-        return float(preset.get("spread_pct", 1.69))
+        from src.trading.cost_gate import get_spread_pct
+        return get_spread_pct("robinhood")
     except Exception:
         return 1.69
 

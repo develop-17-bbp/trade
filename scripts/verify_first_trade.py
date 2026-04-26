@@ -87,20 +87,19 @@ def check_ollama_models() -> Tuple[bool, str]:
         ]
     except Exception:
         pass
-    forbidden_env = os.environ.get("ACT_FORBID_MODELS", "").lower()
-    forbidden_set = {s.strip() for s in forbidden_env.split(",") if s.strip()}
+    try:
+        from src.ai.model_guard import is_forbidden  # type: ignore
+    except Exception:
+        is_forbidden = lambda _m: False  # noqa: E731 -- defensive; module may not be on path yet
     ghosts = []
     for n in names:
         nl = n.lower()
         head = nl.split(":")[0]
-        if expected and nl not in expected and not any(
+        not_in_active_pair = bool(expected) and nl not in expected and not any(
             e for e in expected if e and e.split(":")[0] == head
-        ):
+        )
+        if not_in_active_pair or is_forbidden(n):
             ghosts.append(n)
-        for f in forbidden_set:
-            if f == nl or f == head or f in nl:
-                ghosts.append(n)
-                break
     if ghosts:
         _warn(
             f"GHOST models resident from a prior session: {sorted(set(ghosts))}. "

@@ -161,6 +161,24 @@ class CostGateResult:
         }
 
 
+def get_spread_pct(venue: str = "robinhood") -> float:
+    """Single source of truth for the active round-trip spread (percent).
+
+    Reads the venue preset including ACT_<VENUE>_SPREAD_PCT env override.
+    Falls back to 1.69% only if cost_gate itself cannot answer (which
+    cannot actually happen for known venues, but defensive default
+    keeps callers safe).
+
+    Used by prompt_constraints, dual_brain.PERFORMANCE_TARGET, executor
+    spread inits, and any future caller that wants the live cost
+    figure without re-implementing the lookup chain.
+    """
+    try:
+        return float(_resolve_venue_costs(venue).get("spread_pct", 1.69))
+    except Exception:
+        return 1.69
+
+
 def _resolve_venue_costs(venue: Optional[str]) -> Dict[str, float]:
     key = (venue or "robinhood").strip().lower()
     base = dict(VENUE_COSTS.get(key, VENUE_COSTS["robinhood"]))

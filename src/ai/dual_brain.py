@@ -374,8 +374,8 @@ DEFAULT_STRIP_THINK_TAGS_FROM_SCANNER = True    # compact scanner output
 # clear whatever friction exists and hit the target.
 def _format_performance_target() -> str:
     try:
-        from src.trading.cost_gate import _resolve_venue_costs  # noqa: PLC0415
-        spread_pct = float(_resolve_venue_costs("robinhood").get("spread_pct", 1.69))
+        from src.trading.cost_gate import get_spread_pct  # noqa: PLC0415
+        spread_pct = get_spread_pct("robinhood")
     except Exception:
         spread_pct = 1.69
     min_move_pct = max(2.0, spread_pct * 1.5)
