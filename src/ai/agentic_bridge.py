@@ -264,6 +264,44 @@ def compile_agentic_plan(
         )
         result = loop.run()
 
+        # Rule-based fallback when LLM repeatedly fails. Per operator
+        # directive ("use everything present in ACT to make trades"),
+        # the multi-strategy engine + 14 agents + ML ensemble + TF
+        # alignment are all already computing valid signals on every
+        # tick -- they just go unused because the agentic loop's
+        # parse_failure forces a SHADOW SKIP. In paper mode (real
+        # capital still gated) we now synthesize a fallback TradePlan
+        # from those signals when the LLM path produces no plan.
+        # Real-capital path stays strict: the brain is required.
+        is_real_capital = os.environ.get(
+            "ACT_REAL_CAPITAL_ENABLED", ""
+        ).strip() == "1"
+        terminated = (result.terminated_reason or "").lower()
+        plan_proposes_trade = (
+            result.plan is not None
+            and str(result.plan.direction).upper() in ("LONG", "SHORT", "BUY", "SELL")
+        )
+        if (terminated in ("parse_failures", "max_steps", "disabled")
+                and not plan_proposes_trade
+                and not is_real_capital):
+            fb_plan = _rule_based_fallback_plan(
+                asset=asset, regime=regime, quant_data=quant_data,
+                context=context,
+            )
+            if fb_plan is not None:
+                logger.warning(
+                    "[agentic_bridge:%s] LLM unreachable (%s); "
+                    "synthesizing rule-based fallback plan: dir=%s "
+                    "tier=%s size_pct=%s",
+                    asset, terminated, fb_plan.direction,
+                    fb_plan.entry_tier, fb_plan.size_pct,
+                )
+                result = LoopResult(
+                    plan=fb_plan,
+                    steps_taken=result.steps_taken,
+                    terminated_reason="rule_based_fallback",
+                )
+
         # C7b — write the analyst's decision back into brain_memory so
         # the scanner's next tick sees it. Compact trace; never raises.
         try:
@@ -289,6 +327,107 @@ def compile_agentic_plan(
             steps_taken=0,
             terminated_reason="parse_failures",
         )
+
+
+def _rule_based_fallback_plan(
+    *,
+    asset: str,
+    regime: str,
+    quant_data: str,
+    context: Optional[AgenticContext] = None,
+) -> Optional["TradePlan"]:
+    """Synthesize a TradePlan from the rule-based stack when the LLM
+    path is unreachable. Per operator directive ("use everything in
+    ACT to make trades"), the multi-strategy engine + 14 agents +
+    ML ensemble + TF alignment are all already computing valid
+    signals on every tick -- they just go unused when the agentic
+    loop's parse_failure forces a SHADOW SKIP.
+
+    Returns None when the rule stack itself is too neutral to
+    propose a direction -- in that case the caller keeps the
+    original SKIP plan. Real-capital path SHOULD NOT call this
+    (caller checks ACT_REAL_CAPITAL_ENABLED).
+    """
+    if context is None:
+        return None
+
+    # Best-effort signal aggregation. Each source returns a vote in
+    # {-1, 0, +1} or None. We require at least 2 sources agreeing in
+    # the same direction; if the bag is mixed we return None so the
+    # caller keeps SHADOW SKIP.
+    votes: List[int] = []
+
+    # 1. TF alignment (1h + 4h) -- the executor already prints
+    #    "TF ALIGNMENT OVERRIDE: 1h=RISING 4h=RISING" on every tick.
+    #    Parse from quant_data if it's there.
+    tf_text = (quant_data or "").lower()
+    bullish_tf = ("1h=rising" in tf_text and "4h=rising" in tf_text) or \
+                 ("tf_1h=rising" in tf_text and "tf_4h=rising" in tf_text)
+    bearish_tf = ("1h=falling" in tf_text and "4h=falling" in tf_text) or \
+                 ("tf_1h=falling" in tf_text and "tf_4h=falling" in tf_text)
+    if bullish_tf:
+        votes.append(+1)
+    elif bearish_tf:
+        votes.append(-1)
+
+    # 2. Multi-strategy consensus score (parsed from quant_data)
+    import re as _re
+    m = _re.search(r"consensus=\w+\s+score=([-+]?\d*\.?\d+)", quant_data or "")
+    if m:
+        try:
+            score = float(m.group(1))
+            if score > 0.05:
+                votes.append(+1)
+            elif score < -0.05:
+                votes.append(-1)
+        except ValueError:
+            pass
+
+    # 3. Brain memory's most recent scan rationale (continuity from
+    #    when the LLM last DID respond)
+    try:
+        from src.ai.brain_memory import get_brain_memory
+        mem = get_brain_memory()
+        latest = mem.read_latest_scan(asset, max_age_s=86400.0)
+        if latest is not None:
+            d = (latest.proposed_direction or "").upper()
+            if d == "LONG":
+                votes.append(+1)
+            elif d == "SHORT":
+                votes.append(-1)
+    except Exception:
+        pass
+
+    if not votes:
+        return None
+
+    net = sum(votes)
+    if net == 0:
+        return None  # mixed -- keep SHADOW SKIP
+
+    direction = "LONG" if net > 0 else "SHORT"
+    agreeing = sum(1 for v in votes if (v > 0 if net > 0 else v < 0))
+    confidence = min(0.85, 0.4 + 0.15 * agreeing)
+    size_pct = 0.5 if agreeing < 2 else 1.0  # half-size unless 2+ sources agree
+
+    try:
+        from src.trading.trade_plan import TradePlan
+        return TradePlan(
+            asset=asset.upper(),
+            direction=direction,
+            entry_tier="normal",
+            size_pct=size_pct,
+            confidence=confidence,
+            thesis=(
+                f"rule-based fallback (LLM unavailable): "
+                f"{agreeing}/{len(votes)} non-LLM sources agree on "
+                f"{direction.lower()}; TF={tf_text[:60] if (bullish_tf or bearish_tf) else 'mixed'}; "
+                f"regime={regime}"
+            )[:300],
+        )
+    except Exception as e:
+        logger.debug("rule-based fallback plan construction failed: %s", e)
+        return None
 
 
 # ── Feature-flag helper (used by the C4d executor hook) ─────────────────

@@ -342,7 +342,13 @@ class OllamaProvider(BaseLLMProvider):
                                     model_id, attempt + 1,
                                 )
                                 break  # break url loop, retry whole thing
-                            return self._parse_json(response_text)
+                            # Return Ollama-native shape so dual_brain
+                            # / agentic_trade_loop / etc. can run their
+                            # OWN parsers (which handle multi-JSON,
+                            # think tags, fenced blocks). Eagerly
+                            # parsing here threw away raw text on
+                            # multi-JSON outputs from qwen-coder.
+                            return {'response': response_text, 'done': True}
                     else:
                         # OpenAI-compat fallback. Ollama 0.1.32+ accepts an
                         # `options` + `keep_alive` extension here too;
@@ -373,7 +379,7 @@ class OllamaProvider(BaseLLMProvider):
                                     model_id, attempt + 1,
                                 )
                                 break
-                            return self._parse_json(text)
+                            return {'response': text, 'done': True}
                 except Exception as e:
                     logger.debug(f"Endpoint {url} failed: {e}")
                     continue
