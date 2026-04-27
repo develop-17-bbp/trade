@@ -559,10 +559,38 @@ def _handle_recovery_plan(args: Dict[str, Any]) -> Dict[str, Any]:
         pf = get_active_paper_fetcher()
         if pf is None:
             return {"error": "no_active_paper_fetcher"}
+        # Pull live tick_state for each asset to evaluate trend-
+        # favorability per position (the brain wants to know if the
+        # trend favors this specific direction RIGHT NOW).
+        from src.ai import tick_state as _ts
+        _trend_by_asset: Dict[str, Dict[str, Any]] = {}
+        for _a in {str(p.asset).upper() for p in pf.positions.values()}:
+            _snap = _ts.get(_a)
+            _trend_by_asset[_a] = {
+                "ema_dir": str(_snap.get("ema_direction", "?")),
+                "regime": str(_snap.get("regime", "?")),
+                "hurst_value": float(_snap.get("hurst_value", 0.5)),
+                "hurst_regime": str(_snap.get("hurst_regime", "?")),
+                "kalman_trend": str(_snap.get("kalman_trend", "?")),
+            }
         rows: List[Dict[str, Any]] = []
         for trade_id, p in pf.positions.items():
             if asset_filter and str(p.asset).upper() != asset_filter:
                 continue
+            _t = _trend_by_asset.get(str(p.asset).upper(), {})
+            # trend favours LONG if price > entry, EMA rising, hurst > 0.5,
+            # regime trending; mirror for SHORT.
+            ema_aligned = (
+                (p.direction == "LONG" and _t.get("ema_dir") == "RISING") or
+                (p.direction == "SHORT" and _t.get("ema_dir") == "FALLING")
+            )
+            hurst_trending = float(_t.get("hurst_value", 0.5)) > 0.5
+            kalman_aligned = (
+                (p.direction == "LONG" and _t.get("kalman_trend") == "UP") or
+                (p.direction == "SHORT" and _t.get("kalman_trend") == "DOWN")
+            )
+            regime_ok = _t.get("regime", "").upper() not in ("CRISIS", "")
+            trend_favors = sum([ema_aligned, hurst_trending, kalman_aligned, regime_ok])
             rows.append({
                 "trade_id": trade_id,
                 "asset": p.asset,
@@ -572,6 +600,19 @@ def _handle_recovery_plan(args: Dict[str, Any]) -> Dict[str, Any]:
                 "pnl_pct_gross": round(float(getattr(p, "current_pnl_pct", 0) or 0), 3),
                 "pnl_pct_net": round(float(getattr(p, "current_pnl_pct_net", 0) or 0), 3),
                 "pnl_usd_net": round(float(getattr(p, "current_pnl_usd_net", 0) or 0), 2),
+                "trend_favors_score": int(trend_favors),  # 0-4; >=3 = favorable
+                "trend_signals": {
+                    "ema_aligned": ema_aligned,
+                    "hurst_trending": hurst_trending,
+                    "kalman_aligned": kalman_aligned,
+                    "regime_ok": regime_ok,
+                },
+                "recommendation": (
+                    "PARTIAL_CLOSE" if (float(getattr(p, "current_pnl_pct", 0) or 0) >= 2.5
+                                         and trend_favors >= 3)
+                    else "HOLD" if (trend_favors >= 2)
+                    else "EVALUATE_THESIS"  # trend against — check news/macro before close
+                ),
             })
         if not rows:
             return {"asset": asset_filter or "ALL", "open_count": 0,
