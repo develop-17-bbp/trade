@@ -538,6 +538,170 @@ def _handle_profit_protector(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"profit_protector_query_failed: {e}"[:200]}
 
 
+def _handle_trade_verifier_state(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Recent post-trade SelfCritique entries — predicted vs realized PnL,
+    catalyst hits/misses, slippage. Brain reads to avoid repeating
+    setups that lost in similar conditions."""
+    asset = str(args.get("asset") or "").upper()
+    limit = max(1, min(20, int(args.get("limit") or 5)))
+    try:
+        import sqlite3, json as _json
+        from src.orchestration.warm_store import get_store
+        store = get_store()
+        conn = sqlite3.connect(store.db_path, timeout=2.0)
+        try:
+            sql = (
+                "SELECT ts_ns, symbol, plan_json, self_critique, final_action "
+                "FROM decisions WHERE self_critique != '{}' AND self_critique IS NOT NULL "
+                + ("AND symbol = ? " if asset else "")
+                + "ORDER BY ts_ns DESC LIMIT ?"
+            )
+            params = ((asset, limit) if asset else (limit,))
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+        out = []
+        for ts_ns, sym, plan_raw, crit_raw, action in rows:
+            try:
+                plan = _json.loads(plan_raw or "{}")
+                crit = _json.loads(crit_raw or "{}")
+            except Exception:
+                plan, crit = {}, {}
+            out.append({
+                "ts_ns": int(ts_ns), "asset": sym,
+                "predicted_direction": plan.get("direction", "?"),
+                "predicted_pnl_range": plan.get("expected_pnl_pct_range", []),
+                "realized_pnl_pct": crit.get("realized_pnl_pct"),
+                "verdict": crit.get("verdict", ""),
+                "miss_reasons": str(crit.get("miss_reasons", ""))[:200],
+                "lessons": str(crit.get("lessons", ""))[:200],
+                "final_action": action,
+            })
+        return {"verifications": out, "count": len(out)}
+    except Exception as e:
+        return {"error": f"verifier_query_failed: {e}"[:200]}
+
+
+def _handle_feature_drift(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Feature distribution drift (PSI, z-score) so brain knows when ML
+    model decay is detected before circuit breaker fires."""
+    try:
+        from src.monitoring.drift_detector import DriftDetector
+        det = DriftDetector()
+        # DriftDetector tracks features the executor feeds it. Without
+        # a singleton accessor we can only describe known-monitored features.
+        features = ["rsi", "ema_slope", "atr_pct", "vol_z", "spread_pct"]
+        out = {}
+        for f in features:
+            try:
+                psi, status = det.check_feature(f)
+                out[f] = {"psi": round(float(psi), 4), "status": str(status)}
+            except Exception:
+                out[f] = {"psi": 0.0, "status": "no_baseline"}
+        return {"features": out, "advisory": "psi>0.25 = significant drift; rebaseline required"}
+    except Exception as e:
+        return {"error": f"drift_query_failed: {e}"[:200]}
+
+
+def _handle_circuit_breaker_state(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Circuit-breaker state across registered components (open/closed/
+    half-open) so brain reasons about whether to trade conservatively."""
+    try:
+        # Each subsystem owns its breaker; we don't have a registry.
+        # Surface a graceful status that says "no central registry yet"
+        # so brain doesn't loop on this.
+        return {
+            "state": "n/a",
+            "advisory": (
+                "Circuit breakers are per-subsystem (no central registry). "
+                "Watch tick_state.last_refusal and emergency_level instead."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"breaker_query_failed: {e}"[:200]}
+
+
+def _handle_on_chain_signals(args: Dict[str, Any]) -> Dict[str, Any]:
+    """On-chain metrics — blockchain stats, mempool, stablecoins, hashrate.
+    Independent of news_digest so brain can ask 'what's the on-chain
+    picture specifically?'"""
+    try:
+        from src.data.on_chain_fetcher import OnChainFetcher
+        f = OnChainFetcher()
+        out: Dict[str, Any] = {}
+        try:
+            out["blockchain_stats"] = f._fetch_blockchain_com_stats() or {}
+        except Exception:
+            out["blockchain_stats"] = {}
+        try:
+            out["mempool"] = f._fetch_mempool_stats() or {}
+        except Exception:
+            out["mempool"] = {}
+        try:
+            out["stablecoins"] = f.fetch_defillama_stablecoins() or {}
+        except Exception:
+            out["stablecoins"] = {}
+        try:
+            out["hashrate"] = f._fetch_mempool_hashrate() or {}
+        except Exception:
+            out["hashrate"] = {}
+        return out
+    except Exception as e:
+        return {"error": f"on_chain_query_failed: {e}"[:200]}
+
+
+def _handle_institutional_flows(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Institutional flows — macro correlations, stablecoin flows, options
+    sentiment, long/short ratio, cross-exchange spreads."""
+    asset = str(args.get("asset") or "BTC").upper()
+    try:
+        from src.data.institutional_fetcher import InstitutionalFetcher
+        f = InstitutionalFetcher()
+        out = f.get_all_institutional(asset) or {}
+        return {"asset": asset, "metrics": out}
+    except Exception as e:
+        return {"error": f"institutional_query_failed: {e}"[:200]}
+
+
+def _handle_adaptation_state(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Bandit + credit-assigner state. Brain sees per-strategy posterior
+    means + per-component credit weights so it understands its own
+    adaptation."""
+    asset = str(args.get("asset") or "BTC").upper()
+    out: Dict[str, Any] = {"asset": asset}
+    try:
+        from src.learning.thompson_bandit import top_k_by_posterior_mean
+        from src.trading.strategy_repository import get_repo
+        try:
+            repo = get_repo()
+            recs = (repo.search(status="champion", limit=50) +
+                    repo.search(status="challenger", limit=50) +
+                    repo.search(status="candidate", limit=50))
+            top = top_k_by_posterior_mean(recs, k=5) or []
+            out["top_strategies_by_posterior"] = [
+                {"id": str(getattr(t, "strategy_id", "") or "")[:40],
+                 "posterior_mean": round(float(getattr(t, "posterior_mean", 0)), 4),
+                 "alpha": float(getattr(t, "alpha", 0)),
+                 "beta": float(getattr(t, "beta", 0))}
+                for t in top
+            ]
+        except Exception as e:
+            out["bandit_error"] = str(e)[:120]
+    except ImportError:
+        out["bandit_error"] = "thompson_bandit_unavailable"
+    try:
+        from src.learning.credit_assigner import CreditAssigner
+        ca = CreditAssigner()
+        try:
+            weights = ca.weights() if hasattr(ca, "weights") else {}
+            out["credit_weights"] = {k: round(float(v), 4) for k, v in (weights or {}).items()}
+        except Exception as e:
+            out["credit_error"] = str(e)[:120]
+    except ImportError:
+        out["credit_error"] = "credit_assigner_unavailable"
+    return out
+
+
 def _handle_genetic_evolution_state(args: Dict[str, Any]) -> Dict[str, Any]:
     """Full evolution state: generations run, best fitness, mutation
     rate, stagnation, pareto front size. Brain reads this to know
@@ -1331,6 +1495,79 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_trade_verifier_state",
+            description=(
+                "[VERIFY] Recent post-trade SelfCritique entries from "
+                "trade_verifier — predicted vs realized PnL, miss reasons, "
+                "lessons. Brain reads to avoid repeating losing setups."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+            },
+            handler=_handle_trade_verifier_state, tag="read_only",
+        ),
+        Tool(
+            name="query_feature_drift",
+            description=(
+                "[DRIFT] Feature distribution drift (PSI per feature) so "
+                "brain knows when ML inputs have shifted significantly. "
+                "psi > 0.25 = drift; rebaseline needed."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_feature_drift, tag="read_only",
+        ),
+        Tool(
+            name="query_circuit_breaker_state",
+            description=(
+                "[BREAKER] Circuit-breaker overall status. Returns 'n/a' "
+                "currently — no central registry. Brain watches "
+                "tick_state.last_refusal and emergency_level instead."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_circuit_breaker_state, tag="read_only",
+        ),
+        Tool(
+            name="query_on_chain_signals",
+            description=(
+                "[ON-CHAIN] Independent on-chain metrics: blockchain_stats, "
+                "mempool, stablecoin flows, hashrate. Use when news doesn't "
+                "explain a move — on-chain often does."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_on_chain_signals, tag="read_only",
+        ),
+        Tool(
+            name="query_institutional_flows",
+            description=(
+                "[INSTITUTIONAL] Macro correlations, stablecoin flows, "
+                "options sentiment, long/short ratio, cross-exchange "
+                "spreads. Use to detect smart-money positioning."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+            },
+            handler=_handle_institutional_flows, tag="read_only",
+        ),
+        Tool(
+            name="query_adaptation_state",
+            description=(
+                "[ADAPTATION] Thompson-bandit posterior means per strategy "
+                "+ credit-assigner weights per component. Brain sees its "
+                "own learning state — which strategies are favored, which "
+                "components are credited for recent wins."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string"}},
+            },
+            handler=_handle_adaptation_state, tag="read_only",
+        ),
+        Tool(
             name="query_genetic_evolution_state",
             description=(
                 "[GENETIC] Full evolution state: total_generations_run, "
@@ -1504,6 +1741,12 @@ def register_unified_brain_tools(registry) -> int:
             "query_recovery_plan": ("realtime", "query", "internal"),
             "query_genetic_evolution_state": ("hour", "query", "internal"),
             "query_genetic_hall_of_fame": ("hour", "query", "internal"),
+            "query_trade_verifier_state": ("realtime", "query", "internal"),
+            "query_feature_drift": ("hour", "query", "internal"),
+            "query_circuit_breaker_state": ("realtime", "query", "internal"),
+            "query_on_chain_signals": ("hour", "data_fetch", "internal"),
+            "query_institutional_flows": ("hour", "data_fetch", "internal"),
+            "query_adaptation_state": ("hour", "query", "internal"),
         }
         for name, (tm, it, rg) in _classifications.items():
             if name not in TOOL_CLASSIFICATIONS:
