@@ -169,20 +169,59 @@ _SYSTEM_PROMPT_BASE_TEMPLATE = """You are a QUANTITATIVE TRADING ANALYST embedde
 """
 
 
+_PAPER_SOAK_ENCOURAGEMENT = """
+
+10. **PAPER-SOAK MODE — propose more, skip less**:
+
+    The bot is in paper mode (ACT_REAL_CAPITAL_ENABLED is unset).
+    Per operator directive, the GOAL of paper mode is to gather
+    soak data for the readiness gate (500 trades / 14 days). Each
+    SKIP costs the soak counter a tick. If you have ANY honest read
+    on direction -- even MODERATE conviction (0.55+) -- propose
+    LONG with conservative size (1-2% of equity). The post-trade
+    self-critique will teach the brain over time; it cannot learn
+    from skips.
+
+    DECISION RULE in paper mode:
+    - If 1h or 4h timeframe AGREES with bullish bias OR mean-reversion
+      setup is forming after a drop -> propose LONG.
+    - If both 1h AND 4h are bearish on a Robinhood (longs-only) venue
+      -> still consider mean-reversion LONG bounce on oversold,
+      OR SHORT (the executor will route to a perp venue when wired;
+      the brain's job is to FORM the view).
+    - SKIP only when: authority violation, no signal at all (truly
+      flat), or fresh news blackout.
+
+    Real capital path (ACT_REAL_CAPITAL_ENABLED=1) reverts to the
+    strict rules above (rule 9). This relaxation is paper-only.
+"""
+
+
 def _render_system_prompt_base() -> str:
     """Render SYSTEM_PROMPT_BASE with runtime spread values.
 
     Computed thresholds:
       * spread_pct        — live cost_gate.robinhood preset
       * min_move_pct      — 1.5 x spread (covers spread + 50% buffer)
+
+    In paper mode, append a soak-encouragement block telling the
+    brain to PROPOSE more (not less) so the readiness-gate counter
+    actually moves. The strict rule-9 conservatism stays for real
+    capital path.
     """
+    import os as _os_pc
     spread_pct = _runtime_spread_pct()
     min_move_pct = max(2.0, spread_pct * 1.5)
-    # Escape `{` `}` outside the substitution markers.
-    return _SYSTEM_PROMPT_BASE_TEMPLATE.format(
+    base = _SYSTEM_PROMPT_BASE_TEMPLATE.format(
         spread_pct=spread_pct,
         min_move_pct=min_move_pct,
     )
+    is_real_capital = _os_pc.environ.get(
+        "ACT_REAL_CAPITAL_ENABLED", ""
+    ).strip() == "1"
+    if not is_real_capital:
+        base = base.rstrip() + _PAPER_SOAK_ENCOURAGEMENT
+    return base
 
 
 # Back-compat: keep SYSTEM_PROMPT_BASE module-level for any external
