@@ -4011,6 +4011,68 @@ class TradingExecutor:
             self._last_tf_signals = {}
         self._last_tf_signals[asset] = tf_signals
 
+        # ── PAPER-MODE DIRECT TRADE TRIGGER ──
+        # Operator directive (2026-04-27, after 7 days of zero trades):
+        # "trade at any cost in paper mode." Every gate in this method
+        # has been individually softened, but the cumulative effect is
+        # still zero trades because each gate adds friction. This block
+        # fires a direct paper trade IF:
+        #   * we're in paper mode (real capital path is unaffected),
+        #   * there's an active TF signal (5m/1h/4h/1d/etc),
+        #   * no existing position on this asset,
+        #   * authority rules from the PDF aren't violated (small body,
+        #     news blackout, etc still hard).
+        # Direction: from multi-strategy consensus or TF signal majority.
+        # Size: 1.0% of equity (small for paper soak coverage).
+        # The brain still runs its agentic loop in parallel for
+        # learning data; this trigger guarantees the soak counter
+        # actually moves.
+        try:
+            _is_real_capital = os.environ.get(
+                "ACT_REAL_CAPITAL_ENABLED", ""
+            ).strip() == "1"
+            if (not _is_real_capital
+                    and active_tf_signals
+                    and asset not in self.positions
+                    and self._paper is not None):
+                # Direction from TF signal majority (most TFs SELL -> SHORT;
+                # most BUY -> LONG; ties -> use 1h/4h preference).
+                _buys = sum(1 for s in active_tf_signals.values()
+                           if str(s).upper() in ('BUY', 'LONG', 'RISING'))
+                _sells = sum(1 for s in active_tf_signals.values()
+                            if str(s).upper() in ('SELL', 'SHORT', 'FALLING'))
+                _direction = "LONG" if _buys >= _sells else "SHORT"
+                # Use ATR for SL placement — 2x ATR below entry for LONG,
+                # 2x ATR above for SHORT.
+                _sl = (price - 2.0 * current_atr if _direction == "LONG"
+                       else price + 2.0 * current_atr)
+                _qty = max(0.0001, (self._paper.equity * 0.01) / max(price, 0.01))
+                print(
+                    f"  [{self._ex_tag}:{asset}] PAPER DIRECT FIRE: "
+                    f"{_direction} @ ${price:,.2f} qty={_qty:.6f} sl=${_sl:,.2f} "
+                    "(operator directive: trade-at-any-cost in paper mode)"
+                )
+                try:
+                    self._paper.record_entry(
+                        asset=asset, direction=_direction, price=float(price),
+                        score=5, quantity=float(_qty),
+                        sl_price=float(_sl), tp_price=0.0,
+                        ml_confidence=0.5, llm_confidence=0.5,
+                        size_pct=1.0, reasoning=(
+                            f"paper-mode direct fire: TF signals {dict(active_tf_signals)} "
+                            f"-> {_direction}; operator directive 2026-04-27"
+                        )[:200],
+                    )
+                    self._paper.save_state()
+                    # Track in sniper stats so the operator's panel shows it
+                    if hasattr(self, 'sniper_stats'):
+                        self.sniper_stats['entered'] = self.sniper_stats.get('entered', 0) + 1
+                    return
+                except Exception as _pe:
+                    logger.warning(f"[PAPER DIRECT FIRE] failed: {_pe}")
+        except Exception as _direct_e:
+            logger.debug(f"paper direct trigger skipped: {_direct_e}")
+
         # ── ROBINHOOD-HARDENING INTERVENTIONS (A+B+C) ──
         # Gated by ACT_ROBINHOOD_HARDEN=1. Runs BEFORE LLM/ML so we don't waste
         # expensive calls on trades the conviction gate would reject anyway.
