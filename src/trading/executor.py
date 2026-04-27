@@ -8073,6 +8073,21 @@ class TradingExecutor:
                        ratchet_next_pnl_pct=float(next_ratchet_min_pnl),
                        ratchet_current_pnl_pct=float(ratchet_pnl),
                        ratchet_sl_price=float(new_sl))
+            # Track SL adjustments — when ratchet moves SL meaningfully
+            # the brain should know on the next tick (the body just made
+            # an action — surface it as feedback).
+            if abs(new_sl - sl) > max(0.01 * sl, 1.0):
+                snap = _ts.get(asset)
+                _deltas = snap.get("sl_deltas", []) if isinstance(snap, dict) else []
+                if not isinstance(_deltas, list):
+                    _deltas = []
+                _deltas.insert(0, {
+                    "trade_id": pos.get("trade_id", asset),
+                    "old_sl": round(float(sl), 2),
+                    "new_sl": round(float(new_sl), 2),
+                    "reason": f"ratchet:{active_ratchet_label} pnl={ratchet_pnl:+.2f}%",
+                })
+                _ts.update(asset, sl_deltas=_deltas[:5])
         except Exception:
             pass
 

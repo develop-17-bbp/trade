@@ -392,6 +392,30 @@ class RobinhoodPaperFetcher:
             self.closed_trades.append(pos)
             del self.positions[trade_key]
 
+            # Brain feedback: surface recent exits in tick_state so the
+            # analyst's next tick sees "trade_id=X exited at -2.1% NET
+            # because thesis broken / SL hit / brain initiated". Without
+            # this the brain only learns by absence (position no longer
+            # in query_open_positions_detail) which is too implicit.
+            try:
+                from src.ai import tick_state as _ts
+                snap = _ts.get(asset)
+                _existing = snap.get("recent_exits", []) if isinstance(snap, dict) else []
+                if not isinstance(_existing, list):
+                    _existing = []
+                _existing.insert(0, {
+                    "trade_id": trade_key,
+                    "direction": pos.direction,
+                    "entry": round(float(pos.entry_price), 2),
+                    "exit": round(float(fill_price), 2),
+                    "pnl_net_pct": round(float(pnl_pct), 3),
+                    "pnl_usd": round(float(pnl_usd), 2),
+                    "reason": str(reason)[:120],
+                })
+                _ts.update(asset, recent_exits=_existing[:5])
+            except Exception:
+                pass
+
             # Log (fixed: was referencing undefined 'rh_price' — now uses local 'bid'/'ask')
             exit_log = {
                 'event': 'EXIT',

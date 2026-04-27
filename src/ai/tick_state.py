@@ -75,6 +75,30 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
     # the brain doesn't repeat the same proposal.
     if "last_refusal" in snap and snap.get("last_refusal"):
         lines.append(f"REFUSAL: {snap.get('last_refusal')}")
+    # RECENT EXITS: closes since last tick (SL/TP hit, brain-initiated,
+    # macro shift). Brain reads to learn from the outcome and decide
+    # next-tick posture (e.g. add to winners, avoid same setup).
+    _exits = snap.get("recent_exits") or []
+    if isinstance(_exits, list) and _exits:
+        _exit_strs = []
+        for _e in _exits[:3]:
+            _exit_strs.append(
+                f"{_e.get('trade_id', '?')}={_e.get('direction', '?')[0]}"
+                f"@${_e.get('entry', 0):.2f}->${_e.get('exit', 0):.2f}"
+                f"({_e.get('pnl_net_pct', 0):+.2f}%/${_e.get('pnl_usd', 0):+.2f}"
+                f"/{(_e.get('reason') or '')[:30]})"
+            )
+        lines.append(f"RECENT_EXITS: {' | '.join(_exit_strs)}")
+    # SL ADJUSTMENTS: deltas from auto-ratchet since last brain tick
+    _sl_deltas = snap.get("sl_deltas") or []
+    if isinstance(_sl_deltas, list) and _sl_deltas:
+        _delta_strs = []
+        for _d in _sl_deltas[:3]:
+            _delta_strs.append(
+                f"{_d.get('trade_id', '?')}: ${_d.get('old_sl', 0):.2f}->"
+                f"${_d.get('new_sl', 0):.2f} ({_d.get('reason', '')[:40]})"
+            )
+        lines.append(f"SL_ADJUSTMENTS: {' | '.join(_delta_strs)}")
     # GOAL ARITHMETIC: brain reads the day's progress vs the 1%/day
     # mission so it knows whether to press on opportunities or take
     # what's on the table. Negative gap means we've overshot; large

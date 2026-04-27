@@ -562,16 +562,32 @@ def _handle_open_positions_detail(args: Dict[str, Any]) -> Dict[str, Any]:
                     age_min = (_dt.now(tz=_tz.utc) - _et).total_seconds() / 60.0
                 except Exception:
                     age_min = 0.0
+            _entry = float(p.entry_price)
+            _peak = float(getattr(p, "peak_price", _entry) or _entry)
+            _cur = float(getattr(p, "current_price", _entry) or _entry)
+            _pnl_gross = float(getattr(p, "current_pnl_pct", 0) or 0)
+            _pnl_net = float(getattr(p, "current_pnl_pct_net", _pnl_gross) or _pnl_gross)
+            # Distance from peak (negative = below peak; for LONG that
+            # means giving back gains; for SHORT means giving back gains).
+            if p.direction == "LONG":
+                _dist_from_peak_pct = ((_cur - _peak) / _peak * 100.0) if _peak else 0.0
+            else:
+                _dist_from_peak_pct = ((_peak - _cur) / _peak * 100.0) if _peak else 0.0
             out.append({
                 "trade_id": trade_id,
                 "asset": p.asset,
                 "direction": p.direction,
-                "entry_price": round(float(p.entry_price), 2),
-                "current_price": round(float(getattr(p, "current_price", 0)), 2),
-                "current_pnl_pct": round(float(getattr(p, "current_pnl_pct", 0)), 3),
-                "current_pnl_usd": round(float(getattr(p, "current_pnl_usd", 0)), 2),
+                "entry_price": round(_entry, 2),
+                "current_price": round(_cur, 2),
+                "peak_price": round(_peak, 2),
+                "distance_from_peak_pct": round(_dist_from_peak_pct, 3),
+                "current_pnl_pct_gross": round(_pnl_gross, 3),
+                "current_pnl_pct_net": round(_pnl_net, 3),
+                "current_pnl_usd_gross": round(float(getattr(p, "current_pnl_usd", 0) or 0), 2),
+                "current_pnl_usd_net": round(float(getattr(p, "current_pnl_usd_net", 0) or 0), 2),
                 "quantity": float(p.quantity),
                 "age_min": round(age_min, 1),
+                "bars_held": int(getattr(p, "bars_held", 0) or 0),
                 "score": int(getattr(p, "score", 0)),
                 "thesis": str(getattr(p, "reasoning", ""))[:200],
                 "sl_price": round(float(getattr(p, "sl_price", 0)), 2),
