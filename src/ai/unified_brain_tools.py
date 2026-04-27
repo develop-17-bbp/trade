@@ -538,6 +538,76 @@ def _handle_profit_protector(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"profit_protector_query_failed: {e}"[:200]}
 
 
+def _handle_recovery_plan(args: Dict[str, Any]) -> Dict[str, Any]:
+    """When the portfolio is stuck (many opens, large net negative),
+    rank positions by current_pnl_pct_net and identify:
+      - profitable_closes: positions ALREADY net positive — close
+        these immediately to realize gains
+      - near_breakeven: positions with net > -0.3% — likely to flip
+        positive on small upward move; hold and watch
+      - deep_losers: positions worse than -2% net — accept the loss
+        OR hold for trend recovery, depending on thesis
+      - best_partial_candidates: top N positions by gross gain that
+        could be partial-closed at +2% gross targets
+
+    Brain calls this in stuck-portfolio recovery mode to plan the
+    sequence of closes rather than blanket-close everything.
+    """
+    asset_filter = str(args.get("asset") or "").upper().strip()
+    try:
+        from src.data.robinhood_fetcher import get_active_paper_fetcher
+        pf = get_active_paper_fetcher()
+        if pf is None:
+            return {"error": "no_active_paper_fetcher"}
+        rows: List[Dict[str, Any]] = []
+        for trade_id, p in pf.positions.items():
+            if asset_filter and str(p.asset).upper() != asset_filter:
+                continue
+            rows.append({
+                "trade_id": trade_id,
+                "asset": p.asset,
+                "direction": p.direction,
+                "entry_price": round(float(p.entry_price), 2),
+                "current_price": round(float(getattr(p, "current_price", 0)), 2),
+                "pnl_pct_gross": round(float(getattr(p, "current_pnl_pct", 0) or 0), 3),
+                "pnl_pct_net": round(float(getattr(p, "current_pnl_pct_net", 0) or 0), 3),
+                "pnl_usd_net": round(float(getattr(p, "current_pnl_usd_net", 0) or 0), 2),
+            })
+        if not rows:
+            return {"asset": asset_filter or "ALL", "open_count": 0,
+                    "advisory": "no open positions"}
+        rows.sort(key=lambda r: r["pnl_pct_net"], reverse=True)
+
+        profitable = [r for r in rows if r["pnl_pct_net"] > 0]
+        near_be = [r for r in rows if -0.3 <= r["pnl_pct_net"] <= 0]
+        deep_losers = [r for r in rows if r["pnl_pct_net"] < -2.0]
+        best_partial = [r for r in rows if r["pnl_pct_gross"] >= 2.0][:10]
+
+        total_close_now_usd = sum(r["pnl_usd_net"] for r in rows)
+        return {
+            "asset": asset_filter or "ALL",
+            "open_count": len(rows),
+            "close_all_now_realized_usd": round(total_close_now_usd, 2),
+            "profitable_closes": profitable[:10],
+            "near_breakeven_count": len(near_be),
+            "near_breakeven_sample": near_be[:5],
+            "deep_losers_count": len(deep_losers),
+            "deep_losers_sample": deep_losers[:5],
+            "best_partial_candidates": best_partial,
+            "advisory": (
+                f"profitable_closes: {len(profitable)} positions are NET "
+                f"positive — close them to realize gains. "
+                f"near_breakeven: {len(near_be)} small upward move flips "
+                "them positive; hold short-term. "
+                f"deep_losers: {len(deep_losers)} accept loss OR hold for "
+                "trend if thesis intact. "
+                f"close_all_now_realized = ${total_close_now_usd:.2f}."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"recovery_plan_failed: {e}"[:200]}
+
+
 def _handle_open_positions_detail(args: Dict[str, Any]) -> Dict[str, Any]:
     """Per-position breakdown — entry price, current PnL, age, original
     thesis, trade_id. Brain reads this to decide HOLD/EXIT/PARTIAL on
@@ -1148,6 +1218,24 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_recovery_plan",
+            description=(
+                "[RECOVERY] Stuck-portfolio analysis: ranks opens by "
+                "current_pnl_pct_net, identifies profitable_closes (already "
+                "net positive — close to realize), near_breakeven (small "
+                "upward move flips positive), deep_losers (accept or hold "
+                "for trend), and best_partial_candidates (gross >2% — "
+                "partial-close to lock realized gains). Use when "
+                "open_positions_same_asset >> cap and avg_unrealized_net "
+                "is significantly negative (stuck-portfolio recovery)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string"}},
+            },
+            handler=_handle_recovery_plan, tag="read_only",
+        ),
+        Tool(
             name="query_open_positions_detail",
             description=(
                 "[POSITIONS] Per-position breakdown for paper trades: "
@@ -1273,6 +1361,7 @@ def register_unified_brain_tools(registry) -> int:
             "modify_paper_position": ("realtime", "control", "internal"),
             "query_venue_capabilities": ("daily", "query", "internal"),
             "query_sizing_preview": ("realtime", "query", "internal"),
+            "query_recovery_plan": ("realtime", "query", "internal"),
         }
         for name, (tm, it, rg) in _classifications.items():
             if name not in TOOL_CLASSIFICATIONS:

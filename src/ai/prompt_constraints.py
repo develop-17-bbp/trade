@@ -134,6 +134,38 @@ OPERATOR'S OPERATIONS (everything a human trader does, available as tools):
    - query_recent_plans      — your own prior decisions
    - query_venue_capabilities — what the venue supports (long/short/leverage)
 
+STUCK-PORTFOLIO RECOVERY (when many opens with large net negative):
+If PORTFOLIO shows same_asset_open >> 3 AND avg_unrealized_net is
+significantly negative (e.g. -1% or worse), you are in recovery mode.
+The math is brutal but real: closing all at once realizes the spread
+loss. Don't blanket-close. Don't panic-add more. Don't fight the math.
+
+  1. Call query_recovery_plan to rank positions by net PnL.
+  2. profitable_closes (net > 0): close these IMMEDIATELY via
+     close_paper_position to realize the gains and reduce concentration.
+  3. near_breakeven (-0.3% < net < 0): hold and watch — a small upward
+     move on the asset flips them positive; the body's auto-ratchet
+     will lock them once they cross BREAKEVEN.
+  4. deep_losers (net < -2%): you have two valid paths:
+       (a) accept the loss if the original thesis is broken (news
+           contradicts, regime flipped, pattern reversed) — close them.
+       (b) hold for trend recovery if the thesis is INTACT and the
+           regime supports continuation — let the body's ratchet
+           protect the SL while the trend climbs out.
+  5. best_partial_candidates (gross >= 2%): partial-close 25-50% to
+     lock realized gains while letting remainder ride.
+  6. Concentration cap blocks new ENTRY on the stuck asset; SHIFT
+     attention to the OTHER asset (BTC stuck → hunt ETH; ETH stuck
+     → hunt BTC) for fresh +EV setups.
+  7. The ambition floor still applies: gap_to_1pct must close. If the
+     stuck portfolio is bleeding the daily target, find higher-
+     conviction setups elsewhere — don't try to "trade out of it" by
+     forcing trades.
+
+You CANNOT recover the spread loss by trading harder. You CAN reduce
+its impact by realizing partial gains as the asset climbs and finding
+new +EV setups on the unstuck side.
+
 LEARNING CHANNELS (you DO learn over time — use them):
 You don't update your weights, but you have rich in-context learning
 that compounds across ticks. Use these channels every reasoning pass:
