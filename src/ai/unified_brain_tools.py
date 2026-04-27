@@ -538,6 +538,228 @@ def _handle_profit_protector(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"profit_protector_query_failed: {e}"[:200]}
 
 
+def _handle_open_positions_detail(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-position breakdown — entry price, current PnL, age, original
+    thesis, trade_id. Brain reads this to decide HOLD/EXIT/PARTIAL on
+    each open trade individually (not just aggregate stats)."""
+    asset_filter = str(args.get("asset") or "").upper().strip()
+    try:
+        from src.data.robinhood_fetcher import get_active_paper_fetcher
+        pf = get_active_paper_fetcher()
+        if pf is None:
+            return {"error": "no_active_paper_fetcher"}
+        import time as _time
+        from datetime import datetime as _dt, timezone as _tz
+        out: List[Dict[str, Any]] = []
+        for trade_id, p in pf.positions.items():
+            if asset_filter and str(p.asset).upper() != asset_filter:
+                continue
+            _et_raw = getattr(p, "entry_time", None)
+            age_min = 0.0
+            if isinstance(_et_raw, str):
+                try:
+                    _et = _dt.fromisoformat(_et_raw.replace("Z", "+00:00"))
+                    age_min = (_dt.now(tz=_tz.utc) - _et).total_seconds() / 60.0
+                except Exception:
+                    age_min = 0.0
+            out.append({
+                "trade_id": trade_id,
+                "asset": p.asset,
+                "direction": p.direction,
+                "entry_price": round(float(p.entry_price), 2),
+                "current_price": round(float(getattr(p, "current_price", 0)), 2),
+                "current_pnl_pct": round(float(getattr(p, "current_pnl_pct", 0)), 3),
+                "current_pnl_usd": round(float(getattr(p, "current_pnl_usd", 0)), 2),
+                "quantity": float(p.quantity),
+                "age_min": round(age_min, 1),
+                "score": int(getattr(p, "score", 0)),
+                "thesis": str(getattr(p, "reasoning", ""))[:200],
+                "sl_price": round(float(getattr(p, "sl_price", 0)), 2),
+                "tp_price": round(float(getattr(p, "tp_price", 0)), 2),
+            })
+        return {"positions": out, "count": len(out)}
+    except Exception as e:
+        return {"error": f"open_positions_query_failed: {e}"[:200]}
+
+
+def _handle_close_paper_position(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Brain-initiated paper position close. Closes the first matching
+    open position by asset (or specific trade_id if provided). Supports
+    partial close via `fraction` (0.0-1.0; 1.0 = full close, default).
+    Reason is logged.
+
+    NEVER closes real-capital positions — paper-only by design.
+    """
+    import os as _os
+    if _os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() == "1":
+        return {"error": "close_paper_position_disabled_in_real_capital_mode"}
+
+    asset = str(args.get("asset") or "").upper().strip()
+    trade_id = str(args.get("trade_id") or "").strip()
+    reason = str(args.get("reason") or "brain_initiated_close")[:200]
+    try:
+        fraction = float(args.get("fraction") or 1.0)
+    except Exception:
+        fraction = 1.0
+    fraction = max(0.05, min(1.0, fraction))
+    if not asset and not trade_id:
+        return {"error": "asset_or_trade_id_required"}
+    try:
+        from src.data.robinhood_fetcher import get_active_paper_fetcher
+        pf = get_active_paper_fetcher()
+        if pf is None:
+            return {"error": "no_active_paper_fetcher"}
+        target_asset = asset
+        if trade_id and trade_id in pf.positions:
+            target_asset = pf.positions[trade_id].asset
+
+        # Partial close: split the position before record_exit fires.
+        # Find the target position, reduce its quantity, and create a
+        # closed-portion record by calling record_exit with the carved-
+        # off slice.
+        if fraction < 1.0:
+            target_pos = None
+            target_key = None
+            if trade_id and trade_id in pf.positions:
+                target_key = trade_id
+                target_pos = pf.positions[trade_id]
+            else:
+                for k, p in pf.positions.items():
+                    if str(p.asset).upper() == target_asset:
+                        target_key, target_pos = k, p
+                        break
+            if target_pos is None:
+                return {"closed": False, "reason": "no_open_position", "asset": target_asset}
+            close_qty = float(target_pos.quantity) * fraction
+            target_pos.quantity = float(target_pos.quantity) - close_qty
+            # Synthetic record_exit for the closed slice — reuse helper
+            # by temporarily swapping qty.
+            full_qty = target_pos.quantity + close_qty
+            target_pos.quantity = close_qty
+            closed = pf.record_exit(asset=target_asset, reason=f"brain partial {fraction:.0%}: {reason}")
+            # restore remaining qty into a fresh position copy
+            if closed is not None:
+                from copy import copy as _copy
+                remaining = _copy(closed)
+                remaining.exit_price = None
+                remaining.exit_time = None
+                remaining.exit_reason = ""
+                remaining.final_pnl_pct = 0.0
+                remaining.final_pnl_usd = 0.0
+                remaining.status = "open"
+                remaining.quantity = full_qty - close_qty
+                pf.positions[target_key] = remaining
+            pf.save_state()
+            if closed is None:
+                return {"closed": False, "reason": "partial_close_failed"}
+            return {
+                "closed": True, "partial": True, "fraction": fraction,
+                "asset": closed.asset, "direction": closed.direction,
+                "exit_price": float(closed.exit_price or closed.current_price),
+                "pnl_pct": round(float(closed.final_pnl_pct or 0), 3),
+                "pnl_usd": round(float(closed.final_pnl_usd or 0), 2),
+                "remaining_qty": round(full_qty - close_qty, 8),
+            }
+
+        # Full close.
+        closed = pf.record_exit(asset=target_asset, reason=f"brain: {reason}")
+        if closed is None:
+            return {"closed": False, "reason": "no_open_position_for_asset", "asset": target_asset}
+        pf.save_state()
+        return {
+            "closed": True, "partial": False,
+            "asset": closed.asset, "direction": closed.direction,
+            "entry_price": float(closed.entry_price),
+            "exit_price": float(closed.exit_price or closed.current_price),
+            "pnl_pct": round(float(closed.final_pnl_pct or 0), 3),
+            "pnl_usd": round(float(closed.final_pnl_usd or 0), 2),
+            "reason_logged": f"brain: {reason}",
+        }
+    except Exception as e:
+        return {"error": f"close_failed: {e}"[:200]}
+
+
+def _handle_modify_paper_position(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Adjust SL/TP on an open paper position. Brain calls this when
+    the trade is going its way and it wants to lock in profit (raise
+    SL toward entry) or extend the runway (raise TP)."""
+    import os as _os
+    if _os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() == "1":
+        return {"error": "modify_paper_position_disabled_in_real_capital_mode"}
+
+    asset = str(args.get("asset") or "").upper().strip()
+    trade_id = str(args.get("trade_id") or "").strip()
+    new_sl = args.get("new_sl_price")
+    new_tp = args.get("new_tp_price")
+    if new_sl is None and new_tp is None:
+        return {"error": "must_provide_new_sl_price_or_new_tp_price"}
+    if not asset and not trade_id:
+        return {"error": "asset_or_trade_id_required"}
+    try:
+        from src.data.robinhood_fetcher import get_active_paper_fetcher
+        pf = get_active_paper_fetcher()
+        if pf is None:
+            return {"error": "no_active_paper_fetcher"}
+        target_pos = None
+        target_key = None
+        if trade_id and trade_id in pf.positions:
+            target_key = trade_id
+            target_pos = pf.positions[trade_id]
+        else:
+            for k, p in pf.positions.items():
+                if str(p.asset).upper() == asset:
+                    target_key, target_pos = k, p
+                    break
+        if target_pos is None:
+            return {"error": "no_open_position", "asset": asset}
+        old_sl = float(getattr(target_pos, "sl_price", 0))
+        old_tp = float(getattr(target_pos, "tp_price", 0))
+        if new_sl is not None:
+            target_pos.sl_price = float(new_sl)
+        if new_tp is not None:
+            target_pos.tp_price = float(new_tp)
+        pf.save_state()
+        return {
+            "modified": True,
+            "trade_id": target_key,
+            "old_sl": old_sl, "new_sl": float(target_pos.sl_price),
+            "old_tp": old_tp, "new_tp": float(target_pos.tp_price),
+        }
+    except Exception as e:
+        return {"error": f"modify_failed: {e}"[:200]}
+
+
+def _handle_venue_capabilities(args: Dict[str, Any]) -> Dict[str, Any]:
+    """What operations the active venue supports — brain reads this so
+    it doesn't propose impossible actions (e.g. SHORT on Robinhood)."""
+    import os as _os
+    venue = str(args.get("venue") or "robinhood").lower()
+    caps = {
+        "venue": venue,
+        "supports_long": True,
+        "supports_short": False,
+        "supports_leverage": False,
+        "max_leverage": 1.0,
+        "supports_partial_close": True,
+        "supports_modify_sl_tp": True,
+        "supports_limit_orders": True,
+        "round_trip_spread_pct": 1.69,
+    }
+    if venue == "bybit":
+        caps.update(supports_short=True, supports_leverage=True,
+                    max_leverage=10.0, round_trip_spread_pct=0.055)
+    elif venue == "polymarket":
+        caps.update(supports_long=True, supports_short=True,
+                    supports_leverage=False, round_trip_spread_pct=2.0)
+    # Override from env (cost_gate is single source of truth at runtime)
+    try:
+        from src.trading.cost_gate import get_spread_pct
+        caps["round_trip_spread_pct"] = float(get_spread_pct(venue))
+    except Exception:
+        pass
+    return caps
+
+
 def _handle_champion_gate(args: Dict[str, Any]) -> Dict[str, Any]:
     """Current champion adapter state — which fine-tuned LoRA is
     serving + last gate decision. Read-only window into model lifecycle."""
@@ -840,6 +1062,75 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={"type": "object", "properties": {}},
             handler=_handle_champion_gate, tag="read_only",
         ),
+        Tool(
+            name="query_open_positions_detail",
+            description=(
+                "[POSITIONS] Per-position breakdown for paper trades: "
+                "trade_id, asset, direction, entry/current/PnL, age_min, "
+                "thesis, SL/TP. Brain calls this to decide HOLD/EXIT/"
+                "PARTIAL on each open trade individually."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string"}},
+            },
+            handler=_handle_open_positions_detail, tag="read_only",
+        ),
+        Tool(
+            name="close_paper_position",
+            description=(
+                "[WRITE] Close a paper position (full or partial). Pass "
+                "asset (closes oldest open) or trade_id (specific). "
+                "fraction=1.0 = full close (default); 0.5 = close half. "
+                "Use when thesis broken, target reached, macro shift, "
+                "or trailing-stop logic says exit. STRICTLY paper-only."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "trade_id": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "fraction": {"type": "number", "minimum": 0.05, "maximum": 1.0},
+                },
+            },
+            handler=_handle_close_paper_position, tag="write",
+        ),
+        Tool(
+            name="modify_paper_position",
+            description=(
+                "[WRITE] Adjust SL or TP on an open paper position. Use "
+                "to lock in profit (raise SL toward entry on a winner) "
+                "or extend runway (raise TP). Pass asset or trade_id "
+                "plus new_sl_price and/or new_tp_price."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "trade_id": {"type": "string"},
+                    "new_sl_price": {"type": "number"},
+                    "new_tp_price": {"type": "number"},
+                },
+            },
+            handler=_handle_modify_paper_position, tag="write",
+        ),
+        Tool(
+            name="query_venue_capabilities",
+            description=(
+                "[VENUE] What operations the active venue supports — "
+                "supports_long/short, max_leverage, partial close, "
+                "modify SL/TP, limit orders, round-trip spread. Brain "
+                "reads this BEFORE proposing actions so it doesn't ask "
+                "for SHORT on Robinhood (longs-only) or 10x leverage "
+                "on a spot venue."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"venue": {"type": "string"}},
+            },
+            handler=_handle_venue_capabilities, tag="read_only",
+        ),
     ]
 
     added = 0
@@ -872,6 +1163,10 @@ def register_unified_brain_tools(registry) -> int:
             "query_recent_plans": ("realtime", "query", "internal"),
             "query_profit_protector": ("realtime", "query", "internal"),
             "query_champion_gate": ("hour", "query", "internal"),
+            "query_open_positions_detail": ("realtime", "query", "internal"),
+            "close_paper_position": ("realtime", "control", "internal"),
+            "modify_paper_position": ("realtime", "control", "internal"),
+            "query_venue_capabilities": ("daily", "query", "internal"),
         }
         for name, (tm, it, rg) in _classifications.items():
             if name not in TOOL_CLASSIFICATIONS:

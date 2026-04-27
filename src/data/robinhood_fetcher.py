@@ -61,6 +61,22 @@ class PaperPosition:
     bars_held: int = 0
 
 
+# ── Singleton accessor so brain tools can reach the running executor's
+# paper fetcher without import-time circularity. The executor calls
+# set_active_paper_fetcher(self) right after instantiation; brain tools
+# call get_active_paper_fetcher() at dispatch time.
+_active_paper_fetcher: Optional["RobinhoodPaperFetcher"] = None
+
+
+def set_active_paper_fetcher(fetcher: "RobinhoodPaperFetcher") -> None:
+    global _active_paper_fetcher
+    _active_paper_fetcher = fetcher
+
+
+def get_active_paper_fetcher() -> Optional["RobinhoodPaperFetcher"]:
+    return _active_paper_fetcher
+
+
 class RobinhoodPaperFetcher:
     """
     Complete paper trading system using Robinhood real-time quotes.

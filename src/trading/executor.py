@@ -1567,9 +1567,10 @@ class TradingExecutor:
         # ── Robinhood Paper Trading Tracker ──
         self._paper = None
         try:
-            from src.data.robinhood_fetcher import RobinhoodPaperFetcher
+            from src.data.robinhood_fetcher import RobinhoodPaperFetcher, set_active_paper_fetcher
             self._paper = RobinhoodPaperFetcher(config)
             self._paper.load_state()
+            set_active_paper_fetcher(self._paper)
             if self._paper.connected:
                 print(f"  [PAPER] Robinhood Paper Tracker ACTIVE — logging signals vs real prices")
             else:
@@ -3769,13 +3770,24 @@ class TradingExecutor:
                         _ages.append((_now - _et.timestamp()) / 60.0)
                 if _ages:
                     _oldest_age_min = max(_ages)
+            _summaries = []
+            for p in _open_same[:6]:
+                _et = getattr(p, 'entry_time', None)
+                _age_m = 0
+                if hasattr(_et, 'timestamp'):
+                    _age_m = int((time.time() - _et.timestamp()) / 60)
+                _summaries.append(
+                    f"{p.direction[0]}@${float(p.entry_price):.2f}"
+                    f"({float(getattr(p, 'current_pnl_pct', 0)):+.2f}%/{_age_m}m)"
+                )
             _ts.update(asset,
                        open_positions_same_asset=int(len(_open_same)),
                        open_positions_other_assets=int(_open_other),
                        exposure_pct=float(_exposure_pct),
                        avg_unrealized_pct=float(_avg_pnl_pct),
                        oldest_position_min=float(_oldest_age_min),
-                       equity_usd=float(_equity_now))
+                       equity_usd=float(_equity_now),
+                       position_summaries=" | ".join(_summaries)[:300])
         except Exception:
             pass
 

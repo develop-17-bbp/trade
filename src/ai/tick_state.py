@@ -72,6 +72,10 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
     lines = []
     # PORTFOLIO: existing exposure FIRST so the brain doesn't keep
     # stacking on the same asset when it's already long N times.
+    # Brain's job EVERY TICK: decide ENTRY (new), HOLD (no-op), EXIT
+    # (close one), or PARTIAL (close some) based on real-time data
+    # and economic intelligence. Use close_paper_position to act on
+    # exits; use submit_trade_plan for entries.
     if "open_positions_same_asset" in snap:
         _n = snap.get('open_positions_same_asset', 0)
         _other = snap.get('open_positions_other_assets', 0)
@@ -79,12 +83,23 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         _avg = snap.get('avg_unrealized_pct', 0.0)
         _age = snap.get('oldest_position_min', 0.0)
         _eq = snap.get('equity_usd', 0.0)
+        _details = snap.get('position_summaries', '')
         lines.append(
             f"PORTFOLIO: same_asset_open={_n} other_assets_open={_other} "
             f"exposure={_exp:.1f}% avg_unrealized={_avg:+.2f}% "
-            f"oldest={_age:.0f}min equity=${_eq:,.0f} "
-            "(if same_asset_open >=3, prefer HOLD/EXIT over new ENTRY)"
+            f"oldest={_age:.0f}min equity=${_eq:,.0f}"
         )
+        if _details:
+            lines.append(f"OPEN_POSITIONS: {_details}")
+        if _n >= 1:
+            lines.append(
+                "DECIDE: for each open position, reason HOLD vs EXIT vs "
+                "PARTIAL using current price + macro_bias + news + "
+                "trend persistence. Call close_paper_position when you "
+                "decide to exit. Call query_open_positions_detail for "
+                "richer per-position state. Call get_news_digest / "
+                "get_macro_bias / query_knowledge_graph for catalysts."
+            )
     # COST: round-trip spread the brain MUST clear before any plan
     # makes economic sense (Robinhood is ~1.69%, Bybit ~0.055%).
     if "spread_pct" in snap:
