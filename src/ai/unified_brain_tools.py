@@ -538,6 +538,78 @@ def _handle_profit_protector(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"profit_protector_query_failed: {e}"[:200]}
 
 
+def _handle_genetic_evolution_state(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Full evolution state: generations run, best fitness, mutation
+    rate, stagnation, pareto front size. Brain reads this to know
+    whether the genetic loop is healthy (still discovering new
+    strategies) or stagnant (mutation rate maxed, no improvement).
+    """
+    try:
+        from src.trading.genetic_strategy_engine import GeneticStrategyEngine
+        # The executor instantiates a singleton; reuse its hall-of-fame
+        # via the file the engine writes (logs/genetic_evolution_history.jsonl
+        # has per-generation entries; hall-of-fame DNA is in
+        # data/strategy_repo.sqlite). Build a fresh engine to read summary.
+        eng = GeneticStrategyEngine()
+        try:
+            eng.load_hall_of_fame_from_repo() if hasattr(eng, "load_hall_of_fame_from_repo") else None
+        except Exception:
+            pass
+        summary = eng.get_evolution_summary() if hasattr(eng, "get_evolution_summary") else {}
+        return summary or {"error": "no_evolution_summary"}
+    except Exception as e:
+        return {"error": f"genetic_state_query_failed: {e}"[:200]}
+
+
+def _handle_genetic_hall_of_fame(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Top-N hall-of-fame strategy DNAs (entry/exit rules + fitness +
+    win rate + total PnL). Brain inspects which evolved patterns are
+    winning so it can incorporate that intuition into its own
+    reasoning (e.g. "the top hall-of-fame strategy uses RSI<30 +
+    BB-low for entry — does the current setup match?").
+    """
+    limit = int(args.get("limit") or 5)
+    limit = max(1, min(20, limit))
+    try:
+        import sqlite3
+        import json as _json
+        # strategy_repo.sqlite stores promoted strategies with status,
+        # regime, sharpe — query top by fitness/sharpe.
+        repo_path = "data/strategy_repo.sqlite"
+        out: List[Dict[str, Any]] = []
+        try:
+            conn = sqlite3.connect(repo_path, timeout=2.0)
+            try:
+                rows = conn.execute(
+                    "SELECT name, regime, dna_json, sharpe, win_rate, total_pnl, status "
+                    "FROM strategies WHERE status IN ('champion','challenger') "
+                    "ORDER BY sharpe DESC NULLS LAST LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+            finally:
+                conn.close()
+            for name, regime, dna_json, sharpe, wr, pnl, status in rows:
+                try:
+                    dna = _json.loads(dna_json or "{}")
+                except Exception:
+                    dna = {}
+                out.append({
+                    "name": str(name)[:40],
+                    "regime": str(regime),
+                    "status": str(status),
+                    "sharpe": round(float(sharpe or 0), 3),
+                    "win_rate": round(float(wr or 0), 3),
+                    "total_pnl": round(float(pnl or 0), 2),
+                    "entry_rule": str(dna.get("entry_rule", ""))[:120],
+                    "exit_rule": str(dna.get("exit_rule", ""))[:120],
+                })
+        except sqlite3.OperationalError:
+            return {"error": "strategy_repo_not_initialized"}
+        return {"hall_of_fame": out, "count": len(out)}
+    except Exception as e:
+        return {"error": f"hall_of_fame_query_failed: {e}"[:200]}
+
+
 def _handle_recovery_plan(args: Dict[str, Any]) -> Dict[str, Any]:
     """When the portfolio is stuck (many opens, large net negative),
     rank positions by current_pnl_pct_net and identify:
@@ -1259,6 +1331,33 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_genetic_evolution_state",
+            description=(
+                "[GENETIC] Full evolution state: total_generations_run, "
+                "best_evolved_fitness, best_evolved_strategy (entry+exit "
+                "rules), population_size, current_mutation_rate, "
+                "stagnation_generations, pareto_front_size. Brain reads "
+                "to know if the loop is discovering or stagnant."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_genetic_evolution_state, tag="read_only",
+        ),
+        Tool(
+            name="query_genetic_hall_of_fame",
+            description=(
+                "[GENETIC] Top-N hall-of-fame strategies from "
+                "strategy_repo.sqlite — name, regime, status (champion/"
+                "challenger), sharpe, win_rate, total_pnl, entry_rule, "
+                "exit_rule. Brain inspects winning evolved patterns to "
+                "match against the current setup."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 20}},
+            },
+            handler=_handle_genetic_hall_of_fame, tag="read_only",
+        ),
+        Tool(
             name="query_recovery_plan",
             description=(
                 "[RECOVERY] Stuck-portfolio analysis: ranks opens by "
@@ -1403,6 +1502,8 @@ def register_unified_brain_tools(registry) -> int:
             "query_venue_capabilities": ("daily", "query", "internal"),
             "query_sizing_preview": ("realtime", "query", "internal"),
             "query_recovery_plan": ("realtime", "query", "internal"),
+            "query_genetic_evolution_state": ("hour", "query", "internal"),
+            "query_genetic_hall_of_fame": ("hour", "query", "internal"),
         }
         for name, (tm, it, rg) in _classifications.items():
             if name not in TOOL_CLASSIFICATIONS:

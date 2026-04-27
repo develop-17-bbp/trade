@@ -268,10 +268,19 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         )
     # Genetic / agents
     if "genetic_vote" in snap:
-        lines.append(
+        _gen_line = (
             f"genetic_vote={snap.get('genetic_vote', '?')} "
-            f"({snap.get('genetic_count', 0)} strategies)"
+            f"({snap.get('genetic_count', 0)} strategies, "
+            f"net={snap.get('genetic_net', 0):+d})"
         )
+        if "genetic_best_fitness" in snap:
+            _gen_line += (
+                f" | hof_size={snap.get('genetic_hof_size', 0)} "
+                f"best={snap.get('genetic_best_name', '')} "
+                f"fit={snap.get('genetic_best_fitness', 0):.2f} "
+                f"entry='{snap.get('genetic_best_entry', '')[:50]}'"
+            )
+        lines.append(_gen_line)
     if "agents_consensus" in snap:
         lines.append(
             f"agents={snap.get('agents_consensus', '?')} "

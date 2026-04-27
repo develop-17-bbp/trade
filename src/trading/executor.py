@@ -3700,10 +3700,26 @@ class TradingExecutor:
                     print(f"  [{self._ex_tag}:{asset}] GENETIC: {_genetic_count} evolved strategies vote {_genetic_dir} (net={_genetic_vote:+d})")
                     try:
                         from src.ai import tick_state as _ts
+                        # Pull richer engine state when available so the
+                        # brain sees fitness/best-strategy alongside the
+                        # aggregate vote.
+                        _gen_extras: Dict[str, Any] = {}
+                        try:
+                            if self._genetic_hall_of_fame:
+                                _best = max(self._genetic_hall_of_fame, key=lambda d: d.get('fitness', 0))
+                                _gen_extras = {
+                                    "genetic_hof_size": len(self._genetic_hall_of_fame),
+                                    "genetic_best_fitness": float(_best.get('fitness', 0) or 0),
+                                    "genetic_best_name": str(_best.get('name', ''))[:40],
+                                    "genetic_best_entry": str(_best.get('entry_rule', ''))[:80],
+                                }
+                        except Exception:
+                            pass
                         _ts.update(asset,
                                    genetic_vote=_genetic_dir,
                                    genetic_count=int(_genetic_count),
-                                   genetic_net=int(_genetic_vote))
+                                   genetic_net=int(_genetic_vote),
+                                   **_gen_extras)
                     except Exception:
                         pass
             except Exception as e:
