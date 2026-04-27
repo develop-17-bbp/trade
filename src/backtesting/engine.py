@@ -155,7 +155,7 @@ class BacktestEngine:
     Uses CONFIRMED candle logic — no lookahead.
     """
 
-    def __init__(self, ema_period: int = 8, atr_period: int = 14,
+    def __init__(self, ema_period: int = 8, atr_period: int = 28,
                  atr_stop_mult: float = 1.5, min_score: int = 3,
                  initial_capital: float = 10000.0,
                  max_hold_bars: int = 72,  # 72 * 5min = 6 hours
