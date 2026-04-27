@@ -315,6 +315,117 @@ def _handle_full_backtest(args: Dict[str, Any]) -> Dict[str, Any]:
 # ── Registration ───────────────────────────────────────────────────────
 
 
+# ── Unit-8 Robinhood read-only handlers ─────────────────────────────────
+# All four call only read endpoints on RobinhoodCryptoClient. They never
+# trigger an order. The brain calls these to *see* venue state; placing
+# trades stays the executor's job (TradePlan → submit_trade_plan).
+
+
+def _rh_client():
+    """Lazy-build a RobinhoodCryptoClient using env credentials. Returns
+    None on missing creds so the handler can degrade gracefully."""
+    import os
+    api_key = os.environ.get("ROBINHOOD_API_KEY")
+    private_key = os.environ.get("ROBINHOOD_PRIVATE_KEY_BASE64")
+    if not api_key or not private_key:
+        return None
+    try:
+        from src.integrations.robinhood_crypto import RobinhoodCryptoClient
+        return RobinhoodCryptoClient(api_key=api_key, private_key_b64=private_key)
+    except Exception as e:
+        logger.debug(f"robinhood client init failed: {e}")
+        return None
+
+
+def _handle_robinhood_balance(args: Dict[str, Any]) -> Dict[str, Any]:
+    cli = _rh_client()
+    if cli is None:
+        return {"error": "robinhood_credentials_missing_or_client_unavailable"}
+    try:
+        acc = cli.get_account() or {}
+        return {
+            "account_status": acc.get("status", "unknown"),
+            "buying_power_usd": float(acc.get("buying_power", 0) or 0),
+            "buying_power_currency": acc.get("buying_power_currency", "USD"),
+            "account_number": acc.get("account_number", ""),
+        }
+    except Exception as e:
+        return {"error": f"balance_query_failed: {e}"[:200]}
+
+
+def _handle_robinhood_positions(args: Dict[str, Any]) -> Dict[str, Any]:
+    assets = args.get("assets") or ["BTC", "ETH"]
+    if isinstance(assets, str):
+        assets = [a.strip().upper() for a in assets.split(",") if a.strip()]
+    cli = _rh_client()
+    if cli is None:
+        return {"error": "robinhood_credentials_missing_or_client_unavailable"}
+    try:
+        h = cli.get_holdings(assets=assets) or {}
+        results = h.get("results", []) if isinstance(h, dict) else []
+        out = []
+        for pos in results:
+            out.append({
+                "asset": pos.get("asset_code", ""),
+                "quantity": float(pos.get("total_quantity", 0) or 0),
+                "available": float(pos.get("quantity_available_for_trading", 0) or 0),
+            })
+        return {"positions": out, "count": len(out)}
+    except Exception as e:
+        return {"error": f"positions_query_failed: {e}"[:200]}
+
+
+def _handle_robinhood_quote(args: Dict[str, Any]) -> Dict[str, Any]:
+    asset = str(args.get("asset") or "BTC").upper()
+    symbol = f"{asset}-USD"
+    cli = _rh_client()
+    if cli is None:
+        return {"error": "robinhood_credentials_missing_or_client_unavailable"}
+    try:
+        q = cli.get_best_price(symbol=symbol) or {}
+        results = q.get("results", []) if isinstance(q, dict) else []
+        if not results:
+            return {"asset": asset, "error": "no_quote_returned"}
+        r = results[0]
+        bid = float(r.get("bid_inclusive_of_buy_spread", r.get("bid", 0)) or 0)
+        ask = float(r.get("ask_inclusive_of_sell_spread", r.get("ask", 0)) or 0)
+        mid = (bid + ask) / 2.0 if (bid and ask) else 0.0
+        spread_pct = ((ask - bid) / mid * 100.0) if mid else 0.0
+        return {
+            "asset": asset,
+            "bid": bid, "ask": ask, "mid": mid,
+            "spread_pct": round(spread_pct, 4),
+        }
+    except Exception as e:
+        return {"error": f"quote_query_failed: {e}"[:200]}
+
+
+def _handle_robinhood_fills(args: Dict[str, Any]) -> Dict[str, Any]:
+    asset = args.get("asset")
+    limit = int(args.get("limit") or 10)
+    limit = max(1, min(50, limit))
+    cli = _rh_client()
+    if cli is None:
+        return {"error": "robinhood_credentials_missing_or_client_unavailable"}
+    try:
+        symbol = f"{str(asset).upper()}-USD" if asset else None
+        o = cli.get_orders(symbol=symbol, state="filled", limit=limit) or {}
+        results = o.get("results", []) if isinstance(o, dict) else []
+        out = []
+        for r in results[:limit]:
+            out.append({
+                "id": r.get("id", "")[:32],
+                "symbol": r.get("symbol", ""),
+                "side": r.get("side", ""),
+                "quantity": float(r.get("filled_asset_quantity", 0) or 0),
+                "price": float(r.get("average_price", 0) or 0),
+                "ts": r.get("updated_at", ""),
+            })
+        return {"fills": out, "count": len(out)}
+    except Exception as e:
+        return {"error": f"fills_query_failed: {e}"[:200]}
+
+
 def register_unified_brain_tools(registry) -> int:
     """Register the 9 unified-brain tools. Safe to call multiple times
     against a fresh registry; raises on duplicate tool names in an
@@ -468,6 +579,64 @@ def register_unified_brain_tools(registry) -> int:
             },
             handler=_handle_full_backtest, tag="read_only",
         ),
+        Tool(
+            name="query_robinhood_balance",
+            description=(
+                "[VENUE] Live Robinhood account balance (read-only). "
+                "Returns buying_power_usd + account_status. Use to check "
+                "available capital before sizing. NEVER places orders."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_robinhood_balance, tag="read_only",
+        ),
+        Tool(
+            name="query_robinhood_positions",
+            description=(
+                "[VENUE] Live Robinhood crypto holdings (read-only). "
+                "Returns per-asset quantity + available-for-trading. "
+                "Use to check what's already held before opening more."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "assets": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+            handler=_handle_robinhood_positions, tag="read_only",
+        ),
+        Tool(
+            name="query_robinhood_quote",
+            description=(
+                "[VENUE] Live Robinhood bid/ask/mid for an asset (read-"
+                "only). Returns spread_pct so the brain can verify the "
+                "round-trip cost before proposing a TradePlan."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "required": ["asset"],
+            },
+            handler=_handle_robinhood_quote, tag="read_only",
+        ),
+        Tool(
+            name="query_recent_robinhood_fills",
+            description=(
+                "[VENUE] Recent filled Robinhood orders (read-only). "
+                "Optional filter by asset. Use to verify what really "
+                "executed vs. what TradePlans proposed."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+            },
+            handler=_handle_robinhood_fills, tag="read_only",
+        ),
     ]
 
     added = 0
@@ -491,6 +660,10 @@ def register_unified_brain_tools(registry) -> int:
             "get_economic_layer": ("hour", "data_fetch", "equity_borrowed"),
             "request_genetic_candidate": ("daily", "query", "internal"),
             "run_full_backtest": ("hour", "analysis", "experimental"),
+            "query_robinhood_balance": ("realtime", "data_fetch", "internal"),
+            "query_robinhood_positions": ("realtime", "data_fetch", "internal"),
+            "query_robinhood_quote": ("realtime", "data_fetch", "internal"),
+            "query_recent_robinhood_fills": ("realtime", "data_fetch", "internal"),
         }
         for name, (tm, it, rg) in _classifications.items():
             if name not in TOOL_CLASSIFICATIONS:

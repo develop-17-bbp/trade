@@ -26,11 +26,13 @@ funding_arb:
 
 # ── Agentic trade loop (C3 build; default off) ──
 # Multi-turn LLM tool-use loop that compiles a TradePlan before any order
-# reaches the executor. Keep disabled for now; flip when 14-day paper soak
-# proves stable and the operator is ready. Env ACT_AGENTIC_LOOP=1 also flips
-# it on. Env ACT_DISABLE_AGENTIC_LOOP=1 forces OFF (overrides config).
+# reaches the executor. Default ON so the brain uses every registered tool
+# (39 today: web, sub-agents, quant, knowledge graph, brain memory, ML
+# ensemble, backtest, Robinhood read-only, etc) on every tick. Real-capital
+# safety still gated by readiness_gate + authority_rules. Env
+# ACT_AGENTIC_LOOP=1 forces ON, ACT_DISABLE_AGENTIC_LOOP=1 forces OFF.
 agentic_loop:
-  enabled: false
+  enabled: true
   max_steps: 8
   max_context_tokens: 80000
   keep_recent_rounds: 4
