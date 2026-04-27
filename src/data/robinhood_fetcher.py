@@ -52,6 +52,12 @@ class PaperPosition:
     current_price: float = 0.0
     current_pnl_pct: float = 0.0
     current_pnl_usd: float = 0.0
+    # Net of round-trip spread cost — what we'd actually realize if
+    # we closed right now. The frontend shows this; the brain reasons
+    # against it. Without net the operator sees +$67 unrealized while
+    # actually being -$40 underwater after spread.
+    current_pnl_pct_net: float = 0.0
+    current_pnl_usd_net: float = 0.0
     status: str = "open"        # open, closed_win, closed_loss, closed_sl, closed_tp
     exit_price: float = 0.0
     exit_time: str = ""
@@ -443,13 +449,18 @@ class RobinhoodPaperFetcher:
                 elif pos.direction == "SHORT" and mid < pos.peak_price:
                     pos.peak_price = mid
 
-                # Calculate unrealized PnL
+                # Calculate unrealized PnL (gross — pure mid vs entry)
                 if pos.direction == "LONG":
                     pos.current_pnl_pct = ((mid - pos.entry_price) / pos.entry_price) * 100
                 else:
                     pos.current_pnl_pct = ((pos.entry_price - mid) / pos.entry_price) * 100
 
                 pos.current_pnl_usd = pos.quantity * pos.entry_price * (pos.current_pnl_pct / 100)
+
+                # Net of round-trip spread — what closing right now actually
+                # realizes. record_exit applies the same deduction at close.
+                pos.current_pnl_pct_net = pos.current_pnl_pct - float(self._spread_cost_pct or 0.0)
+                pos.current_pnl_usd_net = pos.quantity * pos.entry_price * (pos.current_pnl_pct_net / 100)
 
     def log_signal(self, asset: str, direction: str, score: int,
                    action_taken: str = "SKIP", reason: str = "",

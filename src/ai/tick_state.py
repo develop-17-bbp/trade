@@ -81,16 +81,18 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
     # positive gap means more aggressive setups are needed today.
     if "today_pct_total" in snap:
         _real = snap.get('today_pct_realized', 0.0)
-        _unreal = snap.get('today_pct_unrealized', 0.0)
+        _unreal_net = snap.get('today_pct_unrealized', 0.0)
+        _unreal_gross = snap.get('today_pct_unrealized_gross', _unreal_net)
         _total = snap.get('today_pct_total', 0.0)
         _gap = snap.get('gap_to_1pct', 0.0)
         _trades = snap.get('today_trades', 0)
         lines.append(
-            f"GOAL: today_pct={_total:+.2f}% (realized={_real:+.2f}%, "
-            f"unrealized={_unreal:+.2f}%) trades_today={_trades} "
+            f"GOAL: today_pct={_total:+.2f}% NET-of-spread "
+            f"(realized={_real:+.2f}%, unrealized_net={_unreal_net:+.2f}%, "
+            f"unrealized_gross={_unreal_gross:+.2f}%) trades_today={_trades} "
             f"gap_to_1pct={_gap:+.2f}% "
-            "(target 1%/day; positive gap means more setups needed; "
-            "negative gap means lock in profits)"
+            "(NET is what closing right now actually realizes — "
+            "frontend may show GROSS which excludes spread)"
         )
     # PORTFOLIO: existing exposure FIRST so the brain doesn't keep
     # stacking on the same asset when it's already long N times.
@@ -102,14 +104,15 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         _n = snap.get('open_positions_same_asset', 0)
         _other = snap.get('open_positions_other_assets', 0)
         _exp = snap.get('exposure_pct', 0.0)
-        _avg = snap.get('avg_unrealized_pct', 0.0)
+        _avg_gross = snap.get('avg_unrealized_pct', 0.0)
+        _avg_net = snap.get('avg_unrealized_pct_net', _avg_gross)
         _age = snap.get('oldest_position_min', 0.0)
         _eq = snap.get('equity_usd', 0.0)
         _details = snap.get('position_summaries', '')
         lines.append(
             f"PORTFOLIO: same_asset_open={_n} other_assets_open={_other} "
-            f"exposure={_exp:.1f}% avg_unrealized={_avg:+.2f}% "
-            f"oldest={_age:.0f}min equity=${_eq:,.0f}"
+            f"exposure={_exp:.1f}% avg_unrealized_net={_avg_net:+.2f}% "
+            f"(gross={_avg_gross:+.2f}%) oldest={_age:.0f}min equity=${_eq:,.0f}"
         )
         if _details:
             lines.append(f"OPEN_POSITIONS: {_details}")

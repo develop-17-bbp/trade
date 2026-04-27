@@ -3757,11 +3757,13 @@ class TradingExecutor:
                         _open_other += 1
             _exposure_pct = 0.0
             _avg_pnl_pct = 0.0
+            _avg_pnl_pct_net = 0.0
             _oldest_age_min = 0.0
             if _open_same and _equity_now > 0:
                 _notional = sum(float(getattr(p, 'entry_price', 0)) * float(getattr(p, 'quantity', 0)) for p in _open_same)
                 _exposure_pct = (_notional / _equity_now) * 100.0
                 _avg_pnl_pct = sum(float(getattr(p, 'current_pnl_pct', 0.0)) for p in _open_same) / len(_open_same)
+                _avg_pnl_pct_net = sum(float(getattr(p, 'current_pnl_pct_net', 0.0)) for p in _open_same) / len(_open_same)
                 _now = time.time()
                 _ages = []
                 for p in _open_same:
@@ -3776,9 +3778,11 @@ class TradingExecutor:
                 _age_m = 0
                 if hasattr(_et, 'timestamp'):
                     _age_m = int((time.time() - _et.timestamp()) / 60)
+                _gross = float(getattr(p, 'current_pnl_pct', 0))
+                _net = float(getattr(p, 'current_pnl_pct_net', _gross))
                 _summaries.append(
                     f"{p.direction[0]}@${float(p.entry_price):.2f}"
-                    f"({float(getattr(p, 'current_pnl_pct', 0)):+.2f}%/{_age_m}m)"
+                    f"(gross={_gross:+.2f}%/net={_net:+.2f}%/{_age_m}m)"
                 )
 
             # Daily PnL gap — brain needs to see the goal arithmetically
@@ -3788,7 +3792,8 @@ class TradingExecutor:
             _today_realized_usd = 0.0
             _today_trades = 0
             _start_equity = float(getattr(self._paper, 'initial_capital', _equity_now) or _equity_now) if self._paper else _equity_now
-            _today_unrealized_usd = 0.0
+            _today_unrealized_usd_gross = 0.0
+            _today_unrealized_usd_net = 0.0
             try:
                 from datetime import datetime as _dt, timezone as _tz
                 _today = _dt.now(tz=_tz.utc).date()
@@ -3804,24 +3809,28 @@ class TradingExecutor:
                             except Exception:
                                 pass
                     for _p in self._paper.positions.values():
-                        _today_unrealized_usd += float(getattr(_p, 'current_pnl_usd', 0) or 0)
+                        _today_unrealized_usd_gross += float(getattr(_p, 'current_pnl_usd', 0) or 0)
+                        _today_unrealized_usd_net += float(getattr(_p, 'current_pnl_usd_net', 0) or 0)
             except Exception:
                 pass
             _today_pct_realized = (_today_realized_usd / _start_equity * 100.0) if _start_equity > 0 else 0.0
-            _today_pct_unrealized = (_today_unrealized_usd / _start_equity * 100.0) if _start_equity > 0 else 0.0
+            _today_pct_unrealized = (_today_unrealized_usd_net / _start_equity * 100.0) if _start_equity > 0 else 0.0
             _today_pct_total = _today_pct_realized + _today_pct_unrealized
             _gap_to_1pct = 1.0 - _today_pct_total
 
+            _today_pct_unrealized_gross = (_today_unrealized_usd_gross / _start_equity * 100.0) if _start_equity > 0 else 0.0
             _ts.update(asset,
                        open_positions_same_asset=int(len(_open_same)),
                        open_positions_other_assets=int(_open_other),
                        exposure_pct=float(_exposure_pct),
                        avg_unrealized_pct=float(_avg_pnl_pct),
+                       avg_unrealized_pct_net=float(_avg_pnl_pct_net),
                        oldest_position_min=float(_oldest_age_min),
                        equity_usd=float(_equity_now),
                        position_summaries=" | ".join(_summaries)[:300],
                        today_pct_realized=float(_today_pct_realized),
                        today_pct_unrealized=float(_today_pct_unrealized),
+                       today_pct_unrealized_gross=float(_today_pct_unrealized_gross),
                        today_pct_total=float(_today_pct_total),
                        today_trades=int(_today_trades),
                        gap_to_1pct=float(_gap_to_1pct))
