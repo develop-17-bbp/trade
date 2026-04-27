@@ -96,7 +96,7 @@ def test_build_evidence_document_assigns_correct_kinds():
     by_name = {s.name: s for s in doc.sections}
 
     assert by_name["SCANNER_REPORT"].kind == "mixed"
-    assert by_name["RECENT_ANALYST_DECISIONS"].kind == "mixed"
+    assert by_name["RECENT_ANALYST_TRACES"].kind == "technical"
     assert by_name["NEWS"].kind == "mixed"
     assert by_name["FEAR_GREED"].kind == "subjective"
     assert by_name["KNOWLEDGE_GRAPH"].kind == "mixed"

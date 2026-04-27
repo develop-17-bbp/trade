@@ -64,7 +64,10 @@ def test_holding_accepts_2_strategies_for_normal():
     assert r.tier == "normal"
 
 
-def test_fresh_entry_rejects_2_strategies():
+def test_fresh_entry_rejects_2_strategies(monkeypatch):
+    """REAL CAPITAL: 2 strategies < normal floor (3) hard-rejects.
+    Paper mode soft-passes per Unit-2 brain-as-authority directive."""
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     r = evaluate(
         direction="LONG",
         tf_1h_direction="RISING", tf_4h_direction="RISING",
@@ -100,7 +103,10 @@ def test_macro_magnitude_relaxed_when_holding():
     assert r_hold.tier == "sniper"    # hold threshold is 0.14 → passes
 
 
-def test_crisis_still_rejects_regardless_of_hysteresis():
+def test_crisis_still_rejects_regardless_of_hysteresis(monkeypatch):
+    """REAL CAPITAL: macro_crisis hard-rejects regardless of hysteresis or
+    in_position. Paper mode soft-passes (brain is authority)."""
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     r = evaluate(
         direction="LONG",
         tf_1h_direction="RISING", tf_4h_direction="RISING",
