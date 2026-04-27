@@ -3780,6 +3780,38 @@ class TradingExecutor:
                     f"{p.direction[0]}@${float(p.entry_price):.2f}"
                     f"({float(getattr(p, 'current_pnl_pct', 0)):+.2f}%/{_age_m}m)"
                 )
+
+            # Daily PnL gap — brain needs to see the goal arithmetically
+            # every tick. Today's realized PnL + open unrealized vs the
+            # 1%/day target so the LLM thinks "I'm at +0.3% need +0.7% more"
+            # instead of treating each tick independently.
+            _today_realized_usd = 0.0
+            _today_trades = 0
+            _start_equity = float(getattr(self._paper, 'initial_capital', _equity_now) or _equity_now) if self._paper else _equity_now
+            _today_unrealized_usd = 0.0
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                _today = _dt.now(tz=_tz.utc).date()
+                if self._paper is not None:
+                    for _t in self._paper.closed_trades:
+                        _et_str = getattr(_t, 'exit_time', '') or ''
+                        if isinstance(_et_str, str) and _et_str:
+                            try:
+                                _exit_d = _dt.fromisoformat(_et_str.replace('Z', '+00:00')).date()
+                                if _exit_d == _today:
+                                    _today_realized_usd += float(getattr(_t, 'final_pnl_usd', 0) or 0)
+                                    _today_trades += 1
+                            except Exception:
+                                pass
+                    for _p in self._paper.positions.values():
+                        _today_unrealized_usd += float(getattr(_p, 'current_pnl_usd', 0) or 0)
+            except Exception:
+                pass
+            _today_pct_realized = (_today_realized_usd / _start_equity * 100.0) if _start_equity > 0 else 0.0
+            _today_pct_unrealized = (_today_unrealized_usd / _start_equity * 100.0) if _start_equity > 0 else 0.0
+            _today_pct_total = _today_pct_realized + _today_pct_unrealized
+            _gap_to_1pct = 1.0 - _today_pct_total
+
             _ts.update(asset,
                        open_positions_same_asset=int(len(_open_same)),
                        open_positions_other_assets=int(_open_other),
@@ -3787,7 +3819,12 @@ class TradingExecutor:
                        avg_unrealized_pct=float(_avg_pnl_pct),
                        oldest_position_min=float(_oldest_age_min),
                        equity_usd=float(_equity_now),
-                       position_summaries=" | ".join(_summaries)[:300])
+                       position_summaries=" | ".join(_summaries)[:300],
+                       today_pct_realized=float(_today_pct_realized),
+                       today_pct_unrealized=float(_today_pct_unrealized),
+                       today_pct_total=float(_today_pct_total),
+                       today_trades=int(_today_trades),
+                       gap_to_1pct=float(_gap_to_1pct))
         except Exception:
             pass
 
@@ -3796,6 +3833,17 @@ class TradingExecutor:
         if self._coint_engine and asset in ('BTC', 'ETH'):
             try:
                 pairs_signal = self._check_pairs_signal()
+                if pairs_signal:
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ts.update(asset,
+                                   pair_signal=str(pairs_signal.get('signal', 'NONE')),
+                                   pair_z_score=float(pairs_signal.get('z_score', 0.0)),
+                                   pair_cointegrated=bool(pairs_signal.get('cointegrated', False)),
+                                   pair_hedge_ratio=float(pairs_signal.get('hedge_ratio', 0.0)),
+                                   pair_context=str(pairs_signal.get('context_line', ''))[:200])
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"[PAIRS] {asset} pairs check failed: {e}")
 

@@ -312,6 +312,27 @@ def compile_agentic_plan(
                     terminated_reason="rule_based_fallback",
                 )
 
+        # Operator-visible audit line: brain's per-tick verdict + how
+        # many open positions it considered. Lets the operator confirm
+        # at a glance that portfolio review is happening every tick.
+        try:
+            from src.ai import tick_state as _ts_mod
+            _snap = _ts_mod.get(asset)
+            _open_n = int(_snap.get("open_positions_same_asset", 0)) if _snap else 0
+            _gap = float(_snap.get("gap_to_1pct", 0.0)) if _snap else 0.0
+            logger.info(
+                "[BRAIN:%s] tick decision: dir=%s tier=%s size=%.1f%% "
+                "verdict=%s | considered_open=%d gap_to_1pct=%+.2f%% "
+                "steps=%d",
+                asset, str(getattr(result.plan, "direction", "?")),
+                str(getattr(result.plan, "entry_tier", "?")),
+                float(getattr(result.plan, "size_pct", 0.0)),
+                result.terminated_reason or "?",
+                _open_n, _gap, int(getattr(result, "steps_taken", 0)),
+            )
+        except Exception:
+            pass
+
         # C7b — write the analyst's decision back into brain_memory so
         # the scanner's next tick sees it. Compact trace; never raises.
         # When the rule-based fallback overrode an LLM skip, prepend an

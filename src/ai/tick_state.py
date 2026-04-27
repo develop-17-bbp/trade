@@ -70,6 +70,23 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         return ""
 
     lines = []
+    # GOAL ARITHMETIC: brain reads the day's progress vs the 1%/day
+    # mission so it knows whether to press on opportunities or take
+    # what's on the table. Negative gap means we've overshot; large
+    # positive gap means more aggressive setups are needed today.
+    if "today_pct_total" in snap:
+        _real = snap.get('today_pct_realized', 0.0)
+        _unreal = snap.get('today_pct_unrealized', 0.0)
+        _total = snap.get('today_pct_total', 0.0)
+        _gap = snap.get('gap_to_1pct', 0.0)
+        _trades = snap.get('today_trades', 0)
+        lines.append(
+            f"GOAL: today_pct={_total:+.2f}% (realized={_real:+.2f}%, "
+            f"unrealized={_unreal:+.2f}%) trades_today={_trades} "
+            f"gap_to_1pct={_gap:+.2f}% "
+            "(target 1%/day; positive gap means more setups needed; "
+            "negative gap means lock in profits)"
+        )
     # PORTFOLIO: existing exposure FIRST so the brain doesn't keep
     # stacking on the same asset when it's already long N times.
     # Brain's job EVERY TICK: decide ENTRY (new), HOLD (no-op), EXIT
@@ -226,6 +243,14 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
             f"evolved_ema={snap.get('evolved_ema_short', 0)}/"
             f"{snap.get('evolved_ema_long', 0)} "
             f"evolved_rsi={snap.get('evolved_rsi_period', 0)}"
+        )
+    # Cross-asset BTC-ETH cointegration (informs rotation/pair plays)
+    if "pair_signal" in snap and snap.get("pair_signal", "NONE") != "NONE":
+        lines.append(
+            f"pair_btc_eth: signal={snap.get('pair_signal', '?')} "
+            f"z={snap.get('pair_z_score', 0):+.2f} "
+            f"cointegrated={snap.get('pair_cointegrated', False)} "
+            f"hedge_ratio={snap.get('pair_hedge_ratio', 0):.3f}"
         )
     # Range / regime
     if "range_pct_10c" in snap:
