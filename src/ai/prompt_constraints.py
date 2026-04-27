@@ -138,11 +138,44 @@ AUTO-RATCHET PARTNERSHIP: The body runs an automatic L1/L2/L3 trailing-SL
 ratchet (BREAKEVEN → LOCK-10/20/30/50/60/70%) on every open position so
 "investment safe → lock profit → new safe baseline" happens at machine
 speed. The current ratchet level + next trigger appear in TICK_SNAPSHOT.
-Your job: ride trends as long as the thesis holds; OVERRIDE via
-modify_paper_position only when you have catalyst-specific reason
-(news, macro shift, regime break) to widen or tighten beyond the auto
-behavior. The compounding effect (gap_to_1pct shrinks each tick winners
-hold) is the road to 1%/day.
+
+PARTIAL-TAKE-PROFIT LADDER (the +EV pattern for 1%/day on Robinhood):
+Auto-ratchet protects capital; partial-takes turn paper gains into
+realized PnL that closes gap_to_1pct. Use this ladder by default on
+any position with current_pnl_pct_net > 0 (i.e. already past spread):
+
+  net_pnl_pct  | action                                    | tool
+  ──────────── | ───────────────────────────────────────── | ──────
+  +0.5% to 1%  | HOLD (let body ratchet to BREAKEVEN)      | (none)
+  +1.5%        | close_paper_position fraction=0.25        | close
+               | (locks 1.5% × 25% = 0.375% on this slice)
+  +3%          | close_paper_position fraction=0.33        | close
+               | (locks another 3% × 25% of original)
+  +5%          | close_paper_position fraction=0.50        | close
+               | (lock half the remainder, ride rest)
+  +8%+         | modify_paper_position raise SL to +5%     | modify
+               | (let final 25% chase trailing peaks)
+
+Override the ladder when:
+  - News catalyst breaks the thesis      → close_paper_position fraction=1.0
+  - Pattern reversal (RSI divergence,    → close_paper_position fraction=1.0
+    trend break on 1h/4h confirm)
+  - Macro shift (FOMC, CPI surprise)     → close_paper_position fraction=0.5+
+  - Regime shift CRISIS                   → close everything, conserve
+
+SIZING (Robinhood spot, NO leverage):
+  - Brain proposes size_pct ∈ [1, 5]% per trade. Final size after
+    AdaptiveFeedback × SelfEvolvingOverlay × AccuracyEngine ×
+    DynamicPositionLimits modulation. Sniper-tier conviction can go
+    to 5%; normal-tier 2-3%; speculative 1%.
+  - Equity impact = size_pct × net_pnl_pct / 100. A 3% position
+    closing +2% net = +0.06% equity contribution.
+  - To close gap_to_1pct of +1.0% you need ~3 trades at 3% size
+    closing +2% net each, OR 1 sniper-tier 5% size closing +4%+ net.
+  - When gap is large and time is late: bias toward sniper-tier
+    setups (rarer, bigger moves) over normal-tier (more frequent,
+    smaller moves) — the time math doesn't allow normal-tier
+    accumulation late in the day.
 
 ## ABSOLUTE RULES (NEVER VIOLATE):
 

@@ -729,6 +729,75 @@ def _handle_modify_paper_position(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"modify_failed: {e}"[:200]}
 
 
+def _handle_sizing_preview(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Preview the final size_pct after the body's modulation pipeline.
+
+    The brain proposes size_pct; the body multiplies through:
+      AdaptiveFeedback (recent WR) × SelfEvolvingOverlay (evolved risk)
+      × AccuracyEngine (per-component weight) × DynamicPositionLimits
+      (regime cap) → final size_pct.
+
+    Brain calls this BEFORE submit_trade_plan so the proposal already
+    accounts for the modulation rather than being surprised by a
+    smaller final fill.
+    """
+    asset = str(args.get("asset") or "BTC").upper()
+    proposed = float(args.get("proposed_size_pct") or 2.0)
+    regime = str(args.get("regime") or "unknown")
+    out: Dict[str, Any] = {
+        "asset": asset, "regime": regime,
+        "proposed_size_pct": proposed,
+    }
+    factor = 1.0
+    factors: Dict[str, float] = {}
+    try:
+        from src.learning.adaptive_feedback import AdaptiveFeedbackLoop
+        af = AdaptiveFeedbackLoop()
+        ctx = af.get_adaptive_context(asset, regime) if hasattr(af, "get_adaptive_context") else {}
+        size_mult = float(ctx.get("size_multiplier", 1.0) or 1.0)
+        factors["adaptive_feedback"] = size_mult
+        factor *= size_mult
+    except Exception:
+        factors["adaptive_feedback"] = 1.0
+    try:
+        from src.trading.self_evolving_overlay import SelfEvolvingOverlay
+        ov = SelfEvolvingOverlay().get_overrides() or {}
+        sm = float((ov.get("risk_params") or {}).get("size_mult", 1.0) or 1.0)
+        factors["evolved_overlay"] = sm
+        factor *= sm
+    except Exception:
+        factors["evolved_overlay"] = 1.0
+    try:
+        from src.learning.accuracy_engine import AccuracyEngine
+        ae = AccuracyEngine()
+        sm = float(ae.get_position_size_multiplier()) if hasattr(ae, "get_position_size_multiplier") else 1.0
+        factors["accuracy_engine"] = sm
+        factor *= sm
+    except Exception:
+        factors["accuracy_engine"] = 1.0
+    cap_pct = 100.0
+    try:
+        from src.risk.dynamic_position_limits import DynamicPositionLimits
+        cap_pct = float(DynamicPositionLimits().get_max_position_pct(asset, regime))
+        factors["position_limits_cap_pct"] = cap_pct
+    except Exception:
+        factors["position_limits_cap_pct"] = cap_pct
+    final = min(proposed * factor, cap_pct)
+    out.update({
+        "factors": {k: round(v, 3) for k, v in factors.items()},
+        "modulation_factor": round(factor, 3),
+        "final_size_pct": round(final, 3),
+        "would_be_capped_by_limits": bool(proposed * factor > cap_pct),
+        "advisory": (
+            "If final_size_pct < 1.0%, the modulation is suppressing your "
+            "size — consider raising proposed_size_pct or finding a "
+            "higher-conviction setup. If would_be_capped_by_limits is "
+            "true, the regime cap is binding."
+        ),
+    })
+    return out
+
+
 def _handle_venue_capabilities(args: Dict[str, Any]) -> Dict[str, Any]:
     """What operations the active venue supports — brain reads this so
     it doesn't propose impossible actions (e.g. SHORT on Robinhood)."""
@@ -1116,6 +1185,26 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_modify_paper_position, tag="write",
         ),
         Tool(
+            name="query_sizing_preview",
+            description=(
+                "[SIZING] Preview the final size_pct after body's "
+                "modulation pipeline (AdaptiveFeedback × SelfEvolvingOverlay "
+                "× AccuracyEngine × DynamicPositionLimits cap). Call BEFORE "
+                "submit_trade_plan so your proposal accounts for the "
+                "modulation rather than being surprised by a smaller fill."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "regime": {"type": "string"},
+                    "proposed_size_pct": {"type": "number", "minimum": 0.1, "maximum": 30.0},
+                },
+                "required": ["asset", "proposed_size_pct"],
+            },
+            handler=_handle_sizing_preview, tag="read_only",
+        ),
+        Tool(
             name="query_venue_capabilities",
             description=(
                 "[VENUE] What operations the active venue supports — "
@@ -1167,6 +1256,7 @@ def register_unified_brain_tools(registry) -> int:
             "close_paper_position": ("realtime", "control", "internal"),
             "modify_paper_position": ("realtime", "control", "internal"),
             "query_venue_capabilities": ("daily", "query", "internal"),
+            "query_sizing_preview": ("realtime", "query", "internal"),
         }
         for name, (tm, it, rg) in _classifications.items():
             if name not in TOOL_CLASSIFICATIONS:
