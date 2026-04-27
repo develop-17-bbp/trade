@@ -679,6 +679,72 @@ async def ohlcv_data(asset: str, timeframe: str = "1h", limit: int = 200):
 # GROUP: MARKET DATA & SIGNALS
 # ─────────────────────────────────────────
 
+@app.get("/api/v1/brain", tags=["Brain"])
+async def brain_state(_=Depends(_require_api_key)):
+    """Latest LLM-brain state per asset — what the analyst saw and decided.
+
+    The 12-agent layer is sub-LLM; this endpoint exposes the actual
+    LLM brain (qwen analyst) per-tick decisions, the tick_state
+    snapshot it read (PORTFOLIO/GOAL/RATCHET/COST/etc), and recent
+    analyst traces. Frontend uses this to show the brain's reasoning
+    alongside the agent consensus.
+    """
+    out = {"assets": {}, "snapshot_ts": datetime.utcnow().isoformat()}
+    try:
+        from src.ai import tick_state as _ts
+        from src.ai.brain_memory import get_recent_analyst_traces as get_recent_traces
+        for asset in ("BTC", "ETH"):
+            snap = _ts.get(asset)
+            traces = get_recent_traces(asset, limit=5) or []
+            latest_trace = None
+            if traces:
+                t0 = traces[0]
+                latest_trace = {
+                    "ts": getattr(t0, "ts", 0),
+                    "direction": getattr(t0, "direction", "?"),
+                    "tier": getattr(t0, "tier", ""),
+                    "size_pct": float(getattr(t0, "size_pct", 0.0)),
+                    "thesis": str(getattr(t0, "thesis", ""))[:400],
+                    "verdict": getattr(t0, "verdict", ""),
+                    "plan_id": getattr(t0, "plan_id", ""),
+                }
+            history = []
+            for t in traces[:5]:
+                history.append({
+                    "ts": getattr(t, "ts", 0),
+                    "direction": getattr(t, "direction", "?"),
+                    "tier": getattr(t, "tier", ""),
+                    "verdict": getattr(t, "verdict", ""),
+                    "thesis": str(getattr(t, "thesis", ""))[:160],
+                })
+            evidence_lines = []
+            try:
+                evidence_lines = (_ts.format_for_brain(asset) or "").split("\n")
+            except Exception:
+                evidence_lines = []
+            out["assets"][asset] = {
+                "tick_age_s": _ts.age_s(asset),
+                "evidence_block": "\n".join(evidence_lines),
+                "evidence_lines": [ln for ln in evidence_lines if ln],
+                "open_positions_same_asset": int(snap.get("open_positions_same_asset", 0)),
+                "exposure_pct": float(snap.get("exposure_pct", 0.0)),
+                "today_pct_total": float(snap.get("today_pct_total", 0.0)),
+                "gap_to_1pct": float(snap.get("gap_to_1pct", 0.0)),
+                "ratchet_label": str(snap.get("ratchet_label", "NONE")),
+                "ratchet_sl_price": float(snap.get("ratchet_sl_price", 0.0)),
+                "conviction_tier": str(snap.get("conviction_tier", "")),
+                "sniper_status": str(snap.get("sniper_status", "")),
+                "pattern_label": str(snap.get("pattern_label", "")),
+                "pattern_score": int(snap.get("pattern_score", 0)),
+                "latest_decision": latest_trace,
+                "trace_history": history,
+            }
+    except Exception as e:
+        logger.exception("brain endpoint failed")
+        out["error"] = f"{type(e).__name__}: {e}"[:200]
+    return out
+
+
 @app.get("/api/v1/signals", tags=["Signals"])
 async def signals(_=Depends(_require_api_key)):
     """Latest signals per asset from all layers."""

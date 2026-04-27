@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Brain, Zap, Clock } from 'lucide-react'
 import AgentVotePanel from '../components/ai/AgentVotePanel'
 import { useSystemState } from '../hooks/useSystemState'
+import { fetchBrain, type BrainState } from '../api/client'
 
 // -- Skeleton --
 
@@ -39,6 +40,90 @@ function dirToSignal(dir: number): 'long' | 'short' | 'neutral' {
 
 // -- Consensus Bar --
 
+function LLMBrainPanel({ brain }: { brain: BrainState | null }) {
+  const assets = brain?.assets ?? {}
+  const assetKeys = Object.keys(assets)
+  if (!brain || assetKeys.length === 0) {
+    return (
+      <div className="card" style={{ backgroundColor: '#111111', border: '1px solid #222222', borderRadius: 12, padding: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <Brain size={18} style={{ color: '#8b5cf6' }} />
+          <h2 style={{ fontSize: 14, fontWeight: 600, color: '#ffffff', margin: 0 }}>LLM Brain (qwen analyst)</h2>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#666' }}>polling /api/v1/brain</span>
+        </div>
+        <p style={{ fontSize: 12, color: '#888', margin: 0 }}>
+          Waiting for first tick... (brain runs once per asset per tick;
+          if INITIALIZING shows in the header it hasn't fired yet)
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="card" style={{ backgroundColor: '#111111', border: '1px solid #222222', borderRadius: 12, padding: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <Brain size={18} style={{ color: '#8b5cf6' }} />
+        <h2 style={{ fontSize: 14, fontWeight: 600, color: '#ffffff', margin: 0 }}>LLM Brain (qwen analyst) — per-tick decisions</h2>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: '#666' }}>{brain.snapshot_ts}</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${assetKeys.length}, 1fr)`, gap: 16 }}>
+        {assetKeys.map((asset) => {
+          const a = assets[asset]
+          const dir = a.latest_decision?.direction ?? '?'
+          const dirColor = dir === 'LONG' || dir === 'BUY' ? '#22c55e' : dir === 'SHORT' || dir === 'SELL' ? '#ef4444' : '#a0a0a0'
+          const tickAge = a.tick_age_s == null ? '—' : `${Math.round(a.tick_age_s)}s ago`
+          return (
+            <div key={asset} style={{ border: '1px solid #1a1a1a', borderRadius: 8, padding: 16, backgroundColor: '#0a0a0a' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>{asset}</span>
+                <span style={{ fontSize: 18, fontWeight: 700, color: dirColor }}>{dir}</span>
+                <span style={{ fontSize: 11, color: '#666' }}>{a.latest_decision?.tier || ''}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: '#666' }}>tick {tickAge}</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11, marginBottom: 12 }}>
+                <span style={{ color: '#888' }}>open positions: <span style={{ color: '#fff' }}>{a.open_positions_same_asset}</span></span>
+                <span style={{ color: '#888' }}>exposure: <span style={{ color: '#fff' }}>{a.exposure_pct.toFixed(1)}%</span></span>
+                <span style={{ color: '#888' }}>today: <span style={{ color: a.today_pct_total >= 0 ? '#22c55e' : '#ef4444' }}>{a.today_pct_total >= 0 ? '+' : ''}{a.today_pct_total.toFixed(2)}%</span></span>
+                <span style={{ color: '#888' }}>gap to 1%: <span style={{ color: '#fff' }}>{a.gap_to_1pct >= 0 ? '+' : ''}{a.gap_to_1pct.toFixed(2)}%</span></span>
+                <span style={{ color: '#888' }}>ratchet: <span style={{ color: '#fff' }}>{a.ratchet_label || 'NONE'}</span></span>
+                <span style={{ color: '#888' }}>conviction: <span style={{ color: '#fff' }}>{a.conviction_tier || '—'}</span></span>
+                <span style={{ color: '#888' }}>sniper: <span style={{ color: '#fff' }}>{a.sniper_status || '—'}</span></span>
+                <span style={{ color: '#888' }}>pattern: <span style={{ color: '#fff' }}>{a.pattern_label || '—'}</span></span>
+              </div>
+              {a.latest_decision?.thesis && (
+                <div style={{ fontSize: 11, color: '#bbb', backgroundColor: '#000', padding: 8, borderRadius: 6, marginBottom: 12, fontStyle: 'italic', lineHeight: 1.4 }}>
+                  "{a.latest_decision.thesis}"
+                </div>
+              )}
+              {a.evidence_lines && a.evidence_lines.length > 0 && (
+                <details style={{ fontSize: 11, color: '#777' }}>
+                  <summary style={{ cursor: 'pointer', color: '#888' }}>tick evidence ({a.evidence_lines.length} lines)</summary>
+                  <pre style={{ fontSize: 10, color: '#999', backgroundColor: '#000', padding: 8, borderRadius: 6, marginTop: 6, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+                    {a.evidence_block}
+                  </pre>
+                </details>
+              )}
+              {a.trace_history && a.trace_history.length > 1 && (
+                <details style={{ fontSize: 11, color: '#777', marginTop: 6 }}>
+                  <summary style={{ cursor: 'pointer', color: '#888' }}>recent decisions ({a.trace_history.length})</summary>
+                  <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {a.trace_history.map((t, i) => (
+                      <div key={i} style={{ fontSize: 10, color: '#888' }}>
+                        <span style={{ color: t.direction === 'LONG' ? '#22c55e' : t.direction === 'SHORT' ? '#ef4444' : '#888' }}>{t.direction}</span>
+                        <span style={{ marginLeft: 6 }}>{t.verdict}</span>
+                        <span style={{ marginLeft: 6, color: '#666' }}>{t.thesis.slice(0, 100)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function ConsensusBar({ percentage, sentiment }: { percentage: number; sentiment: string }) {
   const barColor = sentiment === 'bullish' ? '#22c55e' : sentiment === 'bearish' ? '#ef4444' : '#666666'
 
@@ -61,6 +146,18 @@ function ConsensusBar({ percentage, sentiment }: { percentage: number; sentiment
 
 export default function AIAgents() {
   const { agents, loading, error } = useSystemState()
+  const [brain, setBrain] = useState<BrainState | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    const poll = async () => {
+      const b = await fetchBrain()
+      if (mounted && b) setBrain(b)
+    }
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => { mounted = false; clearInterval(id) }
+  }, [])
 
   const agentList = agents?.list ?? []
 
@@ -104,6 +201,9 @@ export default function AIAgents() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24, backgroundColor: '#000000', minHeight: '100%' }}>
+
+      {/* LLM Brain (qwen analyst) — actual per-tick decisions, above the 12-agent consensus */}
+      <LLMBrainPanel brain={brain} />
 
       {/* Consensus Gauge + Breakdown row */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>

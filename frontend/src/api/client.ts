@@ -120,6 +120,49 @@ export async function fetchDashboard(): Promise<DashboardData | null> {
   return fetchJSON<DashboardData>('/dashboard')
 }
 
+export interface BrainAssetState {
+  tick_age_s: number | null
+  evidence_block: string
+  evidence_lines: string[]
+  open_positions_same_asset: number
+  exposure_pct: number
+  today_pct_total: number
+  gap_to_1pct: number
+  ratchet_label: string
+  ratchet_sl_price: number
+  conviction_tier: string
+  sniper_status: string
+  pattern_label: string
+  pattern_score: number
+  latest_decision: null | {
+    ts: number
+    direction: string
+    tier: string
+    size_pct: number
+    thesis: string
+    verdict: string
+    plan_id: string
+  }
+  trace_history: Array<{
+    ts: number
+    direction: string
+    tier: string
+    verdict: string
+    thesis: string
+  }>
+}
+
+export interface BrainState {
+  assets: Record<string, BrainAssetState>
+  snapshot_ts: string
+  error?: string
+}
+
+/** LLM brain state (qwen analyst per-tick decisions + tick_state evidence) */
+export async function fetchBrain(): Promise<BrainState | null> {
+  return fetchJSON<BrainState>('/brain')
+}
+
 /** Live prices (no auth, fast ticker) */
 export async function fetchPrices(): Promise<PriceData | null> {
   return fetchJSON<PriceData>('/prices', false)
