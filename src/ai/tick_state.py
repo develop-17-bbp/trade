@@ -86,13 +86,20 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         _total = snap.get('today_pct_total', 0.0)
         _gap = snap.get('gap_to_1pct', 0.0)
         _trades = snap.get('today_trades', 0)
+        from datetime import datetime as _dt, timezone as _tz
+        _hour_utc = _dt.now(tz=_tz.utc).hour
+        _hours_left = max(1, 24 - _hour_utc)
+        _required_avg_per_remaining_hour = (_gap / _hours_left) if _gap > 0 else 0.0
         lines.append(
             f"GOAL: today_pct={_total:+.2f}% NET-of-spread "
             f"(realized={_real:+.2f}%, unrealized_net={_unreal_net:+.2f}%, "
             f"unrealized_gross={_unreal_gross:+.2f}%) trades_today={_trades} "
-            f"gap_to_1pct={_gap:+.2f}% "
-            "(NET is what closing right now actually realizes — "
-            "frontend may show GROSS which excludes spread)"
+            f"gap_to_1pct={_gap:+.2f}% hours_left_today={_hours_left} "
+            f"required_avg_per_hour_to_close_gap={_required_avg_per_remaining_hour:+.2f}% "
+            "(target is 1%/day NON-NEGOTIABLE; spread is a filter, not a "
+            "ceiling — if gap is large, hunt sniper-tier confluence, news "
+            "catalysts, oversold bounces; under-trading guarantees missing "
+            "the goal)"
         )
     # PORTFOLIO: existing exposure FIRST so the brain doesn't keep
     # stacking on the same asset when it's already long N times.
