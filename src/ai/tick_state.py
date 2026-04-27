@@ -244,6 +244,19 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
             f"{snap.get('evolved_ema_long', 0)} "
             f"evolved_rsi={snap.get('evolved_rsi_period', 0)}"
         )
+    # Ratchet (auto-trailing SL): the body locks profit progressively
+    # via L1/L2/L3 levels. Brain reads where the safety net currently
+    # is + the next trigger so it knows what's protected and what it
+    # could override via modify_paper_position.
+    if "ratchet_label" in snap and snap.get("ratchet_label") not in (None, "NONE", ""):
+        lines.append(
+            f"RATCHET: active={snap.get('ratchet_label', 'NONE')} "
+            f"current_pnl={snap.get('ratchet_current_pnl_pct', 0):+.2f}% "
+            f"sl=${snap.get('ratchet_sl_price', 0):,.2f} | "
+            f"next={snap.get('ratchet_next_label', 'n/a')} at "
+            f"+{snap.get('ratchet_next_pnl_pct', 0):.2f}% PnL "
+            "(auto-trails; brain may override via modify_paper_position)"
+        )
     # Cross-asset BTC-ETH cointegration (informs rotation/pair plays)
     if "pair_signal" in snap and snap.get("pair_signal", "NONE") != "NONE":
         lines.append(

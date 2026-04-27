@@ -7957,6 +7957,10 @@ class TradingExecutor:
             ]
             min_age_for_breakeven = 600  # 10 min — give EMA line time to prove trend
 
+        # Track active ratchet for brain visibility (LOCK-20%, BREAKEVEN, etc.)
+        active_ratchet_label = "NONE"
+        next_ratchet_label = ""
+        next_ratchet_min_pnl = 0.0
         if direction == 'LONG':
             # Walk through ratchet levels from highest to lowest
             # Use spread-adjusted PnL so ratchet levels reflect TRUE profit
@@ -7979,7 +7983,14 @@ class TradingExecutor:
                         best_sl = max(floor_sl, atr_trail_sl)
                         if best_sl > new_sl and best_sl < price:
                             new_sl = best_sl
+                    active_ratchet_label = label
                     break  # Only apply highest matching level
+            # Next ratchet: walk forward to find the next-higher threshold
+            for mp, _pr, _am, _lbl in ratchet_levels:
+                if mp > ratchet_pnl:
+                    next_ratchet_label = _lbl
+                    next_ratchet_min_pnl = mp
+                    break
 
             # Additional tightening: swing lows and order book walls
             if pnl_pct >= 1.5:
@@ -8017,6 +8028,12 @@ class TradingExecutor:
                         best_sl = min(floor_sl, atr_trail_sl)
                         if best_sl < new_sl and best_sl > price:
                             new_sl = best_sl
+                    active_ratchet_label = label
+                    break
+            for mp, _pr, _am, _lbl in ratchet_levels:
+                if mp > ratchet_pnl:
+                    next_ratchet_label = _lbl
+                    next_ratchet_min_pnl = mp
                     break
 
             # Additional tightening: swing highs and order book walls
@@ -8034,6 +8051,21 @@ class TradingExecutor:
                         ob_sl = wall_price * 1.001
                         if ob_sl < new_sl:
                             new_sl = ob_sl
+
+        # Publish ratchet state to tick_state — brain sees which lock
+        # level is active and the next threshold so it knows where the
+        # body's automatic safety net stands. Brain can override via
+        # modify_paper_position when it has catalyst-specific reason.
+        try:
+            from src.ai import tick_state as _ts
+            _ts.update(asset,
+                       ratchet_label=str(active_ratchet_label),
+                       ratchet_next_label=str(next_ratchet_label),
+                       ratchet_next_pnl_pct=float(next_ratchet_min_pnl),
+                       ratchet_current_pnl_pct=float(ratchet_pnl),
+                       ratchet_sl_price=float(new_sl))
+        except Exception:
+            pass
 
         # ══════════════════════════════════════════════════════════
         # EMA LINE-FOLLOWING SL — The EMA line IS the trend line
