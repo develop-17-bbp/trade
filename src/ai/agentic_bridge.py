@@ -408,6 +408,50 @@ def _rule_based_fallback_plan(
     except Exception:
         pass
 
+    # Mean-reversion-bounce override for longs-only venues (Robinhood
+    # spot). When ALL non-LLM sources vote SHORT but the venue can't
+    # actually short, look for oversold conditions (RSI<40, large
+    # ATR move expected, "EXCELLENT PATTERN" in quant_data) and
+    # propose a small LONG bounce trade instead of skipping. This
+    # captures the bounce trades that happen on every bearish leg
+    # while keeping the position size small (paper-mode soak data).
+    is_robinhood_longs_only = "robinhood" in (regime or "").lower() or True  # default assume longs-only
+    net_pre = sum(votes)
+    if net_pre < 0 and is_robinhood_longs_only:
+        # All votes bearish but we can only LONG. Check for bounce.
+        rsi_match = _re.search(r"rsi[_-]?bear=(\d+)", quant_data or "", _re.IGNORECASE)
+        is_oversold = False
+        if rsi_match:
+            try:
+                rsi = int(rsi_match.group(1))
+                is_oversold = rsi < 40
+            except ValueError:
+                pass
+        excellent_pattern = "excellent pattern" in (quant_data or "").lower()
+        sniper_pass = "sniper pass" in (quant_data or "").lower()
+        if is_oversold or excellent_pattern or sniper_pass:
+            try:
+                from src.trading.trade_plan import TradePlan
+                return TradePlan(
+                    asset=asset.upper(),
+                    direction="LONG",
+                    entry_tier="normal",
+                    size_pct=0.5,  # half-size for counter-trend bounce
+                    confidence=0.55,
+                    expected_pnl_pct_range=(1.0, 2.0),
+                    thesis=(
+                        f"mean-reversion bounce LONG (longs-only venue): "
+                        f"all sources bearish but oversold/excellent-pattern "
+                        f"detected; small size; "
+                        f"rsi_oversold={is_oversold} pattern={excellent_pattern} "
+                        f"sniper={sniper_pass}; regime={regime}"
+                    )[:300],
+                )
+            except Exception as e:
+                logger.debug(
+                    "rule-based bounce-LONG construction failed: %s", e,
+                )
+
     if not votes:
         return None
 
