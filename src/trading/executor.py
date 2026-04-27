@@ -1859,6 +1859,20 @@ class TradingExecutor:
             _span_ctx["consensus"] = consensus
 
             print(f"  [{self._ex_tag}:{asset}] AGENTS RAW: {consensus_dir} {consensus} (net={net:+.2f}) | {len(votes)} agents | avg_conf={avg_conf:.2f}")
+            try:
+                from src.ai import tick_state as _ts
+                _vote_summary = ", ".join(
+                    f"{k}={v.direction:+d}({v.confidence:.0%})"
+                    for k, v in list(votes.items())[:8]
+                )
+                _ts.update(asset,
+                           agents_consensus=f"{consensus_dir} {consensus}",
+                           agents_net=float(net),
+                           agents_count=int(len(votes)),
+                           agents_avg_conf=float(avg_conf),
+                           agents_votes=_vote_summary)
+            except Exception:
+                pass
 
             return {
                 'consensus': consensus,
@@ -3683,6 +3697,14 @@ class TradingExecutor:
                 if _genetic_count > 0:
                     _genetic_dir = "BUY" if _genetic_vote > 0 else ("SELL" if _genetic_vote < 0 else "FLAT")
                     print(f"  [{self._ex_tag}:{asset}] GENETIC: {_genetic_count} evolved strategies vote {_genetic_dir} (net={_genetic_vote:+d})")
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ts.update(asset,
+                                   genetic_vote=_genetic_dir,
+                                   genetic_count=int(_genetic_count),
+                                   genetic_net=int(_genetic_vote))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"[GENETIC] {asset} eval failed: {e}")
 
@@ -3708,6 +3730,8 @@ class TradingExecutor:
                 tf_signals=str(active_tfs_str)[:120],
                 atr=float(current_atr),
                 ob_imbalance=float(ob_levels.get('imbalance', 0.0)) if isinstance(ob_levels, dict) else 0.0,
+                spread_pct=float(getattr(self, '_round_trip_spread', 0.0) or 0.0) * 100.0,
+                min_profitable_move_pct=max(2.0, float(getattr(self, '_round_trip_spread', 0.0) or 0.0) * 100.0 * 1.5),
             )
         except Exception:
             pass
@@ -4011,65 +4035,74 @@ class TradingExecutor:
             self._last_tf_signals = {}
         self._last_tf_signals[asset] = tf_signals
 
-        # ── PAPER-MODE DIRECT TRADE TRIGGER ──
-        # Operator directive (2026-04-27, after 7 days of zero trades):
-        # "trade at any cost in paper mode." Every gate in this method
-        # has been individually softened, but the cumulative effect is
-        # still zero trades because each gate adds friction. This block
-        # fires a direct paper trade IF:
-        #   * we're in paper mode (real capital path is unaffected),
-        #   * there's an active TF signal (5m/1h/4h/1d/etc),
-        #   * no existing position on this asset,
-        #   * authority rules from the PDF aren't violated (small body,
-        #     news blackout, etc still hard).
-        # Direction: from multi-strategy consensus or TF signal majority.
-        # Size: 1.0% of equity (small for paper soak coverage).
-        # The brain still runs its agentic loop in parallel for
-        # learning data; this trigger guarantees the soak counter
-        # actually moves.
+        # ── PAPER-MODE DIRECT TRADE TRIGGER (opt-in fallback) ──
+        # Why opt-in only: the brain path now produces reasoned LLM
+        # plans with rich multi-subsystem rationale. Direct-fire
+        # bypasses that and emits bare stub reasons, which the
+        # operator pointed out (2026-04-27) as a regression.
+        # Gate: ACT_PAPER_FORCE_DIRECT=1 (default OFF). Real-capital
+        # path is unaffected — this block can never fire when
+        # ACT_REAL_CAPITAL_ENABLED=1.
+        # When enabled it requires *multi-TF alignment* (≥2 timeframes
+        # in the same direction), correct dict-keyed signal extraction,
+        # and pulls a rich reason from tick_state so the brain's
+        # subsystem context is reflected even on the fallback path.
         try:
             _is_real_capital = os.environ.get(
                 "ACT_REAL_CAPITAL_ENABLED", ""
             ).strip() == "1"
-            if (not _is_real_capital
+            _force_direct = os.environ.get(
+                "ACT_PAPER_FORCE_DIRECT", ""
+            ).strip() == "1"
+            if (_force_direct
+                    and not _is_real_capital
                     and active_tf_signals
                     and asset not in self.positions
                     and self._paper is not None):
-                # Direction from TF signal majority (most TFs SELL -> SHORT;
-                # most BUY -> LONG; ties -> use 1h/4h preference).
-                _buys = sum(1 for s in active_tf_signals.values()
-                           if str(s).upper() in ('BUY', 'LONG', 'RISING'))
-                _sells = sum(1 for s in active_tf_signals.values()
-                            if str(s).upper() in ('SELL', 'SHORT', 'FALLING'))
-                _direction = "LONG" if _buys >= _sells else "SHORT"
-                # Use ATR for SL placement — 2x ATR below entry for LONG,
-                # 2x ATR above for SHORT.
-                _sl = (price - 2.0 * current_atr if _direction == "LONG"
-                       else price + 2.0 * current_atr)
-                _qty = max(0.0001, (self._paper.equity * 0.01) / max(price, 0.01))
-                print(
-                    f"  [{self._ex_tag}:{asset}] PAPER DIRECT FIRE: "
-                    f"{_direction} @ ${price:,.2f} qty={_qty:.6f} sl=${_sl:,.2f} "
-                    "(operator directive: trade-at-any-cost in paper mode)"
-                )
-                try:
-                    self._paper.record_entry(
-                        asset=asset, direction=_direction, price=float(price),
-                        score=5, quantity=float(_qty),
-                        sl_price=float(_sl), tp_price=0.0,
-                        ml_confidence=0.5, llm_confidence=0.5,
-                        size_pct=1.0, reasoning=(
-                            f"paper-mode direct fire: TF signals {dict(active_tf_signals)} "
-                            f"-> {_direction}; operator directive 2026-04-27"
-                        )[:200],
+                _buys = 0
+                _sells = 0
+                for _tf_entry in active_tf_signals.values():
+                    _sig = (_tf_entry.get('signal') if isinstance(_tf_entry, dict) else _tf_entry)
+                    _sig_u = str(_sig).upper()
+                    if _sig_u in ('BUY', 'LONG', 'RISING'):
+                        _buys += 1
+                    elif _sig_u in ('SELL', 'SHORT', 'FALLING'):
+                        _sells += 1
+                # Require at least 2 aligned TFs and a clear majority.
+                _aligned = max(_buys, _sells)
+                if _aligned >= 2 and _buys != _sells:
+                    _direction = "LONG" if _buys > _sells else "SHORT"
+                    _sl = (price - 2.0 * current_atr if _direction == "LONG"
+                           else price + 2.0 * current_atr)
+                    _qty = max(0.0001, (self._paper.equity * 0.01) / max(price, 0.01))
+                    # Pull rich subsystem context for the reason.
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ctx = _ts.format_for_brain(asset, max_age_s=120.0)
+                    except Exception:
+                        _ctx = ""
+                    _ctx_short = (_ctx.replace("\n", " | ") or "no tick_state")[:300]
+                    print(
+                        f"  [{self._ex_tag}:{asset}] PAPER DIRECT FIRE: "
+                        f"{_direction} @ ${price:,.2f} qty={_qty:.6f} sl=${_sl:,.2f} "
+                        f"(force-direct, {_aligned} TFs aligned)"
                     )
-                    self._paper.save_state()
-                    # Track in sniper stats so the operator's panel shows it
-                    if hasattr(self, 'sniper_stats'):
-                        self.sniper_stats['entered'] = self.sniper_stats.get('entered', 0) + 1
-                    return
-                except Exception as _pe:
-                    logger.warning(f"[PAPER DIRECT FIRE] failed: {_pe}")
+                    try:
+                        self._paper.record_entry(
+                            asset=asset, direction=_direction, price=float(price),
+                            score=5, quantity=float(_qty),
+                            sl_price=float(_sl), tp_price=0.0,
+                            ml_confidence=0.5, llm_confidence=0.5,
+                            size_pct=1.0, reasoning=(
+                                f"force-direct {_direction} ({_buys}buy/{_sells}sell TFs) | {_ctx_short}"
+                            )[:500],
+                        )
+                        self._paper.save_state()
+                        if hasattr(self, 'sniper_stats'):
+                            self.sniper_stats['entered'] = self.sniper_stats.get('entered', 0) + 1
+                        return
+                    except Exception as _pe:
+                        logger.warning(f"[PAPER DIRECT FIRE] failed: {_pe}")
         except Exception as _direct_e:
             logger.debug(f"paper direct trigger skipped: {_direct_e}")
 
@@ -4547,9 +4580,25 @@ class TradingExecutor:
         # Log what the LLM will see
         if math_filter_warnings:
             print(f"  [{self._ex_tag}:{asset}] WARNINGS (LLM decides): {' | '.join(math_filter_warnings)}")
+            try:
+                from src.ai import tick_state as _ts
+                _ts.update(asset,
+                           pattern_label="WARNING",
+                           pattern_score=int(entry_score),
+                           pattern_factors=' | '.join(math_filter_warnings)[:200])
+            except Exception:
+                pass
         else:
             quality = "EXCELLENT" if entry_score >= 9 else "STRONG" if entry_score >= 7 else "OK"
             print(f"  [{self._ex_tag}:{asset}] {quality} PATTERN: score={entry_score}/10 ({', '.join(score_reasons)}) trend={min_trend_bars}bars")
+            try:
+                from src.ai import tick_state as _ts
+                _ts.update(asset,
+                           pattern_label=quality,
+                           pattern_score=int(entry_score),
+                           pattern_factors=', '.join(score_reasons)[:200])
+            except Exception:
+                pass
 
         # Entry quality context already captured above — no duplicate warnings needed
 
@@ -4795,6 +4844,14 @@ class TradingExecutor:
                 elif hurst_regime == 'random' and hurst_conf > 0.7:
                     # Random walk — add warning but don't block (weaker signal)
                     math_filter_warnings.append(f"HURST: H={hurst_value:.2f} random walk — trend may not persist")
+                try:
+                    from src.ai import tick_state as _ts
+                    _ts.update(asset,
+                               hurst_regime=str(hurst_regime),
+                               hurst_value=float(hurst_value),
+                               hurst_r2=float(hurst_conf))
+                except Exception:
+                    pass
             except Exception as e:
                 logger.debug(f"Hurst computation error: {e}")
 
@@ -4808,6 +4865,14 @@ class TradingExecutor:
                     math_filter_warnings.append(f"VPIN: {vpin_status['vpin']:.2f} TOXIC flow — informed traders detected")
                 elif vpin_status['risk_action'] == 'REDUCE':
                     math_filter_warnings.append(f"VPIN: {vpin_status['vpin']:.2f} elevated — watch for adverse selection")
+                try:
+                    from src.ai import tick_state as _ts
+                    _ts.update(asset,
+                               vpin=float(vpin_status.get('vpin', 0.0)),
+                               vpin_toxic=bool(vpin_status.get('is_toxic', False)),
+                               vpin_action=str(vpin_status.get('risk_action', 'OK')))
+                except Exception:
+                    pass
                 # Push VPIN to dashboard
                 try:
                     DashboardState().add_layer_log('L1', f"VPIN updated: {vpin_status['vpin']:.4f} ({vpin_status.get('risk_action', 'OK')})", "info")
@@ -4879,6 +4944,14 @@ class TradingExecutor:
                     if ml_context['hmm_regime'] == 'CRISIS' and crisis_prob > 0.5:
                         math_filter_warnings.append(f"HMM CRISIS: prob={crisis_prob:.2f} — extreme caution")
                         print(f"  [{self._ex_tag}:{asset}] HMM CRISIS WARNING: {ml_context['hmm_regime']} (crisis_prob={crisis_prob:.2f}) — LLM informed")
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ts.update(asset,
+                                   regime=str(ml_context.get('hmm_regime', '?')),
+                                   hmm_confidence=float(ml_context.get('hmm_confidence', 0.0)),
+                                   crisis_probability=float(ml_context.get('crisis_probability', 0.0)))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"HMM regime error: {e}")
 
@@ -4892,6 +4965,14 @@ class TradingExecutor:
                     ml_context['kalman_snr'] = round(kalman_result.get('snr', 0), 2)
                     slope_dir = 'UP' if kalman_result.get('slope', 0) > 0 else 'DOWN'
                     ml_context['kalman_trend'] = slope_dir
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ts.update(asset,
+                                   kalman_slope=float(ml_context['kalman_slope']),
+                                   kalman_snr=float(ml_context['kalman_snr']),
+                                   kalman_trend=str(slope_dir))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"Kalman filter error: {e}")
 
@@ -5062,6 +5143,13 @@ class TradingExecutor:
                         ml_context['garch_vol_expanding'] = current_vol > avg_vol * 1.2
                         if current_vol > avg_vol * 1.5:
                             math_filter_warnings.append(f"GARCH: volatility 50%+ above average -> expect wild swings")
+                        try:
+                            from src.ai import tick_state as _ts
+                            _ts.update(asset,
+                                       garch_vol_pct=float(current_vol * 100.0),
+                                       garch_expanding=bool(current_vol > avg_vol * 1.2))
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.debug(f"GARCH forecast error: {e}")
 
@@ -5244,6 +5332,14 @@ class TradingExecutor:
 
                     _cal_tag = 'cal' if _calibrated else 'raw'
                     print(f"  [{self._ex_tag}:{asset}] LGBM[{_cal_tag}]: {ml_context['lgbm_direction']} conf={ml_context['lgbm_confidence']:.2f} | score now={entry_score}")
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ts.update(asset,
+                                   ml_lgbm_dir=str(ml_context.get('lgbm_direction', '?')),
+                                   ml_lgbm_conf=float(ml_context.get('lgbm_confidence', 0.0)),
+                                   ml_lgbm_calibrated=bool(_calibrated))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"LightGBM binary prediction error for {asset}: {e}")
 
@@ -5349,6 +5445,17 @@ class TradingExecutor:
                 ml_context['meta_confidence'] = meta_conf
                 ml_context['meta_position_scale'] = meta_scale
                 print(f"  [{self._ex_tag}:{asset}] META-CTRL: dir={meta_dir} conf={meta_conf:.2f} scale={meta_scale:.2f}")
+                try:
+                    from src.ai import tick_state as _ts
+                    _ts.update(asset,
+                               ml_meta_dir=int(meta_dir),
+                               ml_meta_prob=float(meta_conf),
+                               ml_meta_scale=float(meta_scale),
+                               ml_lstm_pred=str(ml_context.get('lstm_trade_quality', '?')),
+                               ml_patchtst_pred=str(ml_context.get('patchtst_direction', '?')),
+                               ml_rl_action=str(ml_context.get('rl_action', '?'))[:60])
+                except Exception:
+                    pass
             except Exception as e:
                 logger.debug(f"MetaController failed: {e}")
 
@@ -6188,6 +6295,17 @@ class TradingExecutor:
         if self._evolution_overlay:
             try:
                 _evo_overrides = self._evolution_overlay.get_overrides()
+                _ind = _evo_overrides.get('indicator_params', {}) if isinstance(_evo_overrides, dict) else {}
+                _risk = _evo_overrides.get('risk_params', {}) if isinstance(_evo_overrides, dict) else {}
+                try:
+                    from src.ai import tick_state as _ts
+                    _ts.update(asset,
+                               evolved_ema_short=int(_ind.get('ema_fast', 8) or 8),
+                               evolved_ema_long=int(_ind.get('ema_slow', 21) or 21),
+                               evolved_rsi_period=int(_ind.get('rsi_period', 14) or 14),
+                               evolved_size_mult=float(_risk.get('size_mult', 1.0) or 1.0))
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -6309,6 +6427,16 @@ class TradingExecutor:
             if _size_mult != 1.0:
                 size_pct = max(1.0, size_pct * _size_mult)
                 print(f"  [{self._ex_tag}:{asset}] ADAPTIVE: size *{_size_mult:.2f} conf *{_conf_mult:.2f} (WR={_adaptive_ctx.get('rolling_win_rate', 0.5):.0%})")
+            try:
+                from src.ai import tick_state as _ts
+                _ts.update(asset,
+                           adaptive_size_mult=float(_size_mult),
+                           adaptive_conf_mult=float(_conf_mult),
+                           adaptive_recent_wr=float(_adaptive_ctx.get('rolling_win_rate', 0.5)),
+                           adaptive_total_trades=int(_adaptive_ctx.get('total_trades', 0)),
+                           adaptive_blacklisted=bool(_adaptive_ctx.get('is_blacklisted', False)))
+            except Exception:
+                pass
 
         # ── Apply Self-Evolving Overlay Risk Adjustments ──
         if _evo_overrides:

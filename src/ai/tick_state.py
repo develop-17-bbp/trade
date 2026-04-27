@@ -70,6 +70,14 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         return ""
 
     lines = []
+    # COST: round-trip spread the brain MUST clear before any plan
+    # makes economic sense (Robinhood is ~1.69%, Bybit ~0.055%).
+    if "spread_pct" in snap:
+        lines.append(
+            f"COST: round_trip_spread={snap.get('spread_pct', 0):.2f}% "
+            f"min_profitable_move={snap.get('min_profitable_move_pct', 0):.2f}% "
+            "(every plan must beat this — sub-spread trades are -EV)"
+        )
     # Price + EMA
     if "price" in snap:
         lines.append(
