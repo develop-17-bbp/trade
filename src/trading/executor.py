@@ -3736,6 +3736,49 @@ class TradingExecutor:
         except Exception:
             pass
 
+        # ── Publish CURRENT PORTFOLIO STATE to the brain ──
+        # Without this the brain sees every tick as a fresh opportunity
+        # and stacks dozens of entries on the same asset. The brain
+        # MUST know how many positions it already has, total exposure,
+        # avg unrealized PnL, and how old the oldest one is so it
+        # decides "add", "hold", or "wait" intelligently.
+        try:
+            from src.ai import tick_state as _ts
+            _open_same = []
+            _open_other = 0
+            _equity_now = float(self.equity)
+            if self._paper is not None:
+                _equity_now = float(self._paper.equity)
+                for _tid, _p in self._paper.positions.items():
+                    if str(_p.asset).upper() == asset.upper():
+                        _open_same.append(_p)
+                    else:
+                        _open_other += 1
+            _exposure_pct = 0.0
+            _avg_pnl_pct = 0.0
+            _oldest_age_min = 0.0
+            if _open_same and _equity_now > 0:
+                _notional = sum(float(getattr(p, 'entry_price', 0)) * float(getattr(p, 'quantity', 0)) for p in _open_same)
+                _exposure_pct = (_notional / _equity_now) * 100.0
+                _avg_pnl_pct = sum(float(getattr(p, 'current_pnl_pct', 0.0)) for p in _open_same) / len(_open_same)
+                _now = time.time()
+                _ages = []
+                for p in _open_same:
+                    _et = getattr(p, 'entry_time', None)
+                    if hasattr(_et, 'timestamp'):
+                        _ages.append((_now - _et.timestamp()) / 60.0)
+                if _ages:
+                    _oldest_age_min = max(_ages)
+            _ts.update(asset,
+                       open_positions_same_asset=int(len(_open_same)),
+                       open_positions_other_assets=int(_open_other),
+                       exposure_pct=float(_exposure_pct),
+                       avg_unrealized_pct=float(_avg_pnl_pct),
+                       oldest_position_min=float(_oldest_age_min),
+                       equity_usd=float(_equity_now))
+        except Exception:
+            pass
+
         # ── BTC-ETH Pairs Trading Signal (informational — feeds LLM context) ──
         pairs_signal = {}
         if self._coint_engine and asset in ('BTC', 'ETH'):

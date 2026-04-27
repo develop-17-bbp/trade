@@ -70,6 +70,21 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         return ""
 
     lines = []
+    # PORTFOLIO: existing exposure FIRST so the brain doesn't keep
+    # stacking on the same asset when it's already long N times.
+    if "open_positions_same_asset" in snap:
+        _n = snap.get('open_positions_same_asset', 0)
+        _other = snap.get('open_positions_other_assets', 0)
+        _exp = snap.get('exposure_pct', 0.0)
+        _avg = snap.get('avg_unrealized_pct', 0.0)
+        _age = snap.get('oldest_position_min', 0.0)
+        _eq = snap.get('equity_usd', 0.0)
+        lines.append(
+            f"PORTFOLIO: same_asset_open={_n} other_assets_open={_other} "
+            f"exposure={_exp:.1f}% avg_unrealized={_avg:+.2f}% "
+            f"oldest={_age:.0f}min equity=${_eq:,.0f} "
+            "(if same_asset_open >=3, prefer HOLD/EXIT over new ENTRY)"
+        )
     # COST: round-trip spread the brain MUST clear before any plan
     # makes economic sense (Robinhood is ~1.69%, Bybit ~0.055%).
     if "spread_pct" in snap:

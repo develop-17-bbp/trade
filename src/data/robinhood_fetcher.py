@@ -198,6 +198,26 @@ class RobinhoodPaperFetcher:
         Called by executor when it would normally place an order.
         """
         with self._lock:
+            # Concentration cap: refuse a new entry once we already
+            # hold N opens on the same asset. Operator hit 182 paper
+            # opens on BTC because the brain didn't see existing
+            # positions and the executor never refused. Default 5;
+            # override via ACT_MAX_OPEN_PER_ASSET. Set to 0 to disable.
+            try:
+                _cap = int(os.environ.get("ACT_MAX_OPEN_PER_ASSET", "5"))
+            except Exception:
+                _cap = 5
+            if _cap > 0:
+                _same = sum(1 for p in self.positions.values()
+                            if str(p.asset).upper() == asset.upper())
+                if _same >= _cap:
+                    print(
+                        f"  [PAPER] CONCENTRATION CAP: {asset} already has "
+                        f"{_same} opens (cap={_cap}) — refusing new entry. "
+                        f"Set ACT_MAX_OPEN_PER_ASSET=N to raise."
+                    )
+                    return None
+
             # Use the executor's fill price directly — avoids redundant Robinhood API call
             # The executor already fetched the order book and determined the fill price
             fill_price = price
