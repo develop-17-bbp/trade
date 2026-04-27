@@ -426,6 +426,136 @@ def _handle_robinhood_fills(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"fills_query_failed: {e}"[:200]}
 
 
+# ── Brain authority tools (gap closure: full body→brain visibility) ─────
+
+
+def _handle_accuracy_engine(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-component accuracy weights + position-size multiplier the
+    brain can see (was previously gate-only, blind to LLM)."""
+    regime = str(args.get("regime") or "unknown")
+    try:
+        from src.learning.accuracy_engine import AccuracyEngine
+        eng = AccuracyEngine()
+        weights = eng.get_ensemble_weights(regime) or {}
+        return {
+            "regime": regime,
+            "ensemble_weights": {k: round(float(v), 3) for k, v in weights.items()},
+            "position_size_multiplier": round(float(eng.get_position_size_multiplier()), 3),
+            "avg_slippage_bps": round(float(eng.get_avg_slippage()), 2),
+            "effective_spread_pct": round(float(eng.get_effective_spread()), 3),
+            "should_skip": bool(eng.should_skip_trade()[0]) if hasattr(eng, "should_skip_trade") else False,
+        }
+    except Exception as e:
+        return {"error": f"accuracy_query_failed: {e}"[:200]}
+
+
+def _handle_position_limits(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Dynamic position limits + current usage so the brain sizes
+    plans within the cap before submitting."""
+    asset = str(args.get("asset") or "BTC").upper()
+    regime = str(args.get("regime") or "unknown")
+    try:
+        from src.risk.dynamic_position_limits import DynamicPositionLimits
+        lim = DynamicPositionLimits()
+        return {
+            "asset": asset,
+            "regime": regime,
+            "max_position_pct": round(float(lim.get_max_position_pct(asset, regime)), 2),
+            "max_position_usd": round(float(lim.get_max_position_usd(asset, regime)), 2),
+            "stats": lim.get_stats() if hasattr(lim, "get_stats") else {},
+        }
+    except Exception as e:
+        return {"error": f"position_limits_query_failed: {e}"[:200]}
+
+
+def _handle_recent_plans(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Brain reads its OWN prior TradePlans (last N for this asset)
+    so cross-tick continuity is observable. Closes the cross-tick
+    gap where the brain only saw critiques but not direction."""
+    asset = str(args.get("asset") or "").upper()
+    limit = int(args.get("limit") or 5)
+    limit = max(1, min(20, limit))
+    try:
+        import sqlite3, json as _json
+        from src.orchestration.warm_store import get_store
+        store = get_store()
+        conn = sqlite3.connect(store.db_path, timeout=2.0)
+        try:
+            sql = (
+                "SELECT ts_ns, symbol, plan_json, final_action "
+                "FROM decisions "
+                + ("WHERE symbol = ? " if asset else "")
+                + "ORDER BY ts_ns DESC LIMIT ?"
+            )
+            params = ((asset, limit) if asset else (limit,))
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+        out: List[Dict[str, Any]] = []
+        for ts_ns, sym, raw, action in rows:
+            try:
+                p = _json.loads(raw or "{}")
+            except Exception:
+                p = {}
+            out.append({
+                "ts_ns": int(ts_ns),
+                "asset": sym,
+                "direction": p.get("direction", "?"),
+                "thesis": str(p.get("thesis", ""))[:200],
+                "confidence": p.get("confidence"),
+                "final_action": action,
+            })
+        return {"plans": out, "count": len(out)}
+    except Exception as e:
+        return {"error": f"recent_plans_query_failed: {e}"[:200]}
+
+
+def _handle_profit_protector(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Trailing-stop + trade-quality state per asset (was gate-only)."""
+    asset = str(args.get("asset") or "BTC").upper()
+    try:
+        from src.risk.profit_protector import ProfitProtector
+        pp = ProfitProtector()
+        out = {"asset": asset}
+        try:
+            out["profit_status"] = pp.get_profit_status()
+        except Exception:
+            out["profit_status"] = {}
+        try:
+            trail = pp.trailing_stops.get(asset) if hasattr(pp, "trailing_stops") else None
+            if trail:
+                out["trailing_stop"] = {
+                    "stop_price": float(trail.get("stop_price", 0)),
+                    "high_water": float(trail.get("high_water", 0)),
+                    "active": True,
+                }
+            else:
+                out["trailing_stop"] = {"active": False}
+        except Exception:
+            out["trailing_stop"] = {"active": False}
+        return out
+    except Exception as e:
+        return {"error": f"profit_protector_query_failed: {e}"[:200]}
+
+
+def _handle_champion_gate(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Current champion adapter state — which fine-tuned LoRA is
+    serving + last gate decision. Read-only window into model lifecycle."""
+    try:
+        from src.ai.champion_gate import get_champion_state
+        state = get_champion_state() or {}
+        return {
+            "champion_id": str(state.get("champion_id", "default"))[:64],
+            "challenger_id": str(state.get("challenger_id", ""))[:64],
+            "last_gate_decision": str(state.get("last_decision", "n/a"))[:64],
+            "champion_metrics": state.get("champion_metrics") or {},
+        }
+    except ImportError:
+        return {"error": "champion_gate_no_state_api"}
+    except Exception as e:
+        return {"error": f"champion_gate_query_failed: {e}"[:200]}
+
+
 def register_unified_brain_tools(registry) -> int:
     """Register the 9 unified-brain tools. Safe to call multiple times
     against a fresh registry; raises on duplicate tool names in an
@@ -637,6 +767,79 @@ def register_unified_brain_tools(registry) -> int:
             },
             handler=_handle_robinhood_fills, tag="read_only",
         ),
+        Tool(
+            name="query_accuracy_engine",
+            description=(
+                "[LEARNING] Per-component ensemble weights (LGBM, LSTM, "
+                "PatchTST, RL, multi-strategy, LLM, agents) for the "
+                "current regime + position-size multiplier. Brain uses "
+                "this to weight its own confidence and size honestly."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"regime": {"type": "string"}},
+            },
+            handler=_handle_accuracy_engine, tag="read_only",
+        ),
+        Tool(
+            name="query_position_limits",
+            description=(
+                "[RISK] Dynamic position limits per asset + regime. "
+                "Returns max_position_pct + max_position_usd so the brain "
+                "sizes within the cap before submit_trade_plan."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "regime": {"type": "string"},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_position_limits, tag="read_only",
+        ),
+        Tool(
+            name="query_recent_plans",
+            description=(
+                "[MEMORY] Brain reads its OWN prior TradePlans for an "
+                "asset (direction/thesis/confidence/terminated_reason). "
+                "Cross-tick continuity: 'what did I propose 3 ticks ago "
+                "and how did it terminate?'"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+            },
+            handler=_handle_recent_plans, tag="read_only",
+        ),
+        Tool(
+            name="query_profit_protector",
+            description=(
+                "[RISK] Trailing-stop + trade-quality state per asset. "
+                "Brain sees high-water mark, active stop price, and "
+                "whether the protector is trailing — useful when "
+                "deciding HOLD vs EXIT."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "required": ["asset"],
+            },
+            handler=_handle_profit_protector, tag="read_only",
+        ),
+        Tool(
+            name="query_champion_gate",
+            description=(
+                "[MODEL] Current champion adapter id + challenger + last "
+                "gate decision (model lifecycle window). Returns 'no_state_api' "
+                "if champion_gate.get_champion_state isn't implemented."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_champion_gate, tag="read_only",
+        ),
     ]
 
     added = 0
@@ -664,6 +867,11 @@ def register_unified_brain_tools(registry) -> int:
             "query_robinhood_positions": ("realtime", "data_fetch", "internal"),
             "query_robinhood_quote": ("realtime", "data_fetch", "internal"),
             "query_recent_robinhood_fills": ("realtime", "data_fetch", "internal"),
+            "query_accuracy_engine": ("hour", "query", "internal"),
+            "query_position_limits": ("minute", "query", "internal"),
+            "query_recent_plans": ("realtime", "query", "internal"),
+            "query_profit_protector": ("realtime", "query", "internal"),
+            "query_champion_gate": ("hour", "query", "internal"),
         }
         for name, (tm, it, rg) in _classifications.items():
             if name not in TOOL_CLASSIFICATIONS:

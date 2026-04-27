@@ -314,16 +314,25 @@ def compile_agentic_plan(
 
         # C7b — write the analyst's decision back into brain_memory so
         # the scanner's next tick sees it. Compact trace; never raises.
+        # When the rule-based fallback overrode an LLM skip, prepend an
+        # explicit marker to the thesis so the next tick's analyst sees
+        # 'I said SKIP last tick but the fallback overrode me' and can
+        # course-correct (e.g. raise conviction or accept the bounce).
         try:
             import time as _t
             from src.ai.brain_memory import AnalystTrace, publish_analyst_trace
+            _thesis = str(getattr(result.plan, 'thesis', ''))[:300]
+            if result.terminated_reason == "rule_based_fallback":
+                _thesis = (
+                    "[FALLBACK_OVERRIDE: rule stack overrode LLM skip] " + _thesis
+                )[:300]
             publish_analyst_trace(AnalystTrace(
                 asset=asset, ts=_t.time(),
                 plan_id=getattr(result.plan, 'plan_id', '') or '',
                 direction=str(result.plan.direction),
                 tier=str(result.plan.entry_tier),
                 size_pct=float(getattr(result.plan, 'size_pct', 0.0)),
-                thesis=str(getattr(result.plan, 'thesis', ''))[:300],
+                thesis=_thesis,
                 verdict=result.terminated_reason,
             ))
         except Exception as _e:
