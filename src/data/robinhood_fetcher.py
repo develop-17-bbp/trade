@@ -215,23 +215,32 @@ class RobinhoodPaperFetcher:
         """
         with self._lock:
             # Concentration cap: refuse a new entry once we already
-            # hold N opens on the same asset. Operator hit 182 paper
-            # opens on BTC because the brain didn't see existing
-            # positions and the executor never refused. Default 5;
-            # override via ACT_MAX_OPEN_PER_ASSET. Set to 0 to disable.
+            # hold N opens on the same asset. Default 3 (matches the
+            # brain's DECIDE prompt threshold). Operator hit 182 paper
+            # opens on BTC before this guard existed. Override via
+            # ACT_MAX_OPEN_PER_ASSET. Set to 0 to disable.
+            # The refusal is also pushed to tick_state so the brain
+            # sees "my last LONG was refused — concentration cap" on
+            # its next tick and stops hammering ENTRY.
             try:
-                _cap = int(os.environ.get("ACT_MAX_OPEN_PER_ASSET", "5"))
+                _cap = int(os.environ.get("ACT_MAX_OPEN_PER_ASSET", "3"))
             except Exception:
-                _cap = 5
+                _cap = 3
             if _cap > 0:
                 _same = sum(1 for p in self.positions.values()
                             if str(p.asset).upper() == asset.upper())
                 if _same >= _cap:
-                    print(
-                        f"  [PAPER] CONCENTRATION CAP: {asset} already has "
-                        f"{_same} opens (cap={_cap}) — refusing new entry. "
-                        f"Set ACT_MAX_OPEN_PER_ASSET=N to raise."
+                    msg = (
+                        f"CONCENTRATION CAP HIT: {asset} already has "
+                        f"{_same} opens (cap={_cap}). Brain MUST close "
+                        "an existing position before adding."
                     )
+                    print(f"  [PAPER] {msg}")
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ts.update(asset, last_refusal=msg[:300])
+                    except Exception:
+                        pass
                     return None
 
             # Use the executor's fill price directly — avoids redundant Robinhood API call

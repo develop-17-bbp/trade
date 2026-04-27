@@ -70,6 +70,11 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         return ""
 
     lines = []
+    # REFUSAL FEEDBACK: if a prior tick's TradePlan was rejected by
+    # any layer (concentration cap, gate, etc.), surface it FIRST so
+    # the brain doesn't repeat the same proposal.
+    if "last_refusal" in snap and snap.get("last_refusal"):
+        lines.append(f"REFUSAL: {snap.get('last_refusal')}")
     # GOAL ARITHMETIC: brain reads the day's progress vs the 1%/day
     # mission so it knows whether to press on opportunities or take
     # what's on the table. Negative gap means we've overshot; large
@@ -108,7 +113,18 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
         )
         if _details:
             lines.append(f"OPEN_POSITIONS: {_details}")
-        if _n >= 1:
+        if _n >= 3:
+            lines.append(
+                "MANDATE: same_asset_open >= 3. You MUST output direction=SKIP "
+                "for any new ENTRY proposal. Only HOLD, EXIT, PARTIAL, or "
+                "MODIFY actions are allowed via close_paper_position / "
+                "modify_paper_position until exposure drops. New ENTRY "
+                "TradePlans will be REFUSED at the executor and you'll see "
+                "REFUSAL on the next tick. Spend this turn analyzing the "
+                "open positions — exit losers whose thesis broke, ratchet "
+                "winners' SLs higher, partial-take profits."
+            )
+        elif _n >= 1:
             lines.append(
                 "DECIDE: for each open position, reason HOLD vs EXIT vs "
                 "PARTIAL using current price + macro_bias + news + "
