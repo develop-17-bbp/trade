@@ -5268,8 +5268,17 @@ class TradingExecutor:
                 ml_context['anomaly_type'] = anomaly.get('type', 'NONE')
                 ml_context['anomaly_severity'] = anomaly.get('severity', 0)
                 if anomaly.get('is_anomaly'):
-                    print(f"  [{self._ex_tag}:{asset}] ANOMALY VETO: {anomaly['type']} severity={anomaly['severity']} z={anomaly['z_score']} vol_spike={anomaly['vol_spike']}x — BLOCKING ENTRY")
-                    return
+                    _is_real_capital = os.environ.get(
+                        "ACT_REAL_CAPITAL_ENABLED", ""
+                    ).strip() == "1"
+                    if _is_real_capital:
+                        print(f"  [{self._ex_tag}:{asset}] ANOMALY VETO: {anomaly['type']} severity={anomaly['severity']} z={anomaly['z_score']} vol_spike={anomaly['vol_spike']}x — BLOCKING ENTRY")
+                        return
+                    print(
+                        f"  [{self._ex_tag}:{asset}] ANOMALY ADVISORY: "
+                        f"{anomaly['type']} severity={anomaly['severity']} "
+                        "-- paper mode lets it through (brain is authority)"
+                    )
             except Exception as e:
                 logger.debug(f"Anomaly detection error: {e}")
 
@@ -5492,21 +5501,31 @@ class TradingExecutor:
                                   if isinstance(self.config.get('exchanges'), list) else 0.1)
                 effective_min = _safe.effective_min_score(effective_min, rt_spread, self._safe_config)
                 reject, reason = _safe.enforce_hard_score_veto(entry_score, effective_min)
-                if reject:
+                _is_real_capital = os.environ.get(
+                    "ACT_REAL_CAPITAL_ENABLED", ""
+                ).strip() == "1"
+                if reject and _is_real_capital:
                     print(f"  [{self._ex_tag}:{asset}] SAFE REJECT: {reason}")
                     return
-                # Consec-loss throttle — may pause entirely
+                if reject:
+                    print(f"  [{self._ex_tag}:{asset}] SAFE ADVISORY: {reason} -- paper mode passes")
+                # Consec-loss throttle — may pause entirely (real capital only)
                 mult, throttle_reason = self._safe_state.size_multiplier_for(
                     asset, self._safe_config,
                 )
                 if mult <= 0.0:
-                    print(f"  [{self._ex_tag}:{asset}] SAFE REJECT: {throttle_reason}")
-                    # Persist paused_until update
-                    try:
-                        self._safe_state.save(_safe.default_state_path())
-                    except Exception:
-                        pass
-                    return
+                    if _is_real_capital:
+                        print(f"  [{self._ex_tag}:{asset}] SAFE REJECT: {throttle_reason}")
+                        try:
+                            self._safe_state.save(_safe.default_state_path())
+                        except Exception:
+                            pass
+                        return
+                    print(
+                        f"  [{self._ex_tag}:{asset}] SAFE THROTTLE ADVISORY: "
+                        f"{throttle_reason} -- paper mode passes"
+                    )
+                    mult = 0.5  # half-size when throttled in paper mode
                 if mult < 1.0:
                     print(f"  [{self._ex_tag}:{asset}] SAFE SIZE x{mult}: {throttle_reason}")
                     self._safe_size_mult = mult  # applied at position sizing
@@ -6289,26 +6308,44 @@ class TradingExecutor:
                 print(f"  [{self._ex_tag}:{asset}] SHORT SCORE BLOCK: score {entry_score} < {required} required for SHORT (LONG bias) -- skipping")
                 return
 
-            # ── Robinhood SHORT hard-block ──
-            # Robinhood spot has ~0.845% spread. SHORTs lose ~70% after spread.
-            # Block ALL shorts on Robinhood/paper unless 1d EMA is confirmed FALLING.
+            # ── Robinhood SHORT advisory (paper mode lets it through) ──
+            # Real capital path is gated by _longs_only elsewhere; this
+            # block was an extra paper-mode caution layer that required
+            # 1d EMA FALLING + confidence>=0.90 before a SHORT could fire
+            # in paper. Per operator directive (2026-04-27): "nothing
+            # should block LLM trades in paper mode -- the brain is the
+            # authority." Now advisory only; brain's decision wins.
             _htf_1d_dir = 'FLAT'
             if hasattr(self, '_last_tf_signals'):
                 _htf_1d_dir = self._last_tf_signals.get(asset, {}).get('1d', {}).get('ema_direction', 'FLAT')
             if self._paper_mode:
                 if _htf_1d_dir != 'FALLING':
-                    print(f"  [{self._ex_tag}:{asset}] SHORT BLOCKED: 1d EMA not FALLING ({_htf_1d_dir}) -- LONG-only market on Robinhood")
-                    return
-                # Additional Robinhood SHORT guard: require LLM confidence >= 0.90 for shorts
+                    print(
+                        f"  [{self._ex_tag}:{asset}] SHORT ADVISORY: 1d EMA "
+                        f"not FALLING ({_htf_1d_dir}) -- paper mode lets it through"
+                    )
                 if confidence < 0.90:
-                    print(f"  [{self._ex_tag}:{asset}] SHORT BLOCKED: confidence {confidence:.2f} < 0.90 required for SHORT on Robinhood")
-                    return
+                    print(
+                        f"  [{self._ex_tag}:{asset}] SHORT ADVISORY: confidence "
+                        f"{confidence:.2f} < 0.90 -- paper mode lets it through"
+                    )
 
         # Quality gate: confidence (adaptive via meta overlay)
-        # Skip when quality override is active — override already boosted confidence
+        # Real capital: skip below threshold. Paper mode: advisory only,
+        # the brain's plan reaches the executor regardless of how its
+        # internal confidence ranks against this static threshold.
         if confidence < _active_min_confidence and not _quality_override_active:
-            print(f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {_active_min_confidence:.2f}")
-            return
+            _is_real_capital = os.environ.get(
+                "ACT_REAL_CAPITAL_ENABLED", ""
+            ).strip() == "1"
+            if _is_real_capital:
+                print(f"  [{self._ex_tag}:{asset}] SKIP: confidence {confidence:.2f} < {_active_min_confidence:.2f}")
+                return
+            print(
+                f"  [{self._ex_tag}:{asset}] CONFIDENCE ADVISORY: "
+                f"{confidence:.2f} < {_active_min_confidence:.2f} -- "
+                "paper mode lets it through (brain is authority)"
+            )
 
         # ── Compute ml_confidence once, reused for the hard gate AND paper record below.
         # Prefer calibrated meta_prob; fall back to raw lgbm_confidence; else 0.0.
@@ -6330,8 +6367,16 @@ class TradingExecutor:
                 ml_conf=ml_confidence,
             )
             if not _rh_ok:
-                print(f"  [{self._ex_tag}:{asset}] ROBINHOOD GATE BLOCKED: {_rh_reason}")
-                return
+                _is_real_capital = os.environ.get(
+                    "ACT_REAL_CAPITAL_ENABLED", ""
+                ).strip() == "1"
+                if _is_real_capital:
+                    print(f"  [{self._ex_tag}:{asset}] ROBINHOOD GATE BLOCKED: {_rh_reason}")
+                    return
+                print(
+                    f"  [{self._ex_tag}:{asset}] ROBINHOOD GATE ADVISORY: "
+                    f"{_rh_reason} -- paper mode lets it through (brain is authority)"
+                )
         else:
             # Quality override active — only check ATR move and SHORT block.
             # Real capital: SHORT is hard-blocked (venue is longs-only spot).
