@@ -1,0 +1,152 @@
+# Strategy-leak runbook
+# ---------------------
+# Each leak is a known regression we've fixed at least once. The ops agent
+# uses this file to:
+#   1. Detect regressions when known signatures appear in logs / state.
+#   2. Auto-remediate when the fix is deterministic (env flag, file write).
+#   3. Escalate to Claude Code headless only when a known-leak signature is
+#      ambiguous or the fix changes code behavior.
+#
+# `signature.log_pattern` is a regex applied to the last N log lines.
+# `signature.state_check` is a python expression (run by ops_lib.leaks)
+# that returns True when the leak is currently active.
+# `remediation.kind` is one of: env_flag | file_write | restart | escalate
+# When `kind=escalate`, the agent invokes Claude Code headless with the
+# leak's `escalate.prompt` to produce a one-time fix.
+
+leaks:
+
+  - id: L1_spread_hardcoded
+    title: "Cost gate uses 1.69% spread instead of env-tunable preset"
+    fixed_in: 7225f1f
+    signature:
+      log_pattern: 'cost_reject:margin=.*frictional=1\.69'
+      state_check: |
+        cost_gate.VENUE_COSTS["robinhood"]["spread_pct"] != 1.0 and \
+        os.environ.get("ACT_ROBINHOOD_SPREAD_PCT", "") == ""
+    remediation:
+      kind: env_flag
+      env: ACT_ROBINHOOD_SPREAD_PCT
+      value: "1.0"
+
+  - id: L2_ollama_eviction_loop
+    title: "Ollama silently evicts model between ticks (no keep_alive)"
+    fixed_in: 212578d
+    signature:
+      log_pattern: "OllamaProvider returned empty text for model="
+      state_check: |
+        os.environ.get("OLLAMA_KEEP_ALIVE", "") not in ("-1", "30m", "1h")
+    remediation:
+      kind: env_flag
+      env: OLLAMA_KEEP_ALIVE
+      value: "-1"
+
+  - id: L3_empty_scanner_prompt
+    title: "Scanner prompt empty when quant_digest + bundle_block both empty"
+    fixed_in: bde294b
+    signature:
+      log_pattern: "parse_failure 1/2 - step=1 preview=''"
+      state_check: "False"  # verified via shadow_tick fallback in code
+    remediation:
+      kind: escalate
+      prompt: |
+        scanner is receiving empty prompts. verify shadow_tick.py
+        non-empty fallback is active and brain_memory has at least
+        one prior scan to seed continuity.
+
+  - id: L4_macro_crisis_hard_reject
+    title: "macro_crisis hard-rejects in paper mode (should be advisory)"
+    fixed_in: 40b5b6b
+    signature:
+      log_pattern: "CONVICTION REJECT: tier=reject .* reasons=.*'macro_crisis'"
+      state_check: "False"
+    remediation:
+      kind: escalate
+      prompt: |
+        conviction_gate is hard-rejecting on macro_crisis in paper
+        mode. verify the is_real_capital branch + advisory path
+        landed in conviction_gate.evaluate.
+
+  - id: L5_macro_misaligned_hard_reject
+    title: "macro_misaligned hard-rejects in paper mode"
+    fixed_in: 91426f7
+    signature:
+      log_pattern: "CONVICTION REJECT: tier=reject .* reasons=.*'macro_misaligned"
+      state_check: "False"
+    remediation:
+      kind: escalate
+      prompt: |
+        conviction is hard-rejecting on macro_misaligned in paper.
+        verify the soft-pass at half-size lands.
+
+  - id: L6_hurst_random_hard_reject
+    title: "Hurst random regime hard-rejects (should be advisory)"
+    fixed_in: 91426f7
+    signature:
+      log_pattern: "CONVICTION REJECT: tier=reject .* reasons=.*'hurst:random"
+      state_check: "False"
+    remediation:
+      kind: escalate
+      prompt: "verify hurst soft-pass landed in conviction_gate."
+
+  - id: L7_tf_misalign_hard_reject
+    title: "TF 1h/4h misalign hard-rejects in paper mode"
+    fixed_in: 91426f7
+    signature:
+      log_pattern: "CONVICTION REJECT: tier=reject .* reasons=.*'tf_not_aligned"
+      state_check: "False"
+    remediation:
+      kind: escalate
+      prompt: "verify TF misalign paper-mode soft-pass active."
+
+  - id: L8_multistrat_weak_hard_reject
+    title: "Multi-strategy weak hard-rejects in paper mode"
+    fixed_in: 91426f7
+    signature:
+      log_pattern: "CONVICTION REJECT: tier=reject .* reasons=.*'multistrat_weak"
+      state_check: "False"
+    remediation:
+      kind: escalate
+      prompt: "verify multistrat paper-mode soft-pass active."
+
+  - id: L9_cost_gate_zero_expected
+    title: "Cost gate rejects on missing expected_pnl_pct_range (margin = -1%)"
+    fixed_in: 50a8468
+    signature:
+      log_pattern: "cost_reject:margin=-1\\..*exp=0\\.00"
+      state_check: "False"
+    remediation:
+      kind: escalate
+      prompt: |
+        TradePlans are not populating expected_pnl_pct_range; the
+        cost gate sees 0% and rejects. verify the default 2.0%
+        fallback in submit_trade_plan.
+
+  - id: L10_short_only_setups_no_bounce
+    title: "All bearish + longs-only venue = 0 trades (need bounce-LONG)"
+    fixed_in: 3c483cf
+    signature:
+      log_pattern: "SHADOW PLAN SKIP .* \\(skip,"
+      state_check: |
+        recent_seen >= 100 and recent_entered == 0 and \
+        recent_pattern_excellent_count > 0
+    remediation:
+      kind: escalate
+      prompt: |
+        bot has seen 100+ setups, fired 0, and 'EXCELLENT PATTERN'
+        appeared. verify mean-reversion bounce-LONG fallback in
+        agentic_bridge._rule_based_fallback_plan triggers on
+        rsi<40 / excellent_pattern / sniper_pass.
+
+  - id: L11_profile_name_as_model
+    title: "OLLAMA_REMOTE_MODEL set to profile name instead of tag"
+    fixed_in: 91426f7
+    signature:
+      log_pattern: "All Ollama endpoints failed for model (moe_agentic|dense_r1|qwen3_r1|hybrid)"
+      state_check: |
+        os.environ.get("OLLAMA_REMOTE_MODEL", "") in
+        ("moe_agentic", "dense_r1", "qwen3_r1", "hybrid")
+    remediation:
+      kind: env_flag
+      env: OLLAMA_REMOTE_MODEL
+      value: ""        # clearing it lets resolve_pinned_analyst() pick from profile
