@@ -264,15 +264,22 @@ def compile_agentic_plan(
         )
         result = loop.run()
 
-        # Rule-based fallback when LLM repeatedly fails. Per operator
-        # directive ("use everything present in ACT to make trades"),
-        # the multi-strategy engine + 14 agents + ML ensemble + TF
-        # alignment are all already computing valid signals on every
-        # tick -- they just go unused because the agentic loop's
-        # parse_failure forces a SHADOW SKIP. In paper mode (real
-        # capital still gated) we now synthesize a fallback TradePlan
-        # from those signals when the LLM path produces no plan.
-        # Real-capital path stays strict: the brain is required.
+        # Rule-based fallback when LLM doesn't produce an actionable plan.
+        # Per operator directive ("use everything present in ACT to make
+        # trades"), the multi-strategy engine + 14 agents + ML ensemble
+        # + TF alignment all compute valid signals every tick. In paper
+        # mode (real capital still gated):
+        #
+        #   * `parse_failures` / `max_steps` / `disabled` -> LLM was
+        #     unreachable; rule stack fills in.
+        #   * `skip` -> LLM thought hard and refused. We OVERRIDE in
+        #     paper mode IF the rule stack has strong multi-source
+        #     agreement (>=2 votes one direction). The operator's log
+        #     showed "EXCELLENT PATTERN score=13/10 + SNIPER PASS
+        #     confluence 6/3 + CONVICTION PASS" combined with LLM
+        #     SKIP -> zero trade. That's exactly the case rule-based
+        #     fallback was built for. Real-capital path stays strict:
+        #     LLM SKIP in real mode is honored.
         is_real_capital = os.environ.get(
             "ACT_REAL_CAPITAL_ENABLED", ""
         ).strip() == "1"
@@ -281,7 +288,10 @@ def compile_agentic_plan(
             result.plan is not None
             and str(result.plan.direction).upper() in ("LONG", "SHORT", "BUY", "SELL")
         )
-        if (terminated in ("parse_failures", "max_steps", "disabled")
+        fallback_triggers = ("parse_failures", "max_steps", "disabled")
+        if not is_real_capital:
+            fallback_triggers = fallback_triggers + ("skip",)
+        if (terminated in fallback_triggers
                 and not plan_proposes_trade
                 and not is_real_capital):
             fb_plan = _rule_based_fallback_plan(
