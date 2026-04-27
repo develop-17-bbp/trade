@@ -98,12 +98,25 @@ def test_stop_floor_short_side():
 # Intervention B / D: Score gate + spread-aware threshold
 # ---------------------------------------------------------------------------
 
-def test_score_veto_rejects_below_min():
+def test_score_veto_real_capital_hard_reject(monkeypatch):
+    """REAL CAPITAL: rule veto is non-negotiable."""
     from src.trading.safe_entries import enforce_hard_score_veto
 
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     reject, reason = enforce_hard_score_veto(entry_score=2, min_score=4)
     assert reject is True
     assert "score_2_below_min_4" in reason
+
+
+def test_score_veto_paper_mode_soft_pass(monkeypatch):
+    """PAPER MODE: low score becomes advisory; brain remains the
+    authority. Reason carries the paper_advisory_ prefix for audit."""
+    from src.trading.safe_entries import enforce_hard_score_veto
+
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    reject, reason = enforce_hard_score_veto(entry_score=2, min_score=4)
+    assert reject is False
+    assert "paper_advisory_score_2_below_min_4" in reason
 
 
 def test_score_veto_passes_at_or_above_min():
@@ -190,9 +203,11 @@ def test_fixed_fractional_returns_zero_on_degenerate():
 # Intervention F: Consecutive-loss throttle
 # ---------------------------------------------------------------------------
 
-def test_consec_loss_halves_then_pauses():
+def test_consec_loss_halves_then_pauses_real_capital(monkeypatch):
+    """REAL CAPITAL: pause hard at 0.0 after consecutive-loss threshold."""
     from src.trading.safe_entries import SafeEntryState, merged_config
 
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     cfg = merged_config()
     cfg.update({"consec_losses_halve": 2, "consec_losses_pause": 3, "pause_hours": 1.0})
     s = SafeEntryState()
@@ -208,11 +223,27 @@ def test_consec_loss_halves_then_pauses():
     assert mult == 0.5
     assert "halved" in reason
 
-    # 3 losses — pause
+    # 3 losses — pause (real capital → 0.0)
     s.record_outcome("BTC", -1.0, won=False, now=102.0)
     mult, reason = s.size_multiplier_for("BTC", cfg, now=102.0)
     assert mult == 0.0
     assert "paused" in reason
+
+
+def test_consec_loss_paper_mode_soft_pass(monkeypatch):
+    """PAPER MODE: per Unit 2, throttle never fully zeros out -- pause
+    becomes a quarter-size advisory so brain-driven trades still fire."""
+    from src.trading.safe_entries import SafeEntryState, merged_config
+
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    cfg = merged_config()
+    cfg.update({"consec_losses_halve": 2, "consec_losses_pause": 3, "pause_hours": 1.0})
+    s = SafeEntryState()
+    for i in range(3):
+        s.record_outcome("BTC", -1.0, won=False, now=100.0 + i)
+    mult, reason = s.size_multiplier_for("BTC", cfg, now=103.0)
+    assert mult == 0.25
+    assert "paper_advisory" in reason
 
 
 def test_consec_loss_resets_on_win():

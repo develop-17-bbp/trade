@@ -11,6 +11,9 @@ export function useSystemState() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Surfaced to the UI for the LIVE badge — operator needs to confirm
+  // paper trades are auto-refreshing without manual reload.
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null)
   const mountedRef = useRef(true)
 
   const poll = useCallback(async () => {
@@ -21,6 +24,7 @@ export function useSystemState() {
       if (result) {
         setData(result)
         setError(null)
+        setLastFetchedAt(Date.now())
       } else {
         setError('API returned null — is the backend running on port 11007?')
       }
@@ -57,6 +61,8 @@ export function useSystemState() {
     layerLogs: data?.layer_logs ?? {},
     sentiment: data?.sentiment ?? {},
     lastUpdate: data?.last_update ?? '',
+    lastFetchedAt,
+    pollIntervalMs: POLL_INTERVAL_MS,
     loading,
     error,
     raw: data,

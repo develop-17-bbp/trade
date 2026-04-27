@@ -144,8 +144,22 @@ def effective_min_score(
 
 
 def enforce_hard_score_veto(entry_score: int, min_score: int) -> Tuple[bool, str]:
-    """Hard veto — LLM cannot override. Returns (reject, reason)."""
+    """Score veto — hard for real capital, advisory for paper mode.
+
+    Real capital path (ACT_REAL_CAPITAL_ENABLED=1): rule veto is non-
+    negotiable, LLM cannot override. Paper mode: per operator directive
+    (Unit 2), the brain has weighed every signal already; the gate's
+    job is to surface the score, not block the trade. Authority rules
+    (PDF 7 universal rules) stay hard regardless via authority_rules.
+
+    Returns (reject, reason).
+    """
     if entry_score < min_score:
+        is_real_capital = os.environ.get(
+            "ACT_REAL_CAPITAL_ENABLED", "",
+        ).strip() == "1"
+        if not is_real_capital:
+            return False, f"paper_advisory_score_{entry_score}_below_min_{min_score}"
         return True, f"score_{entry_score}_below_min_{min_score}"
     return False, ""
 
@@ -254,20 +268,36 @@ class SafeEntryState:
         config: Dict[str, Any],
         now: Optional[float] = None,
     ) -> Tuple[float, str]:
-        """Return (size_multiplier, reason). 1.0=full, 0.5=halved, 0.0=paused."""
+        """Return (size_multiplier, reason). 1.0=full, 0.5=halved, 0.0=paused.
+
+        Real capital: hard pause after `consec_losses_pause`. Paper mode
+        per Unit 2: the brain is the authority. The throttle never
+        fully zeros out -- worst case is quarter size with a paper-
+        advisory tag so positions still fire and the brain learns
+        from outcomes.
+        """
         s = self._get(asset)
         now = now if now is not None else time.time()
 
+        is_real_capital = os.environ.get(
+            "ACT_REAL_CAPITAL_ENABLED", "",
+        ).strip() == "1"
+
         if s.paused_until > now:
             remaining_h = (s.paused_until - now) / 3600.0
+            if not is_real_capital:
+                return 0.25, f"paper_advisory_paused_{remaining_h:.1f}h"
             return 0.0, f"paused_{remaining_h:.1f}h"
 
         halve_n = int(config.get("consec_losses_halve", 3))
         pause_n = int(config.get("consec_losses_pause", 5))
         if s.consecutive_losses >= pause_n:
-            # Arm the pause
             pause_hours = float(config.get("pause_hours", 4.0))
             s.paused_until = now + pause_hours * 3600.0
+            if not is_real_capital:
+                return 0.25, (
+                    f"paper_advisory_pause_after_{s.consecutive_losses}_losses"
+                )
             return 0.0, f"paused_{pause_hours}h_after_{s.consecutive_losses}_losses"
         if s.consecutive_losses >= halve_n:
             return 0.5, f"halved_after_{s.consecutive_losses}_losses"

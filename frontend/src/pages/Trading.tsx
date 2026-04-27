@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import CandlestickChart from '../components/charts/CandlestickChart'
 import EquityCurve from '../components/charts/EquityCurve'
+import LiveBadge from '../components/shared/LiveBadge'
 import { useSystemState } from '../hooks/useSystemState'
 import { fetchPrices, type PriceData } from '../api/client'
 
@@ -344,9 +345,16 @@ interface RecentTradesProps {
     trade_timeframe?: string
   }>
   maxRows?: number
+  lastFetchedAt?: number | null
+  pollIntervalMs?: number
 }
 
-function RecentTrades({ trades, maxRows = 15 }: RecentTradesProps) {
+function RecentTrades({
+  trades,
+  maxRows = 15,
+  lastFetchedAt,
+  pollIntervalMs,
+}: RecentTradesProps) {
   const sorted = useMemo(() => {
     return [...trades]
       .sort(
@@ -363,6 +371,9 @@ function RecentTrades({ trades, maxRows = 15 }: RecentTradesProps) {
         <h2 className="text-[11px] font-semibold tracking-wider uppercase text-[#ffffff]">
           Recent Trades (Live from ACT)
         </h2>
+        <span className="ml-3">
+          <LiveBadge lastFetchedAt={lastFetchedAt} pollIntervalMs={pollIntervalMs} />
+        </span>
         <span className="ml-auto text-[10px] font-mono text-[#666666]">
           showing last {sorted.length}
         </span>
@@ -781,6 +792,8 @@ export default function Trading() {
     tradeStats,
     models,
     portfolio,
+    lastFetchedAt,
+    pollIntervalMs,
     loading,
     error,
   } = useSystemState()
@@ -1063,7 +1076,12 @@ export default function Trading() {
       </div>
 
       {/* ── Recent Trades Table ── */}
-      <RecentTrades trades={trades} maxRows={20} />
+      <RecentTrades
+        trades={trades}
+        maxRows={20}
+        lastFetchedAt={lastFetchedAt}
+        pollIntervalMs={pollIntervalMs}
+      />
 
       {/* ── Bottom: Optimization + Backtester stats ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

@@ -5,6 +5,7 @@ import EquityCurve from '../components/charts/EquityCurve'
 import CandlestickChart from '../components/charts/CandlestickChart'
 import AgentVotePanel from '../components/ai/AgentVotePanel'
 import LiveIntelligencePanel from '../components/ai/LiveIntelligencePanel'
+import LiveBadge from '../components/shared/LiveBadge'
 import { useSystemState } from '../hooks/useSystemState'
 
 function fmtUsd(n: number) {
@@ -16,7 +17,17 @@ function fmtUsd(n: number) {
 function fmtPct(n: number) { return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` }
 
 export default function Dashboard() {
-  const { portfolio, positions, trades, tradeStats, agents, loading, error } = useSystemState()
+  const {
+    portfolio,
+    positions,
+    trades,
+    tradeStats,
+    agents,
+    lastFetchedAt,
+    pollIntervalMs,
+    loading,
+    error,
+  } = useSystemState()
   const [selectedAsset, setSelectedAsset] = useState<'BTC' | 'ETH'>('BTC')
   const [panelOpen, setPanelOpen] = useState(false)
   const [chartHeight, setChartHeight] = useState(600)
@@ -243,7 +254,10 @@ export default function Dashboard() {
 
               {/* Trade History */}
               <GlassCard>
-                <h3 className="text-[10px] font-bold text-[#666] uppercase tracking-wider mb-2">Recent Trades</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-[10px] font-bold text-[#666] uppercase tracking-wider">Recent Trades</h3>
+                  <LiveBadge lastFetchedAt={lastFetchedAt} pollIntervalMs={pollIntervalMs} />
+                </div>
                 <div className="space-y-0 max-h-[220px] overflow-y-auto">
                   {recentTrades.length > 0 ? recentTrades.map((t, i) => {
                     const pnl = t.pnl || 0

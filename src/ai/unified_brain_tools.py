@@ -9,8 +9,24 @@ Exposes the ACT subsystems that weren't yet callable as LLM tools:
   * `evt_tail_risk`          → evt_risk.py fat-tail VaR
   * `get_macro_bias`         → macro_bias.py signed tilt
   * `get_economic_layer`     → economic_intelligence.py layer snapshot
-  * `request_genetic_candidate` → strategy_repository challenger
+  * `request_genetic_candidate` → genetic_strategy_engine hall-of-fame
+                                  DNA (with strategy_repository fallback)
   * `run_full_backtest`      → full_engine.py event-driven (slow, decisive)
+  * `query_12_agents`        → 13 fixed + transient persona debate verdict
+  * `query_strategy_universe`→ top-k positive-EV strategies for current regime
+
+Plus the Unit-8 Robinhood read-only query tools so the brain can ASK
+the venue directly (operator directive: "LLM should do autonomously by
+using read only robinhood api"):
+
+  * `query_robinhood_balance`   → buying power + cash + status
+  * `query_robinhood_positions` → BTC/ETH holdings summary
+  * `query_robinhood_quote`     → live bid/ask/mid/spread
+  * `query_recent_robinhood_fills` → recent live + paper fills
+
+These four are STRICTLY READ-ONLY. They never call any place_order /
+submit_trade endpoint. The brain proposes via TradePlan; the executor
+handles submission.
 
 Each handler is lazy-imported so a missing dependency does not block
 the registry build. Every return is a compact dict; serialisation and

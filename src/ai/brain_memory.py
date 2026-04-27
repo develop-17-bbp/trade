@@ -345,3 +345,22 @@ def get_recent_analyst_traces(asset: str, limit: int = 3) -> List[AnalystTrace]:
     except Exception as e:
         logger.debug("get_recent_analyst_traces failed: %s", e)
         return []
+
+
+def read_recent_analyst_traces(
+    asset: str, limit: int = 5, max_age_s: float = 900.0,
+) -> List[AnalystTrace]:
+    """Cross-tick analyst memory: the last `limit` analyst traces for
+    `asset` within `max_age_s` seconds.
+
+    Default 15-min window matches the 60-180s shadow tick cadence
+    (~5 ticks). Caller is the agentic-bridge seed builder; safe / no-op
+    on error.
+    """
+    try:
+        return get_brain_memory().read_recent_traces(
+            asset, limit=int(limit), max_age_s=float(max_age_s),
+        )
+    except Exception as e:
+        logger.debug("read_recent_analyst_traces failed: %s", e)
+        return []

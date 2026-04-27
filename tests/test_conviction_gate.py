@@ -37,7 +37,9 @@ def test_normal_when_tf_aligned_but_hurst_not_trending():
     assert r.size_multiplier == 1.0
 
 
-def test_reject_when_tf_not_aligned():
+def test_reject_when_tf_not_aligned_real_capital(monkeypatch):
+    """REAL CAPITAL: TF misalignment hard-rejects."""
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     r = evaluate(
         direction="LONG",
         tf_1h_direction="FALLING", tf_4h_direction="RISING",
@@ -51,7 +53,26 @@ def test_reject_when_tf_not_aligned():
     assert any("tf_not_aligned" in x for x in r.reasons)
 
 
-def test_reject_when_multi_strategy_weak():
+def test_paper_mode_tf_not_aligned_soft_pass(monkeypatch):
+    """PAPER MODE: TF misalign no longer hard-rejects; brain is authority.
+    Trade passes at quarter size with paper_advisory_tf_misaligned reason."""
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = evaluate(
+        direction="LONG",
+        tf_1h_direction="FALLING", tf_4h_direction="RISING",
+        hurst_regime="trending",
+        multi_strategy_counts={"long": 5, "short": 0, "flat": 31},
+        macro_bias=_bias(signed=+0.4),
+    )
+    assert r.passed is True
+    assert r.tier == "normal"
+    assert r.size_multiplier == 0.25
+    assert any("paper_advisory_tf_misaligned" in x for x in r.reasons)
+
+
+def test_reject_when_multi_strategy_weak_real_capital(monkeypatch):
+    """REAL CAPITAL: multi-strategy weak hard-rejects."""
+    monkeypatch.setenv("ACT_REAL_CAPITAL_ENABLED", "1")
     r = evaluate(
         direction="LONG",
         tf_1h_direction="RISING", tf_4h_direction="RISING",
@@ -61,6 +82,22 @@ def test_reject_when_multi_strategy_weak():
     )
     assert r.tier == "reject"
     assert any("multistrat_weak" in x for x in r.reasons)
+
+
+def test_paper_mode_multi_strategy_weak_soft_pass(monkeypatch):
+    """PAPER MODE: multi-strategy weak no longer hard-rejects."""
+    monkeypatch.delenv("ACT_REAL_CAPITAL_ENABLED", raising=False)
+    r = evaluate(
+        direction="LONG",
+        tf_1h_direction="RISING", tf_4h_direction="RISING",
+        hurst_regime="trending",
+        multi_strategy_counts={"long": 2, "short": 3, "flat": 31},
+        macro_bias=_bias(signed=+0.3),
+    )
+    assert r.passed is True
+    assert r.tier == "normal"
+    assert r.size_multiplier == 0.25
+    assert any("paper_advisory_multistrat_weak" in x for x in r.reasons)
 
 
 def test_reject_when_macro_crisis_real_capital(monkeypatch):

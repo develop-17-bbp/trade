@@ -6,11 +6,23 @@ drawdown limits, pair locks, ROI tables, pairlist filters, entry confirmation,
 trade tagging, position adjustment (DCA/partial exits), and order management.
 
 Standard library only. Thread-safe.
+
+Paper-mode behavior (Unit 2): every block-path returns `allowed=True`
+with a paper_advisory_ reason when ACT_REAL_CAPITAL_ENABLED != "1". The
+brain has already weighed every signal upstream; the protection layer's
+job in paper mode is to surface what would have blocked, not to block.
+Real capital path keeps every block hard.
 """
 
+import os
 import time
 import threading
 from collections import defaultdict
+
+
+def _is_real_capital() -> bool:
+    """True iff ACT_REAL_CAPITAL_ENABLED=1 — hard-gates active."""
+    return os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +748,17 @@ class TradeProtections:
                 self.drawdown.record_equity(equity)
 
             allowed = len(reasons) == 0
+            # Paper-mode soft-pass: brain is the authority. Surface the
+            # reasons in `advisory_reasons` for audit, but allow the
+            # trade to proceed. Real capital path keeps every block.
+            if not allowed and not _is_real_capital():
+                advisory = [f"paper_advisory_{r}" for r in reasons]
+                print(f"[PROTECT:{asset}] Entry advisory (paper): {'; '.join(advisory)}")
+                return {
+                    "allowed": True,
+                    "reasons": [],
+                    "advisory_reasons": advisory,
+                }
             if not allowed:
                 print(f"[PROTECT:{asset}] Entry BLOCKED: {'; '.join(reasons)}")
 

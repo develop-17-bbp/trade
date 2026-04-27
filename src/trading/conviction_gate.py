@@ -275,8 +275,8 @@ def evaluate(
     # weighed every macro layer + 14 agents + 36 strategies + 371
     # trade-memory examples and produced a TradePlan. The conviction
     # gate's job in paper mode is to surface signals, not block. Real
-    # capital path keeps the reject (returns below). Hard rejects
-    # (TF misalign, multistrat weak, AUTHORITY rules) still apply.
+    # capital path keeps the reject (returns below). AUTHORITY rules
+    # remain hard regardless of mode (PDF 7 universal rules).
     if not is_real_capital and checks["tf_alignment_1h_4h"] and \
             checks.get("multi_strategy_ge_3"):
         soft_reasons = []
@@ -293,6 +293,37 @@ def evaluate(
                     f"paper_normal_advisory:strategies={agreeing}"
                 ],
             )
+
+    # Paper-mode: TF misalign and multistrat_weak were the last hard
+    # rejects. Per operator directive (Unit 2 paper-soft + brain-as-
+    # authority), these too become advisory in paper mode -- the
+    # brain has weighed every signal already and emitted a direction;
+    # the gate's job is to surface signals, not block trades. Real
+    # capital path falls through to the reject below. Authority rules
+    # (PDF 7 universal rules) stay hard regardless via authority_rules.
+    if not is_real_capital:
+        soft_reasons = []
+        if not checks.get("tf_alignment_1h_4h", True):
+            soft_reasons.append(f"paper_advisory_tf_misaligned:1h={tf_1h},4h={tf_4h}")
+        if not checks.get("multi_strategy_normal_floor", True):
+            soft_reasons.append(
+                f"paper_advisory_multistrat_weak:{d.lower()}={agreeing}<{normal_strategy_floor}"
+            )
+        if not checks.get("macro_aligned", True):
+            soft_reasons.append("paper_advisory_macro_misaligned")
+        if not checks.get("hurst_trending", True):
+            soft_reasons.append(f"paper_advisory_hurst:{regime or 'unknown'}")
+        return ConvictionResult(
+            tier="normal", passed=True, direction=d,
+            # Quarter size when ALL gates are advisory -- the brain is
+            # the sole authority here and we want exposure to be small
+            # while every structural signal is weak.
+            size_multiplier=0.25,
+            checks=checks,
+            reasons=reasons + soft_reasons + [
+                f"paper_full_advisory:strategies={agreeing}"
+            ],
+        )
 
     return ConvictionResult(
         tier="reject", passed=False, direction=d, size_multiplier=0.0,
