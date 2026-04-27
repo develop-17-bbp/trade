@@ -4622,9 +4622,15 @@ class TradingExecutor:
                 print(f"  [{self._ex_tag}:{asset}] STREAK BLOCK: {streak} losses, {remaining_min}min left")
             return
 
-        # ── RANGE DETECTION (HARD BLOCK) ──
-        # If price has been in a tight band (<0.5%) for last 10 candles, market is ranging
-        # EMA(8) oscillates in ranges causing rapid BUY/SELL flip = churn
+        # ── RANGE DETECTION ──
+        # Tight 10-candle range (<0.15%) means EMA(8) flips rapidly in chop.
+        # Real capital: HARD block (the churn would burn money on spread).
+        # Paper mode: ADVISORY only -- the brain has weighed every signal
+        # already (CONVICTION PASS + SNIPER PASS + STRONG PATTERN saw it
+        # too) and decided to trade. Gate's job in paper mode is to
+        # surface signals, not block. Operator log 2026-04-27 showed
+        # BTC: STRONG PATTERN 8/10 + SNIPER PASS 6/3 + CONVICTION PASS
+        # all firing simultaneously, only to be killed by 0.14% range.
         if len(closes) >= 12:
             last_12 = closes[-12:-2]  # 10 confirmed candles
             if len(last_12) >= 10:
@@ -4632,8 +4638,17 @@ class TradingExecutor:
                 range_low = min(last_12)
                 range_pct = (range_high - range_low) / range_low * 100 if range_low > 0 else 0
                 if range_pct < 0.15:
-                    print(f"  [{self._ex_tag}:{asset}] RANGING: {range_pct:.2f}% range over 10 candles — sitting out")
-                    return
+                    _is_real_capital = os.environ.get(
+                        "ACT_REAL_CAPITAL_ENABLED", ""
+                    ).strip() == "1"
+                    if _is_real_capital:
+                        print(f"  [{self._ex_tag}:{asset}] RANGING: {range_pct:.2f}% range over 10 candles — sitting out")
+                        return
+                    print(
+                        f"  [{self._ex_tag}:{asset}] RANGING ADVISORY: "
+                        f"{range_pct:.2f}% range over 10 candles -- paper "
+                        "mode lets it through"
+                    )
 
         # ── HURST REGIME GATE ──
         # If market is random walk or mean-reverting, EMA trend signals get stopped at L1
