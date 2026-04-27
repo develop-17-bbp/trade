@@ -136,19 +136,49 @@ def _scanner_block(asset: str) -> str:
     )
 
 
-def _traces_block(asset: str, limit: int = 3) -> str:
+_TRACES_BUDGET_CHARS = 300
+
+
+def _traces_block(asset: str, limit: int = 5, max_age_s: float = 900.0) -> str:
+    """Render the analyst's last `limit` decisions so it sees its own
+    chain-of-reasoning across ticks. Capped at 300 chars so the seed
+    block stays compact.
+
+    Format:
+        Recent thoughts (last N ticks):
+        [HH:MM] LONG, thesis=tf_aligned, verdict=plan
+        [HH:MM] SKIP, reason=parse_failure
+    """
     try:
-        from src.ai.brain_memory import get_recent_analyst_traces
-        traces = get_recent_analyst_traces(asset, limit=limit) or []
+        from src.ai.brain_memory import read_recent_analyst_traces
+        traces = read_recent_analyst_traces(
+            asset, limit=limit, max_age_s=max_age_s,
+        ) or []
     except Exception:
         return ""
     if not traces:
         return ""
-    bullets = [
-        f"- {t.direction}/{t.tier} size={t.size_pct}% verdict={t.verdict or '-'}"
-        for t in traces
-    ]
-    return "## RECENT ANALYST DECISIONS\n" + "\n".join(bullets)
+
+    import time as _time
+    lines: List[str] = [f"Recent thoughts (last {len(traces)} ticks):"]
+    used = len(lines[0])
+    for t in traces:
+        try:
+            hhmm = _time.strftime("%H:%M", _time.localtime(float(t.ts)))
+        except Exception:
+            hhmm = "--:--"
+        direction = (t.direction or "").upper()
+        if direction in ("SKIP", "FLAT", ""):
+            reason = (t.thesis or t.verdict or "-").strip().splitlines()[0][:60]
+            line = f"[{hhmm}] {direction or 'SKIP'}, reason={reason}"
+        else:
+            thesis = (t.thesis or "-").strip().splitlines()[0][:60]
+            line = f"[{hhmm}] {direction}, thesis={thesis}, verdict={t.verdict or '-'}"
+        if used + 1 + len(line) > _TRACES_BUDGET_CHARS and len(lines) > 1:
+            break
+        lines.append(line)
+        used += 1 + len(line)
+    return "\n".join(lines)
 
 
 def _news_block(asset: str, hours: int = 12) -> str:
@@ -227,11 +257,14 @@ def build_evidence_document(
                 confidence=0.7, source="brain_memory", kind="mixed",
             ))
     if include_traces:
+        # Cross-tick chain-of-reasoning: analyst sees its own last 5
+        # thoughts within a 15-min window so it can hold/continue
+        # instead of restarting fresh every tick.
         c = _traces_block(asset_key)
         if c:
             doc.add(EvidenceSection(
-                name="RECENT_ANALYST_DECISIONS", content=c,
-                confidence=0.6, source="brain_memory", kind="mixed",
+                name="RECENT_ANALYST_TRACES", content=c,
+                confidence=0.6, source="brain_memory", kind="technical",
             ))
     if include_news:
         c = _news_block(asset_key)
@@ -269,6 +302,25 @@ def build_evidence_document(
                 confidence=0.8, source="brain_to_body.controller",
                 kind="technical",    # quant-derived control signals
             ))
+
+    # TICK_SNAPSHOT — every subsystem signal the executor just computed.
+    # Brings the "11 brain blind spots" into the LLM's prompt:
+    # multi-strategy, 242-universe, conviction tier, sniper confluence,
+    # pattern score, macro bias, ML ensemble (LGBM/LSTM/PatchTST/RL),
+    # hurst/kalman/GARCH, VPIN, microstructure, price-action, trade-
+    # quality, genetic vote, agents consensus, evolved overlay params.
+    # Operator directive 2026-04-27: "make sure LLMs have every context."
+    try:
+        from src.ai.tick_state import format_for_brain as _format_tick
+        c = _format_tick(asset_key)
+        if c:
+            doc.add(EvidenceSection(
+                name="TICK_SNAPSHOT", content=c,
+                confidence=0.9, source="executor.tick_state",
+                kind="technical",
+            ))
+    except Exception:
+        pass
     return doc
 
 

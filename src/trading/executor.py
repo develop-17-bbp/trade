@@ -3612,6 +3612,16 @@ class TradingExecutor:
                     self._last_multi_details = {}
                 self._last_multi_details[asset] = _multi_details
                 print(f"  [{self._ex_tag}:{asset}] MULTI-STRATEGY: {_strat_summary} | consensus={_consensus} score={_multi_details.get('_consensus_score', 0):.3f}")
+                # Publish multi-strategy state to the brain's TICK_SNAPSHOT
+                try:
+                    from src.ai import tick_state as _ts
+                    _ts.update(
+                        asset,
+                        multi_consensus=_consensus,
+                        multi_consensus_score=float(_multi_details.get('_consensus_score', 0.0)),
+                    )
+                except Exception:
+                    pass
             except Exception as e:
                 signal = ema_signal_raw
                 logger.debug(f"[MULTI-STRATEGY] {asset} failed, EMA fallback: {e}")
@@ -3629,6 +3639,18 @@ class TradingExecutor:
                 _sell_count = sum(1 for s in _all_signals.values() if s < 0)
                 _flat_count = sum(1 for s in _all_signals.values() if s == 0)
                 print(f"  [{self._ex_tag}:{asset}] UNIVERSE: {_buy_count}↑ {_sell_count}↓ {_flat_count}— | consensus={_universe_consensus} conf={_universe_confidence:.2f}")
+                try:
+                    from src.ai import tick_state as _ts
+                    _ts.update(
+                        asset,
+                        universe_buy=_buy_count,
+                        universe_sell=_sell_count,
+                        universe_flat=_flat_count,
+                        universe_consensus=_universe_consensus,
+                        universe_confidence=float(_universe_confidence),
+                    )
+                except Exception:
+                    pass
 
                 # Universe can OVERRIDE multi-strategy signal if strong consensus
                 if _universe_confidence > 0.60 and _universe_consensus == 'BUY' and signal != 'BUY':
@@ -3676,6 +3698,19 @@ class TradingExecutor:
             ob_info += f" res=${ob_ask:,.2f}"
         ob_info += "]"
         print(f"  [{self._ex_tag}:{asset}] ${tick_price:,.2f} | EMA(5m): ${current_ema:.2f} {ema_direction} | Signals: [{active_tfs_str}] | ATR: ${current_atr:.2f} | {ob_info}")
+        try:
+            from src.ai import tick_state as _ts
+            _ts.update(
+                asset,
+                price=float(tick_price),
+                ema_5m=float(current_ema),
+                ema_direction=str(ema_direction),
+                tf_signals=str(active_tfs_str)[:120],
+                atr=float(current_atr),
+                ob_imbalance=float(ob_levels.get('imbalance', 0.0)) if isinstance(ob_levels, dict) else 0.0,
+            )
+        except Exception:
+            pass
 
         # ── BTC-ETH Pairs Trading Signal (informational — feeds LLM context) ──
         pairs_signal = {}
@@ -4043,6 +4078,18 @@ class TradingExecutor:
                 print(f"  [{self._ex_tag}:{asset}] CONVICTION PASS: tier={_conv.tier} "
                       f"size_mult={_conv.size_multiplier}  macro_bias={_macro.signed_bias:+.2f}"
                       f"{'  (crisis)' if _macro.crisis else ''}")
+                try:
+                    from src.ai import tick_state as _ts
+                    _ts.update(
+                        asset,
+                        conviction_tier=str(_conv.tier),
+                        conviction_size_mult=float(_conv.size_multiplier),
+                        conviction_reasons=", ".join(list(_conv.reasons or [])[:6]),
+                        macro_bias=float(_macro.signed_bias),
+                        macro_crisis=bool(_macro.crisis),
+                    )
+                except Exception:
+                    pass
             except Exception as _hardexc:
                 logger.debug(f"[HARDEN] conviction gate failed: {_hardexc}")
 
@@ -4145,9 +4192,22 @@ class TradingExecutor:
                 self.sniper_stats['filtered'] += 1
                 print(f"  [{self._ex_tag}:{asset}] SNIPER ADVISORY: confluence {confluence_count}/{self.sniper_min_confluence} — {', '.join(confluence_reasons) or 'none'} — LOW (LLM will decide)")
                 math_filter_warnings.append(f"SNIPER: only {confluence_count}/{self.sniper_min_confluence} confluence — weak setup")
+                _sniper_status = "ADVISORY"
                 # DON'T return — let LLM + agents see the data and decide
             else:
                 print(f"  [{self._ex_tag}:{asset}] SNIPER PASS: confluence {confluence_count}/{self.sniper_min_confluence} — {', '.join(confluence_reasons)}")
+                _sniper_status = "PASS"
+            try:
+                from src.ai import tick_state as _ts
+                _ts.update(
+                    asset,
+                    sniper_status=_sniper_status,
+                    sniper_confluence=int(confluence_count),
+                    sniper_min_confluence=int(self.sniper_min_confluence),
+                    sniper_reasons=", ".join(confluence_reasons[:6]),
+                )
+            except Exception:
+                pass
 
             # Store for RL state (accessible later in evaluation)
             if not hasattr(self, '_last_sniper_confluence'):
