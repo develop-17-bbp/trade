@@ -77,10 +77,32 @@ class Tool:
 
 
 class ToolRegistry:
-    """Name-keyed store + dispatcher with tag-based filtering."""
+    """Name-keyed store + dispatcher with tag-based filtering.
+
+    Per-tick memoization: when `tick_id` is set via `set_tick_id`,
+    repeated dispatches of the same (name, args) within that tick
+    return the cached result. Resets when tick_id changes.
+    """
 
     def __init__(self):
         self._tools: Dict[str, Tool] = {}
+        # (tick_id, tool_name, args_hash) -> serialized result
+        self._tick_cache: Dict[tuple, str] = {}
+        self._current_tick_id: Optional[str] = None
+        self._cache_hits: int = 0
+        self._cache_misses: int = 0
+
+    def set_tick_id(self, tick_id: Optional[str]) -> None:
+        """Mark the start of a new tick. Clears the per-tick cache so
+        the new tick re-fetches fresh data. Pass None to disable caching."""
+        if tick_id != self._current_tick_id:
+            self._tick_cache.clear()
+        self._current_tick_id = tick_id
+
+    def cache_stats(self) -> Dict[str, int]:
+        return {"hits": self._cache_hits, "misses": self._cache_misses,
+                "size": len(self._tick_cache),
+                "current_tick_id": self._current_tick_id}
 
     # ── Registration ────────────────────────────────────────────────────
 
@@ -115,14 +137,35 @@ class ToolRegistry:
         if tool is None:
             return json.dumps({"error": f"unknown tool {name!r}"})
 
+        args = dict(args or {})
+
+        # Per-tick memoization: skip re-execution when same (name, args)
+        # was called earlier in the same tick. Write tools (tag='write')
+        # bypass the cache — they have side effects and must always run.
+        cache_key = None
+        if (self._current_tick_id is not None
+                and getattr(tool, "tag", "") != "write"):
+            try:
+                args_hash = json.dumps(args, sort_keys=True, default=str)
+            except Exception:
+                args_hash = str(args)
+            cache_key = (self._current_tick_id, name, args_hash)
+            cached = self._tick_cache.get(cache_key)
+            if cached is not None:
+                self._cache_hits += 1
+                return cached
+
         try:
-            args = dict(args or {})
             raw = tool.handler(args)
         except Exception as e:
             logger.debug("tool %s handler error: %s", name, e)
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
-        return _serialize_and_cap(raw, tool.max_output_chars)
+        result = _serialize_and_cap(raw, tool.max_output_chars)
+        if cache_key is not None:
+            self._tick_cache[cache_key] = result
+            self._cache_misses += 1
+        return result
 
 
 def _serialize_and_cap(raw: Any, cap: int) -> str:

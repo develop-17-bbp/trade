@@ -253,9 +253,15 @@ class AgenticTradeLoop:
             "content": (
                 "## RESPONSE FORMAT\n"
                 "Emit ONE JSON object per turn. Options:\n"
-                "  {\"tool_call\": {\"name\": <tool_name>, \"args\": {...}}}\n"
-                "  {\"plan\": { <TradePlan fields> }}\n"
-                "  {\"skip\": \"<one-line reason>\"}\n"
+                "  Single tool:    {\"tool_call\":  {\"name\": <tool_name>, \"args\": {...}}}\n"
+                "  Parallel tools: {\"tool_calls\": [{\"name\": <tool>, \"args\": {...}}, ...]}\n"
+                "  Plan:           {\"plan\": { <TradePlan fields> }}\n"
+                "  Skip:           {\"skip\": \"<one-line reason>\"}\n\n"
+                "Use 'tool_calls' (plural list) when fetching MULTIPLE INDEPENDENT "
+                "pieces of evidence — saves ReAct steps. Example: query news, macro, "
+                "and on-chain in parallel rather than three sequential turns. "
+                "Per-tick memoization caches results, so duplicate calls in the "
+                "same list are folded into one fetch.\n"
                 f"Available tools: {', '.join(self.registry.list_names())}."
             ),
         })
@@ -320,6 +326,40 @@ class AgenticTradeLoop:
                 self.context.append({
                     "role": "user",
                     "content": f"## TOOL RESULT ({name})\n{result}",
+                })
+                if self.context.should_warn():
+                    self.context.summarize_older_rounds()
+                continue
+
+            # Parallel tool calls — list form. Resolves all in this single
+            # ReAct step rather than chaining N sequential steps. Per-tick
+            # memoization on the registry de-dupes any repeats.
+            if "tool_calls" in envelope:
+                calls = envelope.get("tool_calls") or []
+                if not isinstance(calls, list) or not calls:
+                    self.context.append({
+                        "role": "user",
+                        "content": "tool_calls must be a non-empty list of {name, args}",
+                    })
+                    continue
+                # Cap concurrent calls to prevent the LLM from emitting a
+                # 50-tool burst that floods context.
+                MAX_PARALLEL = 6
+                calls = calls[:MAX_PARALLEL]
+                results: List[str] = []
+                for tc in calls:
+                    if not isinstance(tc, dict):
+                        continue
+                    name = str(tc.get("name") or "")
+                    args = tc.get("args") or {}
+                    result = self.registry.dispatch(name, args)
+                    tool_calls.append({"name": name, "args": args,
+                                        "result_preview": result[:200]})
+                    results.append(f"### {name}\n{result}")
+                self.context.append({"role": "assistant", "content": raw})
+                self.context.append({
+                    "role": "user",
+                    "content": "## TOOL RESULTS (parallel)\n" + "\n\n".join(results),
                 })
                 if self.context.should_warn():
                     self.context.summarize_older_rounds()
