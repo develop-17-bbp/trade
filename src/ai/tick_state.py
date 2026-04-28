@@ -173,6 +173,11 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
                 "richer per-position state. Call get_news_digest / "
                 "get_macro_bias / query_knowledge_graph for catalysts."
             )
+    # PREDICTION ACCURACY: brain's own track record over recent
+    # closed trades. Every tick the brain sees calibration of its
+    # past predictions — knows where it's been right vs wrong.
+    if "prediction_accuracy_summary" in snap and snap.get("prediction_accuracy_summary"):
+        lines.append(str(snap.get("prediction_accuracy_summary"))[:300])
     # FACTOR SYNTHESIS: 6-factor predictive bias score the brain uses
     # to decide direction. Same source of truth as continuous-brain
     # daemon and catalyst listener — single view across all loops.

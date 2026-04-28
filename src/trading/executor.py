@@ -3862,6 +3862,18 @@ class TradingExecutor:
         except Exception:
             pass
 
+        # Refresh prediction-accuracy summary into tick_state so brain
+        # sees how its OWN past predictions performed. Cheap (warm_store
+        # read). Updates every executor tick but the underlying compute
+        # only spans the lookback window of closed trades.
+        try:
+            from src.ai.prediction_accuracy import render_summary_for_tick
+            _accuracy_line = render_summary_for_tick(asset)
+            if _accuracy_line:
+                _ts.update(asset, prediction_accuracy_summary=_accuracy_line)
+        except Exception:
+            pass
+
         # ── BTC-ETH Pairs Trading Signal (informational — feeds LLM context) ──
         pairs_signal = {}
         if self._coint_engine and asset in ('BTC', 'ETH'):

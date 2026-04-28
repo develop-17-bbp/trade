@@ -613,6 +613,22 @@ def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
 # ── Predictive market factors (6 modules — 2026 research-grounded) ─────
 
 
+def _handle_prediction_accuracy(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Brain reads its own track record — WR per direction/tier/bias-
+    bucket/regime + calibration label + most-common miss reasons.
+    Closes the self-critique feedback loop: brain knows where its
+    predictions are right vs wrong and can re-weight accordingly."""
+    asset = args.get("asset")
+    asset = str(asset).upper() if asset else None
+    lookback_days = int(args.get("lookback_days") or 60)
+    try:
+        from src.ai.prediction_accuracy import compute_accuracy
+        snap = compute_accuracy(asset=asset, lookback_days=lookback_days)
+        return snap.to_dict()
+    except Exception as e:
+        return {"error": f"prediction_accuracy_failed: {e}"[:200]}
+
+
 def _handle_factor_synthesis(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get the 6-factor synthesis — single source of truth shared
     across agentic loop, continuous brain, catalyst listener, and
@@ -2446,6 +2462,26 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_llm_alpha_seeds, tag="read_only",
         ),
         Tool(
+            name="query_prediction_accuracy",
+            description=(
+                "[CALIBRATION] Your own track record — WR per direction "
+                "/ tier / bias-bucket / regime + calibration label "
+                "(over_confident / well_calibrated / under_confident / "
+                "neutral) + most-common miss reasons. Read to discover "
+                "where your predictions are right vs wrong. If "
+                "by_bias_bucket shows strong_long < 50% WR, your "
+                "high-conviction calls are over-confident."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "lookback_days": {"type": "integer", "minimum": 7, "maximum": 180},
+                },
+            },
+            handler=_handle_prediction_accuracy, tag="read_only",
+        ),
+        Tool(
             name="query_factor_synthesis",
             description=(
                 "[SYNTHESIS] One-call 6-factor directional read. Combines "
@@ -3245,6 +3281,7 @@ def register_unified_brain_tools(registry) -> int:
             "query_alpha_seeds": ("daily", "query", "internal"),
             "evaluate_alphas": ("daily", "analysis", "internal"),
             "generate_alpha_round": ("daily", "analysis", "internal"),
+            "query_prediction_accuracy": ("hour", "query", "internal"),
             "query_factor_synthesis": ("hour", "analysis", "internal"),
             "query_macro_overlay": ("hour", "data_fetch", "external"),
             "query_btc_dominance": ("hour", "data_fetch", "external"),
