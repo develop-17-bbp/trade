@@ -610,6 +610,93 @@ def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"alpha_seeds_failed: {e}"[:200]}
 
 
+# ── Predictive market factors (6 modules — 2026 research-grounded) ─────
+
+
+def _handle_macro_overlay(args: Dict[str, Any]) -> Dict[str, Any]:
+    """DXY + US10Y + VIX + S&P risk-on/off overlay."""
+    try:
+        from src.ai.macro_overlay import fetch_macro_overlay
+        return fetch_macro_overlay().to_dict()
+    except Exception as e:
+        return {"error": f"macro_overlay_failed: {e}"[:200]}
+
+
+def _handle_btc_dominance(args: Dict[str, Any]) -> Dict[str, Any]:
+    """BTC.D + ETH/BTC ratio + alt rotation signal."""
+    try:
+        from src.ai.btc_dominance import fetch_btc_dominance
+        return fetch_btc_dominance().to_dict()
+    except Exception as e:
+        return {"error": f"btc_dominance_failed: {e}"[:200]}
+
+
+def _handle_cvd(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Cumulative Volume Delta order-flow signal."""
+    asset = str(args.get("asset") or "BTC").upper()
+    timeframe = str(args.get("timeframe") or "1h")
+    lookback = int(args.get("lookback") or 50)
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe,
+                                   n=max(100, lookback + 20))
+        if bars is None:
+            return {"asset": asset, "error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        opens = [closes[i - 1] if i > 0 else closes[0] for i in range(len(closes))]
+        from src.ai.cvd import compute_cvd
+        result = compute_cvd(closes, highs, lows, volumes, opens=opens,
+                              lookback=lookback)
+        return {"asset": asset, "timeframe": timeframe, **result.to_dict()}
+    except Exception as e:
+        return {"error": f"cvd_failed: {e}"[:200]}
+
+
+def _handle_whale_flow(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Volume-anomaly whale-bar detector."""
+    asset = str(args.get("asset") or "BTC").upper()
+    timeframe = str(args.get("timeframe") or "1h")
+    lookback = int(args.get("lookback") or 100)
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe,
+                                   n=max(120, lookback + 20))
+        if bars is None:
+            return {"asset": asset, "error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        opens = [closes[i - 1] if i > 0 else closes[0] for i in range(len(closes))]
+        from src.ai.whale_flow import detect_whale_flow
+        result = detect_whale_flow(closes, opens, volumes, lookback=lookback)
+        return {"asset": asset, "timeframe": timeframe, **result.to_dict()}
+    except Exception as e:
+        return {"error": f"whale_flow_failed: {e}"[:200]}
+
+
+def _handle_halving_cycle(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Bitcoin halving cycle position + historical comparable."""
+    try:
+        from src.ai.halving_cycle import get_halving_cycle
+        return get_halving_cycle().to_dict()
+    except Exception as e:
+        return {"error": f"halving_cycle_failed: {e}"[:200]}
+
+
+def _handle_btc_eth_lead_lag(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Cross-correlation lead-lag analysis between BTC and ETH."""
+    timeframe = str(args.get("timeframe") or "1h")
+    max_lag = int(args.get("max_lag") or 10)
+    try:
+        btc_bars = _fetch_recent_bars("BTC", timeframe=timeframe, n=200)
+        eth_bars = _fetch_recent_bars("ETH", timeframe=timeframe, n=200)
+        if btc_bars is None or eth_bars is None:
+            return {"error": "no_recent_bars_for_one_or_both_assets"}
+        btc_closes = btc_bars[2]
+        eth_closes = eth_bars[2]
+        from src.ai.btc_eth_lead_lag import analyze_lead_lag
+        result = analyze_lead_lag(btc_closes, eth_closes, max_lag=max_lag)
+        return {"timeframe": timeframe, **result.to_dict()}
+    except Exception as e:
+        return {"error": f"lead_lag_failed: {e}"[:200]}
+
+
 def _handle_persistent_context_stats(args: Dict[str, Any]) -> Dict[str, Any]:
     """Per-asset KV-thread stats: how many ticks since last seed,
     estimated token count, when consolidation will trigger. Brain
@@ -2345,6 +2432,96 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_llm_alpha_seeds, tag="read_only",
         ),
         Tool(
+            name="query_macro_overlay",
+            description=(
+                "[MACRO] DXY (US dollar) + US10Y yield + VIX + S&P signals "
+                "with risk-on/off regime classification. Per 2026 research, "
+                "DXY has 21-27x adverse effect on BTC vs gold; VIX > 30 = "
+                "panic risk-off; US10Y > 3.5% = risk-off. Returns "
+                "crypto_directional_bias [-1,+1]."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_macro_overlay, tag="read_only",
+        ),
+        Tool(
+            name="query_btc_dominance",
+            description=(
+                "[CROSS-ASSET] BTC dominance + ETH/BTC ratio + alt rotation. "
+                "BTC.D > 60% = no_altseason; 50-60% = btc_favored; 45-50% = "
+                "rotation_zone; < 45% = altseason_likely. Returns "
+                "eth_directional_bias_vs_btc [-1,+1]."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_btc_dominance, tag="read_only",
+        ),
+        Tool(
+            name="query_cvd",
+            description=(
+                "[ORDERFLOW] Cumulative Volume Delta — buying vs selling "
+                "pressure derived from existing OHLCV. Returns slope sign, "
+                "divergence flag (bearish/bullish/none), and momentum_score "
+                "[-1,+1]. Divergence often precedes reversals."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h"]},
+                    "lookback": {"type": "integer", "minimum": 20, "maximum": 200},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_cvd, tag="read_only",
+        ),
+        Tool(
+            name="query_whale_flow",
+            description=(
+                "[ORDERFLOW] Whale-bar detector via volume z-score. Bars "
+                "with volume >= 2.5σ above rolling mean classified as "
+                "whale moves; direction inferred from close vs open. "
+                "Returns count + last whale age + directional_bias [-1,+1]."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h"]},
+                    "lookback": {"type": "integer", "minimum": 30, "maximum": 300},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_whale_flow, tag="read_only",
+        ),
+        Tool(
+            name="query_halving_cycle",
+            description=(
+                "[CYCLE] Bitcoin halving cycle position. Pure deterministic "
+                "calendar — days_since_last_halving, cycle_position_pct, "
+                "phase label (post_halving_markup / blowoff_top_zone / "
+                "distribution_bear / capitulation_accumulation), historical "
+                "comparable, bullish_phase flag."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_halving_cycle, tag="read_only",
+        ),
+        Tool(
+            name="query_btc_eth_lead_lag",
+            description=(
+                "[CROSS-ASSET] BTC ↔ ETH lead-lag cross-correlation. "
+                "Returns optimal_lag_bars (+ve = BTC leads ETH; -ve = ETH "
+                "leads BTC), correlation_strength, relationship label. "
+                "Useful for choosing which asset to trade first."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h"]},
+                    "max_lag": {"type": "integer", "minimum": 3, "maximum": 30},
+                },
+            },
+            handler=_handle_btc_eth_lead_lag, tag="read_only",
+        ),
+        Tool(
             name="query_persistent_context_stats",
             description=(
                 "[CONTEXT] Per-asset KV-thread stats from the persistent-"
@@ -3036,6 +3213,12 @@ def register_unified_brain_tools(registry) -> int:
             "query_alpha_seeds": ("daily", "query", "internal"),
             "evaluate_alphas": ("daily", "analysis", "internal"),
             "generate_alpha_round": ("daily", "analysis", "internal"),
+            "query_macro_overlay": ("hour", "data_fetch", "external"),
+            "query_btc_dominance": ("hour", "data_fetch", "external"),
+            "query_cvd": ("realtime", "analysis", "internal"),
+            "query_whale_flow": ("realtime", "analysis", "internal"),
+            "query_halving_cycle": ("daily", "query", "internal"),
+            "query_btc_eth_lead_lag": ("hour", "analysis", "internal"),
             "query_persistent_context_stats": ("realtime", "query", "internal"),
             "query_foundation_forecast": ("realtime", "analysis", "internal"),
             "query_tft_forecast": ("realtime", "analysis", "internal"),
