@@ -43,6 +43,7 @@ $M   = "$ESC[95m"   # bright magenta
 $C   = "$ESC[96m"   # bright cyan
 $W   = "$ESC[97m"   # bright white
 $DG  = "$ESC[90m"   # dark gray
+$O   = "$ESC[38;5;208m"  # orange (256-color palette)
 $NC  = "$ESC[0m"    # reset
 
 Clear-Host
@@ -178,14 +179,14 @@ $tier = "SCORE=$computeScore"
 Write-Host ""
 Write-Host "${C}  ══════════════════════════════════════════════════════════${NC}"
 Write-Host ""
-Write-Host "${R}       █████╗ ${NC}${W}   ██████╗ ${NC}${G}  ████████╗${NC}"
-Write-Host "${R}      ██╔══██╗${NC}${W}  ██╔════╝ ${NC}${G}  ╚══██╔══╝${NC}"
-Write-Host "${R}      ███████║${NC}${W}  ██║      ${NC}${G}     ██║   ${NC}"
-Write-Host "${R}      ██╔══██║${NC}${W}  ██║      ${NC}${G}     ██║   ${NC}"
-Write-Host "${R}      ██║  ██║${NC}${W}  ╚██████╗ ${NC}${G}     ██║   ${NC}"
-Write-Host "${R}      ╚═╝  ╚═╝${NC}${W}   ╚═════╝ ${NC}${G}     ╚═╝   ${NC}"
+Write-Host "${O}       █████╗ ${NC}${R}   ██████╗ ${NC}${G}  ████████╗${NC}"
+Write-Host "${O}      ██╔══██╗${NC}${R}  ██╔════╝ ${NC}${G}  ╚══██╔══╝${NC}"
+Write-Host "${O}      ███████║${NC}${R}  ██║      ${NC}${G}     ██║   ${NC}"
+Write-Host "${O}      ██╔══██║${NC}${R}  ██║      ${NC}${G}     ██║   ${NC}"
+Write-Host "${O}      ██║  ██║${NC}${R}  ╚██████╗ ${NC}${G}     ██║   ${NC}"
+Write-Host "${O}      ╚═╝  ╚═╝${NC}${R}   ╚═════╝ ${NC}${G}     ╚═╝   ${NC}"
 Write-Host ""
-Write-Host "         ${R}Autonomous${NC} ${DG}·${NC} ${W}Crypto${NC} ${DG}·${NC} ${G}Trader${NC}    ${Y}v8.0${NC}"
+Write-Host "         ${O}Autonomous${NC} ${DG}·${NC} ${R}Crypto${NC} ${DG}·${NC} ${G}Trader${NC}    ${Y}v8.0${NC}"
 Write-Host "${DG}       GPU-Optimized · Self-Evolving · 12-Agent Consensus${NC}"
 Write-Host ""
 
