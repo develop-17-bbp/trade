@@ -582,6 +582,99 @@ def _fetch_recent_bars(asset: str, timeframe: str = "1h", n: int = 100):
         return None
 
 
+# ── Backtest-rigor tools (overfitting defense) ──────────────────────────
+
+
+def _handle_deflated_sharpe(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute Deflated Sharpe Ratio (Bailey-López de Prado 2014)
+    on a returns series. Penalizes Sharpe for selection bias from
+    multiple-trial optimization.
+    """
+    returns = args.get("returns") or []
+    n_trials = int(args.get("n_trials") or 1)
+    if not isinstance(returns, list) or len(returns) < 5:
+        return {"error": "need_at_least_5_returns"}
+    try:
+        from src.backtesting.overfitting_metrics import deflated_sharpe
+        result = deflated_sharpe([float(r) for r in returns],
+                                  n_trials=n_trials)
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"dsr_failed: {e}"[:200]}
+
+
+def _handle_pbo(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Probability of Backtest Overfitting (Bailey et al. 2017)
+    over an M-strategies × T-periods returns matrix."""
+    matrix = args.get("returns_matrix") or []
+    if (not isinstance(matrix, list) or len(matrix) < 2
+            or not all(isinstance(r, list) for r in matrix)):
+        return {"error": "returns_matrix_must_be_M_strategies_x_T_periods"}
+    try:
+        from src.backtesting.overfitting_metrics import probability_of_backtest_overfitting
+        result = probability_of_backtest_overfitting(
+            [[float(v) for v in row] for row in matrix],
+        )
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"pbo_failed: {e}"[:200]}
+
+
+def _handle_purged_walk_forward(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Purged walk-forward validation with embargo (López de Prado 2017).
+
+    Strategy is a 'momentum' baseline that buys/sells based on the
+    sign of the prior return — pure-function so it's reproducible
+    and parameter-free. The brain calls this to validate a hypothesis
+    against leak-free folds.
+    """
+    returns = args.get("returns") or []
+    n_folds = int(args.get("n_folds") or 5)
+    embargo_pct = float(args.get("embargo_pct") or 0.05)
+    feature_window = int(args.get("feature_window") or 20)
+    if not isinstance(returns, list) or len(returns) < 100:
+        return {"error": "need_at_least_100_returns_for_purged_wf"}
+    try:
+        from src.backtesting.purged_walk_forward import purged_walk_forward
+        # Default strategy: lag-1 momentum — return at t mirrors sign
+        # of return at t-1. Replace with operator-supplied strategy
+        # for richer evaluation.
+        def _momentum(rets):
+            out = [0.0]
+            for i in range(1, len(rets)):
+                out.append(rets[i] if rets[i - 1] > 0 else -rets[i])
+            return out
+        result = purged_walk_forward(
+            [float(r) for r in returns],
+            strategy_fn=_momentum,
+            n_folds=n_folds, embargo_pct=embargo_pct,
+            feature_window=feature_window,
+        )
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"purged_wf_failed: {e}"[:200]}
+
+
+def _handle_realistic_slippage(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Estimate realistic slippage scaled by size + volatility + latency
+    + session — anti-optimistic vs the flat-spread default."""
+    venue = str(args.get("venue") or "robinhood")
+    size_pct = float(args.get("size_pct_of_equity") or 1.0)
+    vol_pct = float(args.get("volatility_pct") or 1.0)
+    latency_ms = float(args.get("latency_ms") or 200.0)
+    session = str(args.get("session") or "US")
+    try:
+        from src.backtesting.realistic_slippage import estimate_slippage
+        result = estimate_slippage(
+            venue=venue, size_pct_of_equity=size_pct,
+            volatility_pct=vol_pct, latency_ms=latency_ms,
+            session=session,
+        )
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"slippage_estimate_failed: {e}"[:200]}
+
+
 def _handle_strategy_universe(args: Dict[str, Any]) -> Dict[str, Any]:
     """Top-K strategies from the 242-strategy universe filtered by
     regime. Brain reads to see WHICH strategies are firing now (not
@@ -1849,6 +1942,87 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_deflated_sharpe",
+            description=(
+                "[BACKTEST] Deflated Sharpe Ratio (Bailey-López de Prado "
+                "2014). Adjusts observed Sharpe for selection bias "
+                "(n_trials), non-normality (skew + kurtosis), and "
+                "small sample. Returns probability the TRUE Sharpe > 0. "
+                "Standard authority-submission metric."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "returns": {"type": "array", "items": {"type": "number"}},
+                    "n_trials": {"type": "integer", "minimum": 1},
+                },
+                "required": ["returns"],
+            },
+            handler=_handle_deflated_sharpe, tag="read_only",
+        ),
+        Tool(
+            name="query_probability_of_backtest_overfitting",
+            description=(
+                "[BACKTEST] Probability of Backtest Overfitting (Bailey "
+                "et al. 2017). Combinatorial symmetric splits over "
+                "M-strategies × T-periods returns matrix. PBO=0.5 means "
+                "the in-sample winner is a coin-flip out-of-sample (= "
+                "pure overfit); PBO < 0.2 = robust."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "returns_matrix": {
+                        "type": "array",
+                        "items": {"type": "array", "items": {"type": "number"}},
+                    },
+                },
+                "required": ["returns_matrix"],
+            },
+            handler=_handle_pbo, tag="read_only",
+        ),
+        Tool(
+            name="query_purged_walk_forward",
+            description=(
+                "[BACKTEST] Purged walk-forward validation with embargo "
+                "(López de Prado 2017). Per-fold metrics + overfit "
+                "indicator (train_sharpe - test_sharpe). Default "
+                "strategy is lag-1 momentum (parameter-free)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "returns": {"type": "array", "items": {"type": "number"}},
+                    "n_folds": {"type": "integer", "minimum": 3, "maximum": 10},
+                    "embargo_pct": {"type": "number", "minimum": 0.01, "maximum": 0.3},
+                    "feature_window": {"type": "integer", "minimum": 5, "maximum": 200},
+                },
+                "required": ["returns"],
+            },
+            handler=_handle_purged_walk_forward, tag="read_only",
+        ),
+        Tool(
+            name="query_realistic_slippage",
+            description=(
+                "[BACKTEST] Realistic slippage estimate scaled by size + "
+                "volatility + latency + session. Returns expected + "
+                "90th-percentile upper bound. Brain reads BEFORE "
+                "submit_trade_plan to budget honest cost (anti-optimistic "
+                "vs flat-spread default)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "venue": {"type": "string"},
+                    "size_pct_of_equity": {"type": "number", "minimum": 0.1, "maximum": 30.0},
+                    "volatility_pct": {"type": "number", "minimum": 0.1, "maximum": 50.0},
+                    "latency_ms": {"type": "number", "minimum": 10.0, "maximum": 5000.0},
+                    "session": {"type": "string"},
+                },
+            },
+            handler=_handle_realistic_slippage, tag="read_only",
+        ),
+        Tool(
             name="query_strategy_universe",
             description=(
                 "[STRATEGY] Top-K active strategies from the 242-strategy "
@@ -2251,6 +2425,10 @@ def register_unified_brain_tools(registry) -> int:
             "query_trade_verifier_state": ("realtime", "query", "internal"),
             "query_system_health": ("realtime", "query", "internal"),
             "query_strategy_universe": ("realtime", "analysis", "internal"),
+            "query_deflated_sharpe": ("daily", "analysis", "internal"),
+            "query_probability_of_backtest_overfitting": ("daily", "analysis", "internal"),
+            "query_purged_walk_forward": ("daily", "analysis", "internal"),
+            "query_realistic_slippage": ("realtime", "analysis", "internal"),
             "query_liquidity_sweep": ("realtime", "analysis", "internal"),
             "query_pair_trading_signal": ("realtime", "analysis", "internal"),
             "query_session_bias": ("hour", "query", "internal"),
