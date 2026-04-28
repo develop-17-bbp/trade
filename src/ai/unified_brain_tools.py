@@ -613,6 +613,36 @@ def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
 # ── Predictive market factors (6 modules — 2026 research-grounded) ─────
 
 
+def _handle_brain_health(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Brain's own discipline metrics — tool variety, decision quality,
+    goal-adherence flags. Brain reads to self-monitor."""
+    lookback = int(args.get("lookback_ticks") or 100)
+    try:
+        from src.ai.brain_health import compute_brain_health
+        snap = compute_brain_health(lookback_ticks=lookback)
+        return snap.to_dict()
+    except Exception as e:
+        return {"error": f"brain_health_failed: {e}"[:200]}
+
+
+def _handle_eod_review(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate today's end-of-day review. Reads recent trades,
+    distills best/worst/patterns/adjustments. Writes Markdown to
+    memory/eod/<date>.md. Operator-readable + auto-injected next day."""
+    date_utc = args.get("date_utc")
+    write_md = bool(args.get("write_markdown", True))
+    try:
+        from src.ai.eod_review import compute_eod_review, write_eod_review
+        review = compute_eod_review(date_utc=date_utc)
+        path = write_eod_review(review) if write_md else ""
+        out = review.to_dict()
+        if path:
+            out["markdown_path"] = path
+        return out
+    except Exception as e:
+        return {"error": f"eod_review_failed: {e}"[:200]}
+
+
 def _handle_scenario_prediction(args: Dict[str, Any]) -> Dict[str, Any]:
     """One-call scenario projection: given a strategy hypothesis,
     return expected profit + confidence + recommended action.
@@ -2501,6 +2531,42 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_llm_alpha_seeds, tag="read_only",
         ),
         Tool(
+            name="query_brain_health",
+            description=(
+                "[META] Your own discipline metrics — tool_variety_score "
+                "(distinct tools used / total available), "
+                "avg_thesis_quality_score (does your thesis cite "
+                "factor_synthesis / DSR / similar setups?), skip_rate, "
+                "under_trading / over_trading / focus_drift flags. Read "
+                "to self-monitor; if tool_variety < 20% you're defaulting "
+                "to a small subset of integrations."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "lookback_ticks": {"type": "integer", "minimum": 20, "maximum": 500},
+                },
+            },
+            handler=_handle_brain_health, tag="read_only",
+        ),
+        Tool(
+            name="run_eod_review",
+            description=(
+                "[META] End-of-day review skill — distills today's trades "
+                "into best/worst/patterns/adjustments markdown memo. "
+                "Writes to memory/eod/<date>.md. Brain reads yesterday's "
+                "summary auto-injected for first 50 ticks of next day."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "date_utc": {"type": "string"},
+                    "write_markdown": {"type": "boolean"},
+                },
+            },
+            handler=_handle_eod_review, tag="read_only",
+        ),
+        Tool(
             name="query_scenario_prediction",
             description=(
                 "[SCENARIO] 'If I use this strategy on this asset, what "
@@ -3364,6 +3430,8 @@ def register_unified_brain_tools(registry) -> int:
             "query_alpha_seeds": ("daily", "query", "internal"),
             "evaluate_alphas": ("daily", "analysis", "internal"),
             "generate_alpha_round": ("daily", "analysis", "internal"),
+            "query_brain_health": ("hour", "query", "internal"),
+            "run_eod_review": ("daily", "analysis", "internal"),
             "query_scenario_prediction": ("hour", "analysis", "internal"),
             "query_web_search": ("hour", "data_fetch", "external"),
             "query_prediction_accuracy": ("hour", "query", "internal"),

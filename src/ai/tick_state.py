@@ -178,6 +178,14 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
     # past predictions — knows where it's been right vs wrong.
     if "prediction_accuracy_summary" in snap and snap.get("prediction_accuracy_summary"):
         lines.append(str(snap.get("prediction_accuracy_summary"))[:300])
+    # BRAIN HEALTH: discipline + tool variety + goal flags. Brain
+    # self-monitors here.
+    if "brain_health_summary" in snap and snap.get("brain_health_summary"):
+        lines.append(str(snap.get("brain_health_summary"))[:300])
+    # YESTERDAY'S EOD REVIEW: best/worst/patterns/adjustments distilled
+    # into a compact line so brain doesn't re-discover yesterday's lessons.
+    if "eod_review_yesterday" in snap and snap.get("eod_review_yesterday"):
+        lines.append(str(snap.get("eod_review_yesterday"))[:400])
     # FACTOR SYNTHESIS: 6-factor predictive bias score the brain uses
     # to decide direction. Same source of truth as continuous-brain
     # daemon and catalyst listener — single view across all loops.

@@ -3874,6 +3874,25 @@ class TradingExecutor:
         except Exception:
             pass
 
+        # Brain-health summary: tool variety, thesis quality, goal flags
+        try:
+            from src.ai.brain_health import render_summary_for_tick as _bh_summary
+            _bh_line = _bh_summary()
+            if _bh_line:
+                _ts.update(asset, brain_health_summary=_bh_line)
+        except Exception:
+            pass
+
+        # Yesterday's EOD review summary (auto-injected for context-
+        # carryover across days)
+        try:
+            from src.ai.eod_review import get_yesterday_summary
+            _eod_line = get_yesterday_summary()
+            if _eod_line:
+                _ts.update(asset, eod_review_yesterday=_eod_line)
+        except Exception:
+            pass
+
         # ── BTC-ETH Pairs Trading Signal (informational — feeds LLM context) ──
         pairs_signal = {}
         if self._coint_engine and asset in ('BTC', 'ETH'):
