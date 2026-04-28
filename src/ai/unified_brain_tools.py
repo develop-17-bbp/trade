@@ -562,6 +562,148 @@ def _handle_profit_protector(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"profit_protector_query_failed: {e}"[:200]}
 
 
+# ── Strategy & pattern tools (Items 1-5 from 2026 strategy literature) ──
+
+
+def _fetch_recent_bars(asset: str, timeframe: str = "1h", n: int = 100):
+    """Best-effort recent OHLCV — falls back gracefully when unavailable."""
+    try:
+        from src.data.fetcher import PriceFetcher
+        pf = PriceFetcher()
+        bars = pf.get_recent_bars(asset, timeframe=timeframe, n=n) or []
+        if not bars:
+            return None
+        highs = [float(b.get("high", 0)) for b in bars]
+        lows = [float(b.get("low", 0)) for b in bars]
+        closes = [float(b.get("close", 0)) for b in bars]
+        volumes = [float(b.get("volume", 0)) for b in bars]
+        return highs, lows, closes, volumes
+    except Exception:
+        return None
+
+
+def _handle_liquidity_sweep(args: Dict[str, Any]) -> Dict[str, Any]:
+    """ICT liquidity-sweep / stop-hunt reversal detector."""
+    asset = str(args.get("asset") or "BTC").upper()
+    timeframe = str(args.get("timeframe") or "1h")
+    lookback = int(args.get("lookback") or 20)
+    try:
+        from src.trading.strategies.liquidity_sweep import detect_liquidity_sweep
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=max(50, lookback + 10))
+        if bars is None:
+            return {"asset": asset, "error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        det = detect_liquidity_sweep(highs, lows, closes, volumes, lookback=lookback)
+        return {"asset": asset, "timeframe": timeframe, **det.to_dict()}
+    except Exception as e:
+        return {"error": f"liquidity_sweep_failed: {e}"[:200]}
+
+
+def _handle_pair_trading_signal(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Active BTC-ETH pair trading signal (statistical arbitrage).
+
+    Reads the cointegration z-score already computed by the executor's
+    pairs check (surfaced via tick_state.pair_z_score). Returns an
+    actionable suggestion when |z| > entry threshold.
+    """
+    z_entry = float(args.get("z_entry") or 2.0)
+    z_exit = float(args.get("z_exit") or 0.5)
+    try:
+        from src.ai import tick_state as _ts
+        # Read from BOTH assets — same cointegration signal but each
+        # asset's snapshot has it.
+        snap_btc = _ts.get("BTC")
+        snap_eth = _ts.get("ETH")
+        snap = snap_btc or snap_eth or {}
+        z = float(snap.get("pair_z_score", 0.0))
+        cointegrated = bool(snap.get("pair_cointegrated", False))
+        hedge_ratio = float(snap.get("pair_hedge_ratio", 0.0))
+        signal = str(snap.get("pair_signal", "NONE"))
+        action = "HOLD"
+        rationale = f"z={z:+.2f}; abs(z) < {z_entry} (entry threshold)"
+        if cointegrated and abs(z) >= z_entry:
+            if z > 0:
+                action = "SHORT_BTC_LONG_ETH"
+                rationale = (
+                    f"z={z:+.2f} > {z_entry} → BTC rich vs ETH; "
+                    "short BTC + long ETH (hedged). "
+                    "On longs-only Robinhood, can only LONG ETH (half-leg)."
+                )
+            else:
+                action = "LONG_BTC_SHORT_ETH"
+                rationale = (
+                    f"z={z:+.2f} < -{z_entry} → BTC cheap vs ETH; "
+                    "long BTC + short ETH (hedged). "
+                    "On longs-only Robinhood, can only LONG BTC (half-leg)."
+                )
+        elif cointegrated and abs(z) < z_exit:
+            action = "EXIT_PAIR"
+            rationale = f"z={z:+.2f} < {z_exit} → mean reverted, close pair"
+        return {
+            "z_score": round(z, 3),
+            "cointegrated": cointegrated,
+            "hedge_ratio": round(hedge_ratio, 3),
+            "underlying_signal": signal,
+            "action": action,
+            "z_entry_threshold": z_entry,
+            "z_exit_threshold": z_exit,
+            "rationale": rationale[:300],
+            "venue_note": (
+                "Robinhood spot is longs-only. On crossing entry "
+                "threshold, the brain can fire only the LONG leg of the "
+                "pair (half-leg pair). Full pair requires a venue "
+                "supporting shorts."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"pair_signal_failed: {e}"[:200]}
+
+
+def _handle_session_bias(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Session-aware volume bias + conviction multiplier."""
+    try:
+        from src.trading.strategies.session_bias import current_session
+        return current_session()
+    except Exception as e:
+        return {"error": f"session_bias_failed: {e}"[:200]}
+
+
+def _handle_grid_chop(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Grid trading suggestions for ranging / CHOP regimes."""
+    asset = str(args.get("asset") or "BTC").upper()
+    try:
+        from src.ai import tick_state as _ts
+        snap = _ts.get(asset) or {}
+        from src.trading.strategies.grid_chop import grid_advisory
+        return grid_advisory(
+            asset=asset,
+            current_price=float(snap.get("price", 0.0)),
+            atr=float(snap.get("atr", 0.0)),
+            regime=str(snap.get("regime", "unknown")),
+            hurst_value=float(snap.get("hurst_value", 0.5)),
+            spread_pct=float(snap.get("spread_pct", 1.69)),
+        )
+    except Exception as e:
+        return {"error": f"grid_chop_failed: {e}"[:200]}
+
+
+def _handle_wyckoff_phase(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Wyckoff phase detector (accumulation/markup/distribution/markdown)."""
+    asset = str(args.get("asset") or "BTC").upper()
+    timeframe = str(args.get("timeframe") or "4h")
+    lookback = int(args.get("lookback") or 50)
+    try:
+        from src.trading.strategies.wyckoff_phase import detect_phase
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=max(60, lookback + 10))
+        if bars is None:
+            return {"asset": asset, "error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        v = detect_phase(closes, highs, lows, volumes, lookback=lookback)
+        return {"asset": asset, "timeframe": timeframe, **v.to_dict()}
+    except Exception as e:
+        return {"error": f"wyckoff_failed: {e}"[:200]}
+
+
 def _handle_system_health(args: Dict[str, Any]) -> Dict[str, Any]:
     """Aggregate system health: error counts by severity + which
     components have recent errors. Brain knows when to trust which
@@ -1669,6 +1811,91 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_liquidity_sweep",
+            description=(
+                "[STRATEGY] ICT liquidity-sweep / stop-hunt reversal "
+                "detector. Returns detected=True when a recent wick "
+                "swept a swing high/low and reversed back inside the "
+                "range, with confluence count (1-5: sweep, reversal "
+                "strength, FVG presence, volume spike, body strength). "
+                "Highest-EV reversal pattern in 2026 SMC literature."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h"]},
+                    "lookback": {"type": "integer", "minimum": 10, "maximum": 50},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_liquidity_sweep, tag="read_only",
+        ),
+        Tool(
+            name="query_pair_trading_signal",
+            description=(
+                "[STRATEGY] BTC-ETH statistical arbitrage. Reads the "
+                "cointegration z-score and returns an actionable "
+                "suggestion (LONG_BTC_SHORT_ETH / SHORT_BTC_LONG_ETH / "
+                "EXIT_PAIR / HOLD). Note: Robinhood spot is longs-only "
+                "so only the LONG leg of a pair is firable as a half-leg."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "z_entry": {"type": "number", "minimum": 1.0, "maximum": 4.0},
+                    "z_exit": {"type": "number", "minimum": 0.0, "maximum": 1.5},
+                },
+            },
+            handler=_handle_pair_trading_signal, tag="read_only",
+        ),
+        Tool(
+            name="query_session_bias",
+            description=(
+                "[STRATEGY] Current UTC session + volume share + "
+                "conviction multiplier (0.5-1.0). US session ~55% of "
+                "BTC volume, EU ~30%, Asia ~10%. Use multiplier to scale "
+                "confidence DOWN during low-volume sessions, never up."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_session_bias, tag="read_only",
+        ),
+        Tool(
+            name="query_grid_chop",
+            description=(
+                "[STRATEGY] Grid trading suggestions for ranging / CHOP "
+                "regimes. Returns up to 5 rungs with buy_price + target + "
+                "expected_pnl_pct that clears spread × 1.5. Empty list "
+                "when regime not ranging. Each rung is a SUGGESTION — "
+                "concentration cap (3/asset) limits how many fire."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "required": ["asset"],
+            },
+            handler=_handle_grid_chop, tag="read_only",
+        ),
+        Tool(
+            name="query_wyckoff_phase",
+            description=(
+                "[STRATEGY] Wyckoff phase detector — accumulation / "
+                "markup / distribution / markdown / unclear. Pure "
+                "structural heuristic (no ML, no parameter learning). "
+                "Confidence flagged low_sample when bars < 50."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "timeframe": {"type": "string", "enum": ["1h", "4h", "1d"]},
+                    "lookback": {"type": "integer", "minimum": 30, "maximum": 200},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_wyckoff_phase, tag="read_only",
+        ),
+        Tool(
             name="query_system_health",
             description=(
                 "[HEALTH] Aggregate error counts by severity + components "
@@ -1965,6 +2192,11 @@ def register_unified_brain_tools(registry) -> int:
             "query_genetic_hall_of_fame": ("hour", "query", "internal"),
             "query_trade_verifier_state": ("realtime", "query", "internal"),
             "query_system_health": ("realtime", "query", "internal"),
+            "query_liquidity_sweep": ("realtime", "analysis", "internal"),
+            "query_pair_trading_signal": ("realtime", "analysis", "internal"),
+            "query_session_bias": ("hour", "query", "internal"),
+            "query_grid_chop": ("realtime", "analysis", "internal"),
+            "query_wyckoff_phase": ("hour", "analysis", "internal"),
             "query_decision_audit_summary": ("hour", "query", "internal"),
             "query_chart_vision": ("minute", "analysis", "internal"),
             "query_feature_drift": ("hour", "query", "internal"),
