@@ -610,6 +610,19 @@ def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"alpha_seeds_failed: {e}"[:200]}
 
 
+def _handle_persistent_context_stats(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-asset KV-thread stats: how many ticks since last seed,
+    estimated token count, when consolidation will trigger. Brain
+    reads to know whether the next tick will be a fast warm call or
+    a slower cold-seed call.
+    """
+    try:
+        from src.ai.persistent_context import get_manager
+        return get_manager().stats()
+    except Exception as e:
+        return {"error": f"persistent_context_stats_failed: {e}"[:200]}
+
+
 def _handle_generate_alpha_round(args: Dict[str, Any]) -> Dict[str, Any]:
     """Single-call generation+evaluation cycle.
 
@@ -2332,6 +2345,17 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_llm_alpha_seeds, tag="read_only",
         ),
         Tool(
+            name="query_persistent_context_stats",
+            description=(
+                "[CONTEXT] Per-asset KV-thread stats from the persistent-"
+                "context manager. Shows whether next tick is a fast "
+                "warm-call (cached KV) or a cold-seed (full prompt re-"
+                "compute). Active when ACT_PERSISTENT_CONTEXT=1."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_persistent_context_stats, tag="read_only",
+        ),
+        Tool(
             name="generate_alpha_round",
             description=(
                 "[ALPHA-GEN] Single-call generation+evaluation cycle. "
@@ -3012,6 +3036,7 @@ def register_unified_brain_tools(registry) -> int:
             "query_alpha_seeds": ("daily", "query", "internal"),
             "evaluate_alphas": ("daily", "analysis", "internal"),
             "generate_alpha_round": ("daily", "analysis", "internal"),
+            "query_persistent_context_stats": ("realtime", "query", "internal"),
             "query_foundation_forecast": ("realtime", "analysis", "internal"),
             "query_tft_forecast": ("realtime", "analysis", "internal"),
             "query_ppo_action": ("realtime", "analysis", "internal"),
