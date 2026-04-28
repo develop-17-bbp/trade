@@ -585,6 +585,68 @@ def _fetch_recent_bars(asset: str, timeframe: str = "1h", n: int = 100):
 # ── Backtest-rigor tools (overfitting defense) ──────────────────────────
 
 
+# ── Items 1/3/4: catalyst preemption + continuous brain + decision graph ──
+
+
+def _handle_catalyst_listener_state(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Catalyst listener stats (n_preemptions, last per asset).
+    Brain reads to know when a catalyst-preemptive call fired."""
+    try:
+        from src.orchestration.catalyst_listener import get_listener
+        return get_listener().stats()
+    except Exception as e:
+        return {"error": f"catalyst_listener_query_failed: {e}"[:200]}
+
+
+def _handle_continuous_brain_scenarios(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Pre-computed scenarios from the continuous-brain daemon.
+    Brain reads these as HINTS — daemon thinks during quiet ticks
+    so the brain has cached suggestions for the next tick."""
+    asset = str(args.get("asset") or "BTC").upper()
+    try:
+        from src.ai.continuous_brain import get_brain
+        return {
+            "asset": asset,
+            "scenarios": get_brain().get_cache(asset),
+            "stats": get_brain().stats(),
+        }
+    except Exception as e:
+        return {"error": f"continuous_brain_query_failed: {e}"[:200]}
+
+
+def _handle_decision_graph_causal(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Causal query over the decision graph: 'show me every decision
+    matching these filters, what was the outcome distribution?'"""
+    try:
+        from src.ai.decision_graph import causal_query
+        result = causal_query(
+            asset=args.get("asset"),
+            regime=args.get("regime"),
+            pattern_label=args.get("pattern_label"),
+            direction=args.get("direction"),
+            min_pattern_score=int(args.get("min_pattern_score") or 0),
+        )
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"decision_graph_causal_failed: {e}"[:200]}
+
+
+def _handle_decision_graph_similar(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Find K most-similar past setups (exact regime + pattern +
+    direction match) and their outcomes."""
+    try:
+        from src.ai.decision_graph import similar_setups
+        return similar_setups(
+            asset=str(args.get("asset") or "BTC").upper(),
+            current_regime=str(args.get("regime") or "unknown"),
+            current_pattern=str(args.get("pattern") or "none"),
+            current_direction=str(args.get("direction") or "LONG"),
+            top_k=int(args.get("top_k") or 5),
+        )
+    except Exception as e:
+        return {"error": f"decision_graph_similar_failed: {e}"[:200]}
+
+
 def _handle_deflated_sharpe(args: Dict[str, Any]) -> Dict[str, Any]:
     """Compute Deflated Sharpe Ratio (Bailey-López de Prado 2014)
     on a returns series. Penalizes Sharpe for selection bias from
@@ -1942,6 +2004,74 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_catalyst_listener_state",
+            description=(
+                "[CATALYST] Stats on the event-driven preemption daemon: "
+                "n_preemptions, time since last preempt per asset. Brain "
+                "reads to know if a catalyst-preemptive call recently "
+                "fired (last_catalyst in tick_state contains the trigger)."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_catalyst_listener_state, tag="read_only",
+        ),
+        Tool(
+            name="query_continuous_brain_scenarios",
+            description=(
+                "[CONTINUOUS] Pre-computed scenarios from the continuous-"
+                "brain daemon (drop_1pct, regime_crisis, gap_widening, "
+                "recent_catalyst). Suggestions only — brain still reasons "
+                "from scratch each tick but with cached hints."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "required": ["asset"],
+            },
+            handler=_handle_continuous_brain_scenarios, tag="read_only",
+        ),
+        Tool(
+            name="query_decision_graph_causal",
+            description=(
+                "[GRAPH] Causal query: 'show me every decision matching "
+                "these filters (regime/pattern/direction/min_score), "
+                "what was the outcome distribution (win rate, avg PnL, "
+                "median PnL, direction breakdown)?' One-call replacement "
+                "for the 4-tool join brain used to do."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "regime": {"type": "string"},
+                    "pattern_label": {"type": "string"},
+                    "direction": {"type": "string"},
+                    "min_pattern_score": {"type": "integer", "minimum": 0, "maximum": 10},
+                },
+            },
+            handler=_handle_decision_graph_causal, tag="read_only",
+        ),
+        Tool(
+            name="query_decision_graph_similar",
+            description=(
+                "[GRAPH] Find K most-similar past setups (exact regime + "
+                "pattern + direction match) with their realized outcomes. "
+                "Brain reads to learn from its own history on near-"
+                "identical past situations."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "regime": {"type": "string"},
+                    "pattern": {"type": "string"},
+                    "direction": {"type": "string"},
+                    "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_decision_graph_similar, tag="read_only",
+        ),
+        Tool(
             name="query_deflated_sharpe",
             description=(
                 "[BACKTEST] Deflated Sharpe Ratio (Bailey-López de Prado "
@@ -2425,6 +2555,10 @@ def register_unified_brain_tools(registry) -> int:
             "query_trade_verifier_state": ("realtime", "query", "internal"),
             "query_system_health": ("realtime", "query", "internal"),
             "query_strategy_universe": ("realtime", "analysis", "internal"),
+            "query_catalyst_listener_state": ("realtime", "query", "internal"),
+            "query_continuous_brain_scenarios": ("realtime", "query", "internal"),
+            "query_decision_graph_causal": ("hour", "analysis", "internal"),
+            "query_decision_graph_similar": ("hour", "analysis", "internal"),
             "query_deflated_sharpe": ("daily", "analysis", "internal"),
             "query_probability_of_backtest_overfitting": ("daily", "analysis", "internal"),
             "query_purged_walk_forward": ("daily", "analysis", "internal"),
