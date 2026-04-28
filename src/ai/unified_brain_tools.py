@@ -582,6 +582,44 @@ def _fetch_recent_bars(asset: str, timeframe: str = "1h", n: int = 100):
         return None
 
 
+def _handle_strategy_universe(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Top-K strategies from the 242-strategy universe filtered by
+    regime. Brain reads to see WHICH strategies are firing now (not
+    just the aggregate vote). Anti-noise: returns at most 10
+    strategies, sorted by absolute signal strength."""
+    asset = str(args.get("asset") or "BTC").upper()
+    regime = str(args.get("regime") or "")
+    k = max(1, min(20, int(args.get("top_k") or 10)))
+    try:
+        bars = _fetch_recent_bars(asset, timeframe="1h", n=200)
+        if bars is None:
+            return {"asset": asset, "error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        from src.trading.strategy_universe import StrategyUniverse
+        u = StrategyUniverse()
+        signals = u.evaluate_all(closes, highs, lows, volumes) or {}
+        consensus, confidence = u.get_consensus(signals, regime=regime) if regime else u.get_consensus(signals)
+        # Top-K by absolute signal strength
+        ranked = sorted(
+            ((name, sig) for name, sig in signals.items() if sig != 0),
+            key=lambda kv: abs(kv[1]), reverse=True,
+        )[:k]
+        return {
+            "asset": asset,
+            "regime": regime or "any",
+            "consensus": consensus,
+            "confidence": round(float(confidence), 3),
+            "total_strategies": len(signals),
+            "active_strategies": len(ranked),
+            "top_k": [
+                {"name": str(n)[:40], "signal": int(s)}
+                for n, s in ranked
+            ],
+        }
+    except Exception as e:
+        return {"error": f"strategy_universe_failed: {e}"[:200]}
+
+
 def _handle_liquidity_sweep(args: Dict[str, Any]) -> Dict[str, Any]:
     """ICT liquidity-sweep / stop-hunt reversal detector."""
     asset = str(args.get("asset") or "BTC").upper()
@@ -1811,6 +1849,26 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_strategy_universe",
+            description=(
+                "[STRATEGY] Top-K active strategies from the 242-strategy "
+                "universe ranked by absolute signal strength. Returns "
+                "consensus + confidence + active_strategies + top_k list "
+                "(name, signal). Brain sees WHICH strategies are firing, "
+                "not just the aggregate vote."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "regime": {"type": "string"},
+                    "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_strategy_universe, tag="read_only",
+        ),
+        Tool(
             name="query_liquidity_sweep",
             description=(
                 "[STRATEGY] ICT liquidity-sweep / stop-hunt reversal "
@@ -2192,6 +2250,7 @@ def register_unified_brain_tools(registry) -> int:
             "query_genetic_hall_of_fame": ("hour", "query", "internal"),
             "query_trade_verifier_state": ("realtime", "query", "internal"),
             "query_system_health": ("realtime", "query", "internal"),
+            "query_strategy_universe": ("realtime", "analysis", "internal"),
             "query_liquidity_sweep": ("realtime", "analysis", "internal"),
             "query_pair_trading_signal": ("realtime", "analysis", "internal"),
             "query_session_bias": ("hour", "query", "internal"),
