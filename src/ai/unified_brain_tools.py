@@ -588,6 +588,210 @@ def _fetch_recent_bars(asset: str, timeframe: str = "1h", n: int = 100):
 # ── Items 1/3/4: catalyst preemption + continuous brain + decision graph ──
 
 
+# ── ML evolution tools (LLM alpha gen + Chronos + TFT + PPO) ──────────
+
+
+def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Return ACT's seed alpha library — starting-point formulas the
+    LLM can reference when proposing new alphas."""
+    try:
+        from src.ai.llm_alpha_generator import list_seed_alphas, ALLOWED_FEATURES, ALLOWED_OPS
+        return {
+            "seed_alphas": list_seed_alphas(),
+            "allowed_features": list(ALLOWED_FEATURES),
+            "allowed_ops": list(ALLOWED_OPS),
+            "advisory": (
+                "When proposing new alpha formulas, use ONLY allowed_features "
+                "and allowed_ops. Anything else will be rejected by the safe-DSL "
+                "whitelist before evaluation."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"alpha_seeds_failed: {e}"[:200]}
+
+
+def _handle_evaluate_alphas(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Evaluate a batch of LLM-proposed alpha formulas. Enforces ALL 5
+    operator-side guards (daily cap, active cap, batch PBO, DSR per
+    alpha, sample size).
+    """
+    formulas_raw = args.get("formulas") or []
+    asset = str(args.get("asset") or "BTC").upper()
+    if not isinstance(formulas_raw, list) or not formulas_raw:
+        return {"error": "formulas_must_be_nonempty_list"}
+    try:
+        from src.ai.llm_alpha_generator import (
+            AlphaFormula, evaluate_alpha_batch, _is_safe_expression,
+        )
+        formulas = []
+        for item in formulas_raw[:20]:
+            if not isinstance(item, dict):
+                continue
+            expr = str(item.get("expression", ""))[:400]
+            if not _is_safe_expression(expr):
+                continue
+            formulas.append(AlphaFormula(
+                name=str(item.get("name", "anon"))[:40],
+                expression=expr,
+                description=str(item.get("description", ""))[:200],
+                direction_kind=str(item.get("direction_kind", "long_only")),
+            ))
+        if not formulas:
+            return {"error": "all_formulas_rejected_by_safe_dsl"}
+        bars = _fetch_recent_bars(asset, timeframe="1h", n=400)
+        if bars is None:
+            return {"error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        bar_dicts = [
+            {"close": closes[i], "high": highs[i], "low": lows[i],
+             "open": closes[i - 1] if i > 0 else closes[i],
+             "volume": volumes[i]}
+            for i in range(len(closes))
+        ]
+        return evaluate_alpha_batch(formulas, bar_dicts)
+    except Exception as e:
+        return {"error": f"evaluate_alphas_failed: {e}"[:200]}
+
+
+def _handle_foundation_forecast(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Zero-shot foundation-model forecast (Chronos with linear fallback)."""
+    asset = str(args.get("asset") or "BTC").upper()
+    timeframe = str(args.get("timeframe") or "1h")
+    horizons = args.get("horizons") or [1, 4, 12, 24]
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=300)
+        if bars is None:
+            return {"asset": asset, "error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        from src.ai.foundation_forecaster import forecast as ff
+        result = ff(asset, closes, timeframe=timeframe, horizons=list(horizons))
+        out = result.to_dict()
+        out["confidence_cap_advisory"] = (
+            "Brain prompt: foundation forecasts are ONE vote in the "
+            "ensemble. Never weight higher than 0.7 confidence in your "
+            "synthesis even when the model reports high p_50 certainty — "
+            "zero-shot models don't know their own out-of-distribution risk."
+        )
+        return out
+    except Exception as e:
+        return {"error": f"foundation_forecast_failed: {e}"[:200]}
+
+
+def _handle_tft_forecast(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Multi-horizon TFT forecast with quantile-linear fallback."""
+    asset = str(args.get("asset") or "BTC").upper()
+    timeframe = str(args.get("timeframe") or "1h")
+    horizons = args.get("horizons") or [1, 4, 12, 24]
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=300)
+        if bars is None:
+            return {"asset": asset, "error": "no_recent_bars"}
+        highs, lows, closes, volumes = bars
+        from src.ai.tft_forecaster import forecast as tft_fcast
+        result = tft_fcast(asset, closes, timeframe=timeframe, horizons=list(horizons))
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"tft_forecast_failed: {e}"[:200]}
+
+
+def _handle_ppo_action(args: Dict[str, Any]) -> Dict[str, Any]:
+    """PPO RL action recommendation (with rule-based fallback when no
+    trained checkpoint exists)."""
+    asset = str(args.get("asset") or "BTC").upper()
+    try:
+        from src.ai import tick_state as _ts
+        snap = _ts.get(asset) or {}
+        # Build a small state-feature vector from tick_state
+        trend = float(snap.get("multi_consensus_score", 0.0))
+        vol_pct = float(snap.get("garch_vol_pct", 1.0)) / 100.0
+        exposure = float(snap.get("exposure_pct", 0.0)) / 100.0
+        gap = float(snap.get("gap_to_1pct", 0.0))
+        n_open = int(snap.get("open_positions_same_asset", 0))
+        state = [trend, vol_pct, exposure, gap, float(n_open)]
+        from src.ai.ppo_agent import infer_action
+        result = infer_action(state, asset=asset)
+        return {
+            "asset": asset,
+            "state_features_used": ["trend", "vol_pct", "exposure", "gap_to_1pct", "n_open"],
+            **result.to_dict(),
+        }
+    except Exception as e:
+        return {"error": f"ppo_action_failed: {e}"[:200]}
+
+
+def _handle_profit_extraction_targets(args: Dict[str, Any]) -> Dict[str, Any]:
+    """For each open position, compute the price target where it would
+    flip net-positive (covers spread). Brain reads to identify which
+    stuck positions are CLOSEST to profitable closure — turning the
+    existing 182-position legacy into realized gains as BTC climbs.
+    """
+    asset_filter = str(args.get("asset") or "").upper().strip()
+    try:
+        from src.data.robinhood_fetcher import get_active_paper_fetcher
+        from src.ai import tick_state as _ts
+        pf = get_active_paper_fetcher()
+        if pf is None:
+            return {"error": "no_active_paper_fetcher"}
+        snap_btc = _ts.get("BTC") or {}
+        snap_eth = _ts.get("ETH") or {}
+        spread_pct = float(snap_btc.get("spread_pct", snap_eth.get("spread_pct", 1.69)))
+
+        rows: List[Dict[str, Any]] = []
+        now_ts = time.time()
+        for trade_id, p in pf.positions.items():
+            if asset_filter and str(p.asset).upper() != asset_filter:
+                continue
+            entry = float(p.entry_price)
+            curr = float(getattr(p, "current_price", entry))
+            if entry <= 0:
+                continue
+            gross_pnl = float(getattr(p, "current_pnl_pct", 0.0))
+            net_pnl = float(getattr(p, "current_pnl_pct_net", gross_pnl - spread_pct))
+            # Target price for net=0 = entry × (1 + spread/100) for LONG
+            if p.direction == "LONG":
+                breakeven_price = entry * (1 + spread_pct / 100.0)
+                target_2pct_net = entry * (1 + (spread_pct + 2.0) / 100.0)
+                pct_to_breakeven = (breakeven_price - curr) / curr * 100.0
+            else:
+                breakeven_price = entry * (1 - spread_pct / 100.0)
+                target_2pct_net = entry * (1 - (spread_pct + 2.0) / 100.0)
+                pct_to_breakeven = (curr - breakeven_price) / curr * 100.0
+            rows.append({
+                "trade_id": trade_id,
+                "asset": p.asset,
+                "direction": p.direction,
+                "entry": round(entry, 2),
+                "current": round(curr, 2),
+                "current_pnl_pct_gross": round(gross_pnl, 3),
+                "current_pnl_pct_net": round(net_pnl, 3),
+                "breakeven_price": round(breakeven_price, 2),
+                "target_2pct_net_price": round(target_2pct_net, 2),
+                "pct_move_needed_to_breakeven": round(pct_to_breakeven, 3),
+                "ready_to_close": net_pnl > 0.5,  # already profitable
+            })
+        rows.sort(key=lambda r: r["pct_move_needed_to_breakeven"])
+        ready = [r for r in rows if r["ready_to_close"]]
+        nearest = rows[:5]  # top 5 closest to breakeven
+        return {
+            "asset_filter": asset_filter or "ALL",
+            "total_open": len(rows),
+            "n_already_profitable": len(ready),
+            "ready_to_close": ready[:10],
+            "nearest_to_breakeven": nearest,
+            "spread_pct": round(spread_pct, 2),
+            "advisory": (
+                "ready_to_close: positions ALREADY net positive — close "
+                "them via close_paper_position to realize gains. "
+                "nearest_to_breakeven: positions within ~1% of flipping "
+                "net-positive — watch them; use modify_paper_position to "
+                "tighten SL once they cross. Don't blanket-close stuck "
+                "positions; pick the closest-to-profit ones first."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"profit_extraction_failed: {e}"[:200]}
+
+
 def _handle_catalyst_listener_state(args: Dict[str, Any]) -> Dict[str, Any]:
     """Catalyst listener stats (n_preemptions, last per asset).
     Brain reads to know when a catalyst-preemptive call fired."""
@@ -2004,6 +2208,120 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_alpha_seeds",
+            description=(
+                "[ALPHA-GEN] Seed alpha library + safe-DSL whitelist "
+                "(allowed features + ops). Brain reads this BEFORE "
+                "proposing new alpha formulas — anything outside the "
+                "whitelist is rejected at evaluation."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_llm_alpha_seeds, tag="read_only",
+        ),
+        Tool(
+            name="evaluate_alphas",
+            description=(
+                "[ALPHA-GEN] Evaluate brain-proposed alpha formulas with "
+                "ALL 5 guards: daily generation cap (1/day), active "
+                "alpha cap (5), batch PBO check, per-alpha DSR/p_true_"
+                "sharpe/win_rate gate, sample-size gate. Auto-quarantine "
+                "fires on rolling Sharpe < 0 for 5 consecutive trades."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "formulas": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "expression": {"type": "string"},
+                                "description": {"type": "string"},
+                                "direction_kind": {"type": "string"},
+                            },
+                            "required": ["expression"],
+                        },
+                    },
+                },
+                "required": ["formulas"],
+            },
+            handler=_handle_evaluate_alphas, tag="read_only",
+        ),
+        Tool(
+            name="query_foundation_forecast",
+            description=(
+                "[ML] Multi-horizon zero-shot forecast (Chronos with "
+                "linear-extrapolation fallback). Tries Chronos T5 first; "
+                "falls back gracefully when chronos-forecasting library "
+                "isn't installed. Brain reads as ONE vote in ensemble; "
+                "confidence capped at 0.7 to prevent over-trust."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"]},
+                    "horizons": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_foundation_forecast, tag="read_only",
+        ),
+        Tool(
+            name="query_tft_forecast",
+            description=(
+                "[ML] Temporal Fusion Transformer multi-horizon forecast "
+                "with quantile-linear fallback. Activates when "
+                "models/tft_<asset>_<timeframe>.ckpt exists AND "
+                "pytorch-forecasting is installed; else falls back."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "timeframe": {"type": "string", "enum": ["1h", "4h", "1d"]},
+                    "horizons": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_tft_forecast, tag="read_only",
+        ),
+        Tool(
+            name="query_ppo_action",
+            description=(
+                "[RL] PPO action recommendation (modern upgrade from "
+                "Q-learning). Returns action + log_prob + value_estimate "
+                "+ confidence. Falls back to rule-based proxy when no "
+                "PPO checkpoint exists. Reward is clipped at ±5% to "
+                "prevent reward hacking."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "required": ["asset"],
+            },
+            handler=_handle_ppo_action, tag="read_only",
+        ),
+        Tool(
+            name="query_profit_extraction_targets",
+            description=(
+                "[POSITIONS] For each open position compute the price "
+                "where it flips net-positive (covers spread). Identifies "
+                "ready_to_close (already profitable) and nearest_to_"
+                "breakeven (closest to flipping). Brain uses to turn the "
+                "stuck legacy 182-position book into realized gains as "
+                "BTC climbs — pick closest-to-profit first, don't "
+                "blanket-close."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+            },
+            handler=_handle_profit_extraction_targets, tag="read_only",
+        ),
+        Tool(
             name="query_catalyst_listener_state",
             description=(
                 "[CATALYST] Stats on the event-driven preemption daemon: "
@@ -2555,6 +2873,12 @@ def register_unified_brain_tools(registry) -> int:
             "query_trade_verifier_state": ("realtime", "query", "internal"),
             "query_system_health": ("realtime", "query", "internal"),
             "query_strategy_universe": ("realtime", "analysis", "internal"),
+            "query_alpha_seeds": ("daily", "query", "internal"),
+            "evaluate_alphas": ("daily", "analysis", "internal"),
+            "query_foundation_forecast": ("realtime", "analysis", "internal"),
+            "query_tft_forecast": ("realtime", "analysis", "internal"),
+            "query_ppo_action": ("realtime", "analysis", "internal"),
+            "query_profit_extraction_targets": ("realtime", "query", "internal"),
             "query_catalyst_listener_state": ("realtime", "query", "internal"),
             "query_continuous_brain_scenarios": ("realtime", "query", "internal"),
             "query_decision_graph_causal": ("hour", "analysis", "internal"),
