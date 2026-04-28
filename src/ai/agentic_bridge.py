@@ -312,6 +312,91 @@ def compile_agentic_plan(
                     terminated_reason="rule_based_fallback",
                 )
 
+        # ── EXPERIMENTAL INTEGRATIONS (all default OFF, env-gated) ──
+        # Each integration runs in shadow mode when its env flag is
+        # "shadow", or authoritatively when "1". When unset, the calls
+        # are no-ops. Existing TradePlan output is unchanged unless the
+        # operator explicitly promotes one of these to authoritative.
+        try:
+            from src.ai import dual_path_reasoning as _dpr
+            if _dpr.is_enabled():
+                # Shadow mode: synthesize from existing analyst trace
+                # rather than running 2 extra LLM calls. The fact and
+                # subjectivity verdicts here are *derived* from the
+                # plan's quoted_evidence; full split-LLM-call mode is
+                # gated behind explicit promotion (not part of shadow).
+                _fact = _dpr.PathVerdict(
+                    path="fact",
+                    direction=str(getattr(result.plan, "direction", "SKIP")),
+                    confidence=float(getattr(result.plan, "confidence", 0.5)),
+                    rationale=str(getattr(result.plan, "thesis", ""))[:200],
+                    inputs_used=["existing_analyst_output"],
+                )
+                _subj = _dpr.PathVerdict(
+                    path="subjectivity",
+                    direction=str(getattr(result.plan, "direction", "SKIP")),
+                    confidence=float(getattr(result.plan, "confidence", 0.5)),
+                    rationale="proxy from fused output (split-mode pending)",
+                    inputs_used=["existing_analyst_output"],
+                )
+                _synth = _dpr.synthesize(_fact, _subj)
+                _dpr.log_shadow(asset, _synth,
+                                str(getattr(result.plan, "direction", "?")),
+                                float(getattr(result.plan, "confidence", 0.0)))
+        except Exception as _e:
+            logger.debug("dual_path shadow eval skipped: %s", _e)
+
+        try:
+            from src.agents import hierarchical_orchestrator as _hier
+            if _hier.is_enabled():
+                # Pull the existing flat-vote agent map from tick_state.
+                from src.ai import tick_state as _ts_mod
+                _snap_for_hier = _ts_mod.get(asset)
+                # We don't have direct access to the agent_votes dict
+                # here, but the hierarchical layer reads from the same
+                # warm_store; we synthesize a minimal vote map so the
+                # log captures the comparison. Full integration that
+                # forwards the live agent_votes is part of authoritative
+                # promotion, not shadow.
+                _empty_votes: Dict[str, Dict[str, Any]] = {}
+                _decision = _hier.hierarchical_decide(asset, _empty_votes)
+                _flat_dir = (1 if str(getattr(result.plan, "direction", "")).upper() in ("LONG", "BUY")
+                             else -1 if str(getattr(result.plan, "direction", "")).upper() in ("SHORT", "SELL")
+                             else 0)
+                _hier.log_shadow(_decision, _flat_dir,
+                                 float(getattr(result.plan, "confidence", 0.0)))
+        except Exception as _e:
+            logger.debug("hierarchy shadow eval skipped: %s", _e)
+
+        try:
+            from src.agents import skeptic_persona as _sk
+            if _sk.is_enabled():
+                from src.ai import tick_state as _ts_mod
+                _snap_for_sk = _ts_mod.get(asset)
+                _verdict = _sk.evaluate(
+                    asset=asset,
+                    consensus_direction=str(getattr(result.plan, "direction", "")),
+                    consensus_confidence=float(getattr(result.plan, "confidence", 0.5)),
+                    tick_snap=_snap_for_sk,
+                )
+                if _verdict is not None:
+                    _proceeded = (
+                        result.plan is not None
+                        and str(result.plan.direction).upper() in ("LONG", "SHORT", "BUY", "SELL")
+                    )
+                    _sk.log_shadow(_verdict, _proceeded)
+                    # Write the skeptic line into tick_state so the
+                    # NEXT tick's analyst sees the contrarian argument
+                    # in its evidence document.
+                    try:
+                        _line = _sk.format_for_brain(_verdict)
+                        if _line:
+                            _ts_mod.update(asset, skeptic_advisory=_line[:400])
+                    except Exception:
+                        pass
+        except Exception as _e:
+            logger.debug("skeptic shadow eval skipped: %s", _e)
+
         # Operator-visible audit line: brain's per-tick verdict + how
         # many open positions it considered. Lets the operator confirm
         # at a glance that portfolio review is happening every tick.

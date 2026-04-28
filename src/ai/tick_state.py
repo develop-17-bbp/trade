@@ -75,6 +75,12 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
     # the brain doesn't repeat the same proposal.
     if "last_refusal" in snap and snap.get("last_refusal"):
         lines.append(f"REFUSAL: {snap.get('last_refusal')}")
+    # SKEPTIC ADVISORY: when the adversarial-skeptic persona flagged
+    # the prior tick's plan, surface its argument so this tick's
+    # analyst weighs the contrarian view. Default OFF; only present
+    # when ACT_SKEPTIC=1 was set on the prior tick.
+    if "skeptic_advisory" in snap and snap.get("skeptic_advisory"):
+        lines.append(str(snap.get("skeptic_advisory"))[:400])
     # RECENT EXITS: closes since last tick (SL/TP hit, brain-initiated,
     # macro shift). Brain reads to learn from the outcome and decide
     # next-tick posture (e.g. add to winners, avoid same setup).
