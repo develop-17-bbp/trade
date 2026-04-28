@@ -363,6 +363,45 @@ class RobinhoodPaperFetcher:
             if self._spread_cost_pct > 0:
                 pnl_pct -= self._spread_cost_pct
 
+            # ── HOLD-UNTIL-PROFIT guard (paper-mode only) ──
+            # Operator directive: "exit only in profit." When the flag
+            # is set in paper mode, refuse to close at net negative
+            # PnL UNLESS the reason indicates a catastrophic trigger:
+            #   thesis_broken, regime_crisis, hmm_crisis, news_catalyst,
+            #   pattern_reversal, manual_override, brain_force_close,
+            #   emergency_flatten
+            # This suppresses the body's auto -2% L1 stop and lets the
+            # brain (per its STUCK-PORTFOLIO RECOVERY playbook) hold
+            # positions until trend favors them.
+            #
+            # NEVER applies in real-capital mode (always honor SL there).
+            if (os.environ.get("ACT_HOLD_UNTIL_PROFIT", "").strip() == "1"
+                    and os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() != "1"
+                    and pnl_pct < 0):
+                catastrophic_keywords = (
+                    "thesis_broken", "regime_crisis", "hmm_crisis",
+                    "news_catalyst", "pattern_reversal", "manual_override",
+                    "brain_force_close", "emergency_flatten", "catastrophic",
+                )
+                reason_lower = (reason or "").lower()
+                if not any(kw in reason_lower for kw in catastrophic_keywords):
+                    print(
+                        f"  [PAPER] HOLD-UNTIL-PROFIT: refusing exit on {asset} "
+                        f"(net pnl={pnl_pct:+.2f}%, reason='{reason[:60]}'). "
+                        "Position holds until net positive OR catastrophic trigger."
+                    )
+                    # Surface refusal to brain on next tick
+                    try:
+                        from src.ai import tick_state as _ts
+                        _ts.update(asset, last_refusal=(
+                            f"HOLD_UNTIL_PROFIT: declined exit at {pnl_pct:+.2f}% "
+                            f"net (reason='{reason[:40]}'). Holding until net "
+                            "positive OR thesis catastrophically broken."
+                        )[:300])
+                    except Exception:
+                        pass
+                    return None
+
             pnl_usd = pos.quantity * pos.entry_price * (pnl_pct / 100)
 
             # Update position

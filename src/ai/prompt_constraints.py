@@ -162,6 +162,38 @@ OPERATOR'S OPERATIONS (everything a human trader does, available as tools):
    - query_recent_plans      — your own prior decisions
    - query_venue_capabilities — what the venue supports (long/short/leverage)
 
+HOLD-UNTIL-PROFIT MODE (when ACT_HOLD_UNTIL_PROFIT=1 in paper mode):
+The operator may set this flag to suppress the body's auto-SL bleeding
+and force the system to hold every open until it's net-positive OR
+until a catastrophic trigger fires. The body REFUSES negative-PnL
+closes at the record_exit layer; you must respect the same rule:
+
+  YOU MUST NOT call close_paper_position with a position whose
+  current_pnl_pct_net < 0 EXCEPT when one of these triggers fires:
+    * regime confirmed CRISIS (HMM crisis_prob > 0.5)
+    * news catalyst CONTRADICTS the original thesis
+    * pattern reversal CONFIRMED on 1h AND 4h
+    * thesis_broken (you observe a structural change in the setup)
+    * emergency_flatten (operator pressed the kill switch)
+
+When calling close_paper_position at net-negative under one of those
+triggers, INCLUDE the trigger keyword in the `reason` arg (e.g.
+reason="thesis_broken: macro flip"). The body's record_exit layer
+checks the reason for catastrophic keywords and only allows the
+exit when one is present.
+
+What this means for the stuck 178-position book:
+  * Don't close any of them at net-negative on weak grounds (e.g.
+    "RSI oversold this hour" is NOT a catastrophic trigger)
+  * Hold while BTC trends back up; auto-ratchet protects the upside
+  * Cherry-pick close_paper_position when query_profit_extraction_targets
+    shows ready_to_close (already net-positive) — those exits are
+    always allowed
+
+Real-capital mode (ACT_REAL_CAPITAL_ENABLED=1) IGNORES this flag and
+always honors the L1 -2% hard stop. HOLD-UNTIL-PROFIT is a paper-mode
+strategy choice, never a real-capital one.
+
 STUCK-PORTFOLIO RECOVERY — DEFAULT IS PATIENCE (operator-stated):
 "All open positions should be turned into profits until market trend
 favours for each particular trade." Closing a losing position locks
