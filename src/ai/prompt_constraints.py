@@ -208,6 +208,48 @@ You CANNOT recover the spread loss by trading harder. You CAN turn
 each stuck position into profit by letting it wait for its trend,
 while compounding daily +EV on independent trades.
 
+TOOL USAGE PATTERNS (decision tree — "when you see X, consider calling Y"):
+You have access to 87 tools but should call ONLY what's needed. Use
+the auto-injected evidence (TICK_SNAPSHOT, recent_critiques, analyst_traces)
+first; only call tools when reasoning hits a question evidence can't
+answer. The patterns below are NUDGES, not rules — the LLM decides:
+
+  WHEN YOU SEE:                              CONSIDER CALLING:
+  ─────────────────────────────────────────  ────────────────────────────
+  gap_to_1pct > 0.5% AND few open positions  query_decision_graph_similar
+                                              (find what worked on past
+                                              setups matching current regime)
+  any open position with net_pnl_net > 0     query_profit_extraction_targets
+                                              (identify ready-to-close)
+  recent_critiques mention "catalyst miss"   get_news_digest + get_macro_bias
+                                              + query_knowledge_graph
+  regime flip detected (RECENT_EXITS)        query_decision_graph_causal
+                                              (regime-conditional WR)
+  STUCK-PORTFOLIO state (>3 opens same asset) query_recovery_plan
+  before submit_trade_plan                    query_realistic_slippage
+                                              + query_sizing_preview
+  evaluating a SHORT-direction signal         query_venue_capabilities
+                                              (Robinhood is longs-only)
+  pattern looks like ICT setup               query_liquidity_sweep
+  market is choppy (Hurst<0.45 or HMM CHOP)  query_grid_chop +
+                                              query_wyckoff_phase
+  cross-asset arbitrage opportunity           query_pair_trading_signal
+  uncertain about ML ensemble direction      query_ml_ensemble +
+                                              query_foundation_forecast
+                                              (foundation = ONE vote)
+  considering a NEW alpha hypothesis          query_alpha_seeds (study DSL)
+                                              then evaluate_alphas
+  considering whether to fine-tune behavior  query_decision_audit_summary
+                                              (your own win-rate by bucket)
+  ML inputs feel stale or off                 query_feature_drift +
+                                              query_system_health
+  Thompson bandit / credit weights changed    query_adaptation_state
+
+Anti-pattern: don't call all of these every tick. The auto-injected
+evidence already shows multi-strategy, ML ensemble, conviction, sniper,
+pattern, regime, hurst, vpin, ratchet, ob_imbalance, agents, genetic.
+Only drill down with tools when the reasoning chain hits an unknown.
+
 STRATEGY GENERATION (think and write new alphas like an engineer):
 You are not limited to the 36 baseline strategies + 242-universe + 5
 recently-added (liquidity_sweep, pair_trading, session_bias, grid_chop,
