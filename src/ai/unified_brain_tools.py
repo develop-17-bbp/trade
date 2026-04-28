@@ -610,6 +610,119 @@ def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"alpha_seeds_failed: {e}"[:200]}
 
 
+def _handle_generate_alpha_round(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Single-call generation+evaluation cycle.
+
+    Drives a sub-call to the analyst LLM with a constrained prompt
+    asking it to propose K alpha formulas using ONLY the safe-DSL,
+    then parses + evaluates them through evaluate_alpha_batch.
+
+    Returns:
+      proposed_count: how many parsed safely
+      passed_count: how many cleared the promotion gate
+      results: full per-alpha eval (with DSR, win_rate, etc.)
+      llm_raw_response: truncated for audit (≤500 chars)
+
+    Anti-noise: returns 'rejected' immediately if daily cap or active
+    cap blocks; doesn't waste an LLM call on a guaranteed-rejection.
+    """
+    asset = str(args.get("asset") or "BTC").upper()
+    k = int(args.get("k") or 5)
+    k = max(1, min(10, k))
+    market_context = str(args.get("market_context") or "")[:500]
+    try:
+        from src.ai.llm_alpha_generator import (
+            can_generate_today, count_active_llm_alphas,
+            DAILY_GENERATION_CAP, MAX_ACTIVE_LLM_ALPHAS,
+            ALLOWED_FEATURES, ALLOWED_OPS, list_seed_alphas,
+            parse_llm_generated_alphas, evaluate_alpha_batch,
+            AlphaFormula,
+        )
+        # Pre-check guards before LLM call
+        can_gen, gen_reason = can_generate_today()
+        if not can_gen:
+            return {"rejected": True, "reason": "daily_generation_cap_hit",
+                    "detail": gen_reason}
+        n_active = count_active_llm_alphas()
+        if n_active >= MAX_ACTIVE_LLM_ALPHAS:
+            return {"rejected": True, "reason": "max_active_alphas",
+                    "n_active": n_active, "cap": MAX_ACTIVE_LLM_ALPHAS}
+
+        # Build a constrained prompt for the analyst LLM
+        seeds = list_seed_alphas()[:5]
+        prompt = (
+            "You are an alpha-formula engineer for a crypto trading "
+            f"system on Robinhood. Propose exactly {k} new alpha formulas "
+            "for asset " + asset + ".\n\n"
+            "RULES:\n"
+            f"- Use ONLY these features: {', '.join(ALLOWED_FEATURES)}\n"
+            f"- Use ONLY these operators: {', '.join(ALLOWED_OPS)}\n"
+            "- Each formula is a Python expression evaluating to bool\n"
+            "- True = strategy enters LONG; False = strategy exits\n"
+            "- Diverse formulas (don't propose 5 variations of the same idea)\n\n"
+            f"MARKET CONTEXT: {market_context}\n\n"
+            "SEED EXAMPLES (study the structure, don't copy):\n"
+            + "\n".join(f"  - {s['name']}: {s['expression']}  ({s['description']})"
+                       for s in seeds)
+            + "\n\nReturn ONLY a JSON array, no other text:\n"
+            '[{"name": "...", "expression": "...", "description": "...",'
+            ' "direction_kind": "long_only"}, ...]'
+        )
+
+        # Call the analyst LLM via existing dual_brain infrastructure
+        try:
+            from src.ai.dual_brain import call_analyst
+            llm_raw = call_analyst(prompt, max_tokens=1500) or ""
+        except Exception:
+            try:
+                from src.ai.llm_provider import call_llm
+                llm_raw = call_llm(prompt, max_tokens=1500) or ""
+            except Exception as _e:
+                return {"error": f"llm_call_failed: {_e}"[:200]}
+
+        if not llm_raw:
+            return {"error": "llm_returned_empty"}
+
+        # Parse formulas (safe-DSL whitelist applied)
+        formulas = parse_llm_generated_alphas(llm_raw, generation_round=1)
+        if not formulas:
+            return {
+                "rejected": True,
+                "reason": "no_safe_formulas_parsed_from_llm_output",
+                "llm_raw_response": str(llm_raw)[:500],
+            }
+
+        # Evaluate via the same path as direct evaluate_alphas
+        bars = _fetch_recent_bars(asset, timeframe="1h", n=400)
+        if bars is None:
+            return {"error": "no_recent_bars_for_eval"}
+        highs, lows, closes, volumes = bars
+        bar_dicts = [
+            {"close": closes[i], "high": highs[i], "low": lows[i],
+             "open": closes[i - 1] if i > 0 else closes[i],
+             "volume": volumes[i]}
+            for i in range(len(closes))
+        ]
+        eval_result = evaluate_alpha_batch(formulas, bar_dicts)
+
+        return {
+            "asset": asset,
+            "proposed_count": len(formulas),
+            "llm_raw_response": str(llm_raw)[:500],
+            "evaluation": eval_result,
+            "advisory": (
+                "If n_actually_promotable > 0, include the passing "
+                "formula(s) logic in your TradePlan thesis. The eval "
+                "passed all 5 guards (daily cap, active cap, batch "
+                "PBO, per-alpha DSR, sample size). If 0 promotable, "
+                "iterate: revise the formulas based on which guard "
+                "failed and call evaluate_alphas with the revisions."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"generate_alpha_round_failed: {e}"[:200]}
+
+
 def _handle_evaluate_alphas(args: Dict[str, Any]) -> Dict[str, Any]:
     """Evaluate a batch of LLM-proposed alpha formulas. Enforces ALL 5
     operator-side guards (daily cap, active cap, batch PBO, DSR per
@@ -2219,6 +2332,29 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_llm_alpha_seeds, tag="read_only",
         ),
         Tool(
+            name="generate_alpha_round",
+            description=(
+                "[ALPHA-GEN] Single-call generation+evaluation cycle. "
+                "Drives a sub-call to the analyst LLM with a constrained "
+                "prompt asking for K new alpha formulas, parses them "
+                "through the safe-DSL whitelist, and evaluates via the "
+                "same gate as evaluate_alphas. Use when you want to "
+                "delegate the full Chain-of-Alpha cycle (generate + "
+                "eval) in one shot. Pre-checks guards before the LLM "
+                "call to avoid wasted compute."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "k": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "market_context": {"type": "string"},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_generate_alpha_round, tag="read_only",
+        ),
+        Tool(
             name="evaluate_alphas",
             description=(
                 "[ALPHA-GEN] Evaluate brain-proposed alpha formulas with "
@@ -2875,6 +3011,7 @@ def register_unified_brain_tools(registry) -> int:
             "query_strategy_universe": ("realtime", "analysis", "internal"),
             "query_alpha_seeds": ("daily", "query", "internal"),
             "evaluate_alphas": ("daily", "analysis", "internal"),
+            "generate_alpha_round": ("daily", "analysis", "internal"),
             "query_foundation_forecast": ("realtime", "analysis", "internal"),
             "query_tft_forecast": ("realtime", "analysis", "internal"),
             "query_ppo_action": ("realtime", "analysis", "internal"),
