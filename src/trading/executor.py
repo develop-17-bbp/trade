@@ -3853,6 +3853,15 @@ class TradingExecutor:
         except Exception:
             pass
 
+        # Refresh 6-factor synthesis into tick_state so ALL loops see
+        # the same predictive signals. Module caches internally —
+        # only really computes every 5 min; cheap on cache hits.
+        try:
+            from src.ai.factor_synthesis import refresh_and_publish
+            refresh_and_publish(asset)
+        except Exception:
+            pass
+
         # ── BTC-ETH Pairs Trading Signal (informational — feeds LLM context) ──
         pairs_signal = {}
         if self._coint_engine and asset in ('BTC', 'ETH'):

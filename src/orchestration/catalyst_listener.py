@@ -44,6 +44,9 @@ DEFAULT_NEWS_HIGH_THRESHOLD = 0.8
 DEFAULT_NEWS_LOW_THRESHOLD = 0.6  # hysteresis
 DEFAULT_DRAWDOWN_TRIGGER_PCT = 2.0
 DEFAULT_DRAWDOWN_WINDOW_S = 60.0
+# Factor-synthesis triggers (single source of truth from tick_state)
+DEFAULT_BIAS_FLIP_THRESHOLD = 0.6   # |new - prev| crossing > this fires
+DEFAULT_BIAS_HIGH_ABS = 0.5         # extreme bias triggers preemption
 
 
 @dataclass
@@ -103,6 +106,8 @@ class CatalystListener:
         self._last_preempt_at: Dict[str, float] = {}
         self._last_news_risk: Dict[str, float] = {}    # for hysteresis
         self._last_regime: Dict[str, str] = {}
+        self._last_factor_regime: Dict[str, str] = {}    # macro regime flip detection
+        self._last_bias_score: Dict[str, float] = {}     # bias score flip detection
         self._equity_window: List[tuple] = []           # (ts, equity)
         self._stop_evt = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -190,7 +195,35 @@ class CatalystListener:
             ))
         self._last_news_risk[asset] = news_risk
 
-        # Trigger 3: drawdown spike (>2% in 60s)
+        # Trigger 3: factor synthesis macro regime flip (single source of
+        # truth from tick_state — populated by factor_synthesis module).
+        factor_regime = str(snap.get("factor_regime", ""))
+        prev_factor_regime = self._last_factor_regime.get(asset, "")
+        if (factor_regime and prev_factor_regime
+                and factor_regime != prev_factor_regime
+                and factor_regime != "unavailable"):
+            self._fire(CatalystEvent(
+                asset=asset, trigger_type="factor_regime_flip",
+                trigger_value=1.0, threshold=1.0, ts=now,
+                extra={"from": prev_factor_regime, "to": factor_regime},
+            ))
+        if factor_regime:
+            self._last_factor_regime[asset] = factor_regime
+
+        # Trigger 4: factor bias score flip (large swing)
+        bias = float(snap.get("factor_bias_score", 0.0) or 0.0)
+        prev_bias = self._last_bias_score.get(asset, 0.0)
+        if abs(bias - prev_bias) >= DEFAULT_BIAS_FLIP_THRESHOLD:
+            self._fire(CatalystEvent(
+                asset=asset, trigger_type="bias_score_flip",
+                trigger_value=bias - prev_bias,
+                threshold=DEFAULT_BIAS_FLIP_THRESHOLD, ts=now,
+                extra={"prev_bias": prev_bias, "new_bias": bias},
+            ))
+        if "factor_bias_score" in snap:
+            self._last_bias_score[asset] = bias
+
+        # Trigger 5: drawdown spike (>2% in 60s)
         equity = float(snap.get("equity_usd", 0.0) or 0.0)
         if equity > 0:
             self._equity_window.append((now, equity))

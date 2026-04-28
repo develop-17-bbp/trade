@@ -613,6 +613,20 @@ def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
 # ── Predictive market factors (6 modules — 2026 research-grounded) ─────
 
 
+def _handle_factor_synthesis(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get the 6-factor synthesis — single source of truth shared
+    across agentic loop, continuous brain, catalyst listener, and
+    macro outer loop. Brain reads this for one-call directional read
+    (instead of fetching all 6 factors individually)."""
+    asset = str(args.get("asset") or "BTC").upper()
+    try:
+        from src.ai.factor_synthesis import refresh_and_publish
+        synthesis = refresh_and_publish(asset)
+        return synthesis.to_dict()
+    except Exception as e:
+        return {"error": f"factor_synthesis_failed: {e}"[:200]}
+
+
 def _handle_macro_overlay(args: Dict[str, Any]) -> Dict[str, Any]:
     """DXY + US10Y + VIX + S&P risk-on/off overlay."""
     try:
@@ -2432,6 +2446,24 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_llm_alpha_seeds, tag="read_only",
         ),
         Tool(
+            name="query_factor_synthesis",
+            description=(
+                "[SYNTHESIS] One-call 6-factor directional read. Combines "
+                "macro_overlay + btc_dominance + halving_cycle + cvd + "
+                "whale_flow + lead_lag into a single bias_score [-1,+1] + "
+                "regime_label + recommended_action + confidence_label. "
+                "Same source-of-truth used by continuous-brain daemon, "
+                "catalyst listener, and your own per-tick reasoning. "
+                "Cached 5 min — cheap on hits."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "required": ["asset"],
+            },
+            handler=_handle_factor_synthesis, tag="read_only",
+        ),
+        Tool(
             name="query_macro_overlay",
             description=(
                 "[MACRO] DXY (US dollar) + US10Y yield + VIX + S&P signals "
@@ -3213,6 +3245,7 @@ def register_unified_brain_tools(registry) -> int:
             "query_alpha_seeds": ("daily", "query", "internal"),
             "evaluate_alphas": ("daily", "analysis", "internal"),
             "generate_alpha_round": ("daily", "analysis", "internal"),
+            "query_factor_synthesis": ("hour", "analysis", "internal"),
             "query_macro_overlay": ("hour", "data_fetch", "external"),
             "query_btc_dominance": ("hour", "data_fetch", "external"),
             "query_cvd": ("realtime", "analysis", "internal"),

@@ -217,6 +217,35 @@ class ContinuousBrain:
                 computed_at=now,
             ))
 
+        # Scenario 5: factor synthesis bias state — single source of truth
+        # from factor_synthesis module. Same view as catalyst listener +
+        # agentic loop.
+        if "factor_bias_score" in snap:
+            bias = float(snap.get("factor_bias_score", 0.0))
+            regime = str(snap.get("factor_regime", "?"))
+            action = str(snap.get("factor_action", "skip"))
+            if bias > 0.5:
+                scenarios.append(Scenario(
+                    name="factor_synthesis_strong_long",
+                    trigger_condition=f"bias_score=+{bias:.2f} regime={regime}",
+                    suggested_action="SUBMIT_LONG_IF_GATES_PASS",
+                    rationale=(f"6-factor synthesis says STRONG LONG ({bias:+.2f}). "
+                               "Macro + cross-asset + order-flow aligned bullish. "
+                               "Verify slippage + sizing then submit_trade_plan."),
+                    computed_at=now,
+                ))
+            elif bias < -0.5:
+                scenarios.append(Scenario(
+                    name="factor_synthesis_strong_short",
+                    trigger_condition=f"bias_score={bias:+.2f} regime={regime}",
+                    suggested_action="NO_NEW_LONGS_CONSIDER_THESIS_BROKEN_CLOSE",
+                    rationale=(f"6-factor synthesis says STRONG SHORT ({bias:+.2f}). "
+                               "Robinhood is longs-only — skip all new longs. If "
+                               "ACT_HOLD_UNTIL_PROFIT not set, consider thesis_broken "
+                               "close on positions whose macro thesis is invalidated."),
+                    computed_at=now,
+                ))
+
         # Cap and write
         scenarios = scenarios[:DEFAULT_MAX_SCENARIOS_PER_ASSET]
         self._cache[asset] = scenarios

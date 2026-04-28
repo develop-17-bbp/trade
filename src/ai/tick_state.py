@@ -173,6 +173,23 @@ def format_for_brain(asset: str, max_age_s: float = 300.0) -> str:
                 "richer per-position state. Call get_news_digest / "
                 "get_macro_bias / query_knowledge_graph for catalysts."
             )
+    # FACTOR SYNTHESIS: 6-factor predictive bias score the brain uses
+    # to decide direction. Same source of truth as continuous-brain
+    # daemon and catalyst listener — single view across all loops.
+    if "factor_bias_score" in snap:
+        _score = snap.get('factor_bias_score', 0.0)
+        _regime = snap.get('factor_regime', '?')
+        _action = snap.get('factor_action', 'skip')
+        _conf = snap.get('factor_confidence', 'neutral')
+        _n = snap.get('factor_n_available', 0)
+        _bull = snap.get('factor_bullish', '')
+        _bear = snap.get('factor_bearish', '')
+        lines.append(
+            f"FACTOR_SYNTHESIS: bias_score={_score:+.2f} ({_conf}) "
+            f"regime={_regime} action={_action} | "
+            f"bullish=[{_bull}] bearish=[{_bear}] | "
+            f"factors_available={_n}/6"
+        )
     # COST: round-trip spread the brain MUST clear before any plan
     # makes economic sense (Robinhood is ~1.69%, Bybit ~0.055%).
     if "spread_pct" in snap:
