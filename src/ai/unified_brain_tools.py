@@ -82,6 +82,30 @@ def _handle_ml_ensemble(args: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         out["models"]["rl"] = {"error": str(e)[:80]}
 
+    # Temporal transformer (research model, online-update capable).
+    # Only include if a saved checkpoint exists so we don't add noise
+    # from an untrained dummy.
+    try:
+        import os as _os
+        ckpt = _os.path.join("models", f"temporal_transformer_{asset.lower()}.pkl")
+        if _os.path.exists(ckpt):
+            from src.ai.temporal_transformer import TemporalTransformer
+            tt = TemporalTransformer()
+            tt.load_model(ckpt)
+            from src.data.fetcher import PriceFetcher
+            try:
+                pf = PriceFetcher()
+                bars = pf.get_recent_bars(asset, timeframe="1h", n=64) or []
+                import numpy as _np
+                if bars:
+                    closes = _np.array([float(b.get("close", 0)) for b in bars])
+                    out["models"]["temporal_transformer"] = tt.forecast_return(closes)
+            except Exception:
+                out["models"]["temporal_transformer"] = {"status": "no_recent_bars"}
+    except Exception:
+        # Silent — temporal transformer is optional research model
+        pass
+
     # Consensus summary
     bull, bear, neutral = 0, 0, 0
     for m in out["models"].values():
@@ -536,6 +560,138 @@ def _handle_profit_protector(args: Dict[str, Any]) -> Dict[str, Any]:
         return out
     except Exception as e:
         return {"error": f"profit_protector_query_failed: {e}"[:200]}
+
+
+def _handle_system_health(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregate system health: error counts by severity + which
+    components have recent errors. Brain knows when to trust which
+    signal — e.g. if news API is down, sentiment may be stale.
+
+    Anti-noise: returns ONLY aggregate counts and per-component last-
+    error timestamps. No raw stack traces.
+    """
+    try:
+        from src.monitoring.auto_healer import AutoHealer
+        ah = AutoHealer({"max_log_tail": 200})
+        try:
+            tail = ah._tail_log(max_lines=200) if hasattr(ah, "_tail_log") else []
+            errors = ah._detect_errors(tail) if hasattr(ah, "_detect_errors") else []
+        except Exception:
+            errors, tail = [], []
+        sev_counts = {"ERROR": 0, "WARNING": 0, "CRITICAL": 0}
+        components: Dict[str, int] = {}
+        for e in errors[:50]:
+            lvl = str(e.get("level", "ERROR")).upper()
+            sev_counts[lvl] = sev_counts.get(lvl, 0) + 1
+            comp = str(e.get("component", "unknown"))[:30]
+            components[comp] = components.get(comp, 0) + 1
+        return {
+            "log_lines_scanned": len(tail),
+            "error_severity_counts": sev_counts,
+            "components_with_errors": dict(sorted(components.items(),
+                                                   key=lambda kv: kv[1],
+                                                   reverse=True)[:10]),
+            "advisory": (
+                "Trust feeds whose component has 0 errors. Down-weight "
+                "or skip tools whose component appears in the error list."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"system_health_failed: {e}"[:200]}
+
+
+def _handle_decision_audit_summary(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregate audit of past decisions — win-rate by conviction tier,
+    by regime, by pattern_score bucket. Pure stats, anti-overfitting:
+    no individual data points exposed; the brain reads patterns not
+    instances."""
+    asset = str(args.get("asset") or "").upper()
+    lookback = max(20, min(500, int(args.get("lookback") or 100)))
+    try:
+        import sqlite3, json as _json
+        from src.orchestration.warm_store import get_store
+        store = get_store()
+        conn = sqlite3.connect(store.db_path, timeout=2.0)
+        try:
+            sql = (
+                "SELECT plan_json, self_critique, final_action FROM decisions "
+                "WHERE plan_json != '{}' "
+                + ("AND symbol = ? " if asset else "")
+                + "ORDER BY ts_ns DESC LIMIT ?"
+            )
+            params = ((asset, lookback) if asset else (lookback,))
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+        # Bucket by tier, regime, pattern_score; report WR per bucket.
+        from collections import defaultdict
+        buckets = defaultdict(lambda: {"n": 0, "wins": 0, "pnl": 0.0})
+
+        def _bucket(key, win, pnl):
+            b = buckets[key]
+            b["n"] += 1
+            if win:
+                b["wins"] += 1
+            b["pnl"] += float(pnl or 0)
+
+        for plan_raw, crit_raw, _action in rows:
+            try:
+                plan = _json.loads(plan_raw or "{}")
+                crit = _json.loads(crit_raw or "{}")
+            except Exception:
+                continue
+            tier = str(plan.get("entry_tier", "?"))
+            direction = str(plan.get("direction", "?"))
+            pnl = crit.get("realized_pnl_pct")
+            if pnl is None:
+                continue
+            win = float(pnl) > 0
+            _bucket(f"tier:{tier}", win, pnl)
+            _bucket(f"direction:{direction}", win, pnl)
+            score = plan.get("pattern_score") or 0
+            try:
+                score_bucket = "score>=8" if int(score) >= 8 else (
+                    "score:5-7" if int(score) >= 5 else "score<5")
+                _bucket(score_bucket, win, pnl)
+            except Exception:
+                pass
+
+        out = {}
+        for k, v in buckets.items():
+            n = max(1, v["n"])
+            out[k] = {
+                "samples": v["n"],
+                "win_rate": round(v["wins"] / n, 3),
+                "avg_pnl_pct": round(v["pnl"] / n, 3),
+            }
+        return {
+            "lookback_decisions": len(rows),
+            "asset_filter": asset or "ALL",
+            "patterns": out,
+            "advisory": (
+                "Use win_rate by bucket to calibrate conviction. If a "
+                "bucket has <10 samples treat it as low-confidence stat."
+            ),
+        }
+    except Exception as e:
+        return {"error": f"decision_audit_failed: {e}"[:200]}
+
+
+def _handle_chart_vision(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Visual chart pattern summary. Renders OHLCV to PNG and asks the
+    vision model for pattern recognition. Disabled by default; returns
+    'not_enabled' when the feature flag is off (anti-noise)."""
+    asset = str(args.get("asset") or "BTC").upper()
+    timeframe = str(args.get("timeframe") or "1h")
+    try:
+        from src.ai.chart_vision import is_enabled, chart_summary_section
+        if not is_enabled():
+            return {"asset": asset, "enabled": False,
+                    "advisory": "chart_vision disabled — set ACT_CHART_VISION=1 to enable"}
+        summary = chart_summary_section(asset, timeframe=timeframe) or {}
+        return {"asset": asset, "timeframe": timeframe, "summary": summary}
+    except Exception as e:
+        return {"error": f"chart_vision_failed: {e}"[:200]}
 
 
 def _handle_trade_verifier_state(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -1193,21 +1349,39 @@ def _handle_venue_capabilities(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _handle_champion_gate(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Current champion adapter state — which fine-tuned LoRA is
-    serving + last gate decision. Read-only window into model lifecycle."""
+    """Current champion adapter state — LLM/LoRA champion (ai/champion_gate)
+    + ML model champion (ml/champion_gate, lightgbm). Brain reads to
+    know which model versions are serving."""
+    out: Dict[str, Any] = {}
     try:
         from src.ai.champion_gate import get_champion_state
         state = get_champion_state() or {}
-        return {
+        out["llm_champion"] = {
             "champion_id": str(state.get("champion_id", "default"))[:64],
             "challenger_id": str(state.get("challenger_id", ""))[:64],
             "last_gate_decision": str(state.get("last_decision", "n/a"))[:64],
             "champion_metrics": state.get("champion_metrics") or {},
         }
     except ImportError:
-        return {"error": "champion_gate_no_state_api"}
+        out["llm_champion"] = {"error": "ai_champion_gate_no_state_api"}
     except Exception as e:
-        return {"error": f"champion_gate_query_failed: {e}"[:200]}
+        out["llm_champion"] = {"error": f"{type(e).__name__}: {e}"[:120]}
+    # ML model champion (lightgbm) — separate file, ml/champion_gate.py.
+    # The module exposes evaluate_and_gate; champion is the file path
+    # of the active production model. Surface what we can.
+    try:
+        import os as _os
+        prod_path = _os.path.join("models", "lgbm_btc.txt")
+        challenger_path = _os.path.join("models", "lgbm_btc_optimized.txt")
+        out["ml_champion"] = {
+            "champion_path": prod_path,
+            "champion_exists": _os.path.exists(prod_path),
+            "challenger_path": challenger_path,
+            "challenger_exists": _os.path.exists(challenger_path),
+        }
+    except Exception as e:
+        out["ml_champion"] = {"error": f"{type(e).__name__}: {e}"[:120]}
+    return out
 
 
 def register_unified_brain_tools(registry) -> int:
@@ -1495,6 +1669,54 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_champion_gate, tag="read_only",
         ),
         Tool(
+            name="query_system_health",
+            description=(
+                "[HEALTH] Aggregate error counts by severity + components "
+                "with recent errors. Brain knows which feeds to trust. "
+                "Anti-noise: only counts and component names, no stack "
+                "traces. Use when a tool returns surprising data — was "
+                "its component erroring?"
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_system_health, tag="read_only",
+        ),
+        Tool(
+            name="query_decision_audit_summary",
+            description=(
+                "[AUDIT] Aggregate win-rate by conviction tier / direction "
+                "/ pattern_score bucket from recent decisions. Pure stats, "
+                "no individual data points. Calibrate conviction from your "
+                "own historical performance — buckets with <10 samples are "
+                "low-confidence."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "lookback": {"type": "integer", "minimum": 20, "maximum": 500},
+                },
+            },
+            handler=_handle_decision_audit_summary, tag="read_only",
+        ),
+        Tool(
+            name="query_chart_vision",
+            description=(
+                "[VISION] Visual chart pattern summary via vision model. "
+                "Disabled by default; returns 'not_enabled' unless "
+                "ACT_CHART_VISION=1. Use sparingly — slow and noisy if "
+                "abused."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"]},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_chart_vision, tag="read_only",
+        ),
+        Tool(
             name="query_trade_verifier_state",
             description=(
                 "[VERIFY] Recent post-trade SelfCritique entries from "
@@ -1742,6 +1964,9 @@ def register_unified_brain_tools(registry) -> int:
             "query_genetic_evolution_state": ("hour", "query", "internal"),
             "query_genetic_hall_of_fame": ("hour", "query", "internal"),
             "query_trade_verifier_state": ("realtime", "query", "internal"),
+            "query_system_health": ("realtime", "query", "internal"),
+            "query_decision_audit_summary": ("hour", "query", "internal"),
+            "query_chart_vision": ("minute", "analysis", "internal"),
             "query_feature_drift": ("hour", "query", "internal"),
             "query_circuit_breaker_state": ("realtime", "query", "internal"),
             "query_on_chain_signals": ("hour", "data_fetch", "internal"),
