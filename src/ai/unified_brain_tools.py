@@ -613,6 +613,45 @@ def _handle_llm_alpha_seeds(args: Dict[str, Any]) -> Dict[str, Any]:
 # ── Predictive market factors (6 modules — 2026 research-grounded) ─────
 
 
+def _handle_scenario_prediction(args: Dict[str, Any]) -> Dict[str, Any]:
+    """One-call scenario projection: given a strategy hypothesis,
+    return expected profit + confidence + recommended action.
+    Combines vectorized backtest + decision-graph similar setups +
+    prediction-accuracy calibration."""
+    asset = str(args.get("asset") or "BTC").upper()
+    strategy_expr = str(args.get("strategy_expr") or "")
+    direction = str(args.get("direction") or "LONG").upper()
+    regime = args.get("regime")
+    pattern = args.get("pattern_label")
+    if not strategy_expr:
+        return {"error": "strategy_expr required (use safe-DSL whitelist)"}
+    try:
+        from src.ai.scenario_predictor import predict_scenario
+        result = predict_scenario(
+            asset=asset, strategy_expr=strategy_expr, direction=direction,
+            regime=regime, pattern=pattern,
+        )
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"scenario_prediction_failed: {e}"[:200]}
+
+
+def _handle_web_search(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Free-form web search via DuckDuckGo. Daily cap (50/day default).
+    Use AFTER trying news_digest / knowledge_graph — those are
+    higher-signal for trading-specific queries."""
+    query = str(args.get("query") or "").strip()
+    max_results = int(args.get("max_results") or 5)
+    if not query:
+        return {"error": "query required"}
+    try:
+        from src.ai.web_search import search as web_search
+        result = web_search(query, max_results=max_results)
+        return result.to_dict()
+    except Exception as e:
+        return {"error": f"web_search_failed: {e}"[:200]}
+
+
 def _handle_prediction_accuracy(args: Dict[str, Any]) -> Dict[str, Any]:
     """Brain reads its own track record — WR per direction/tier/bias-
     bucket/regime + calibration label + most-common miss reasons.
@@ -2462,6 +2501,50 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_llm_alpha_seeds, tag="read_only",
         ),
         Tool(
+            name="query_scenario_prediction",
+            description=(
+                "[SCENARIO] 'If I use this strategy on this asset, what "
+                "profit can I expect?' — combines vectorized backtest on "
+                "recent 400 bars + decision-graph similar past setups + "
+                "your own calibration label. Returns expected_profit_per_"
+                "trade_pct, confidence_label (high/medium/low/low_sample), "
+                "recommended_action (run/refine/abandon). strategy_expr "
+                "MUST be in the safe-DSL whitelist."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "strategy_expr": {"type": "string"},
+                    "direction": {"type": "string"},
+                    "regime": {"type": "string"},
+                    "pattern_label": {"type": "string"},
+                },
+                "required": ["asset", "strategy_expr"],
+            },
+            handler=_handle_scenario_prediction, tag="read_only",
+        ),
+        Tool(
+            name="query_web_search",
+            description=(
+                "[WEB] Free-form web search (DuckDuckGo HTML, free). "
+                "Use AFTER trying news_digest / knowledge_graph — those "
+                "are higher-signal. Useful for: 'is exchange X having "
+                "an outage?', 'what does <token> do?', 'rules for X?' "
+                "Daily cap 50 (set ACT_WEB_SEARCH_DAILY_CAP). Cached "
+                "30 min per query."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer", "minimum": 1, "maximum": 5},
+                },
+                "required": ["query"],
+            },
+            handler=_handle_web_search, tag="read_only",
+        ),
+        Tool(
             name="query_prediction_accuracy",
             description=(
                 "[CALIBRATION] Your own track record — WR per direction "
@@ -3281,6 +3364,8 @@ def register_unified_brain_tools(registry) -> int:
             "query_alpha_seeds": ("daily", "query", "internal"),
             "evaluate_alphas": ("daily", "analysis", "internal"),
             "generate_alpha_round": ("daily", "analysis", "internal"),
+            "query_scenario_prediction": ("hour", "analysis", "internal"),
+            "query_web_search": ("hour", "data_fetch", "external"),
             "query_prediction_accuracy": ("hour", "query", "internal"),
             "query_factor_synthesis": ("hour", "analysis", "internal"),
             "query_macro_overlay": ("hour", "data_fetch", "external"),

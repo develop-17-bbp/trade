@@ -10058,6 +10058,31 @@ Respond ONLY with JSON:
 
         asset = str(getattr(plan, "asset", "") or "").upper()
         direction = str(getattr(plan, "direction", "")).upper()
+
+        # Persist factor-synthesis snapshot at submission time so
+        # post-trade analysis can recall the macro/cross-asset/order-
+        # flow context AT THE TIME OF DECISION (not just current). Brain
+        # reading past trades sees what factors looked like then —
+        # critical for diagnosing "why did this trade lose" with macro
+        # hindsight.
+        try:
+            from src.ai.factor_synthesis import get_cached
+            _factor_snap = get_cached(asset)
+            if _factor_snap is not None:
+                # Attach to plan's supporting evidence if the field exists
+                if hasattr(plan, "supporting_evidence") and isinstance(
+                        getattr(plan, "supporting_evidence", None), list):
+                    plan.supporting_evidence.append({
+                        "kind": "factor_synthesis_snapshot",
+                        "data": {k: _factor_snap.get(k) for k in (
+                            "long_bias_score", "regime_label",
+                            "confidence_label", "recommended_action",
+                            "bullish_factors", "bearish_factors",
+                            "n_factors_available",
+                        )},
+                    })
+        except Exception:
+            pass
         if asset not in ("BTC", "ETH"):
             return {"submitted": False, "reason": f"unsupported_asset:{asset}"}
         if direction not in ("LONG", "SHORT"):
