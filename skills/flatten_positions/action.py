@@ -87,11 +87,34 @@ def run(args: Dict[str, Any]) -> SkillResult:
             error=f"failed to load sl_state.json: {type(e).__name__}: {e}",
         )
 
-    if not all_positions:
+    # Also process the RobinhoodPaperFetcher's separate position book at
+    # logs/robinhood_paper_state.json — that's where the 2026-04-29 172-stack
+    # actually lives. sl_state.json is for SLPersistenceManager only; the
+    # paper book is its own state. Both must be flattened for the dashboard
+    # to reset.
+    paper_state_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "logs", "robinhood_paper_state.json",
+    )
+    paper_positions: Dict[str, Any] = {}
+    paper_state: Dict[str, Any] = {}
+    if os.path.exists(paper_state_path):
+        try:
+            import json as _json
+            with open(paper_state_path, "r", encoding="utf-8") as _fh:
+                paper_state = _json.load(_fh) or {}
+            paper_positions = paper_state.get("positions") or {}
+        except Exception as e:
+            skipped.append({"asset": "PAPER_STATE", "reason": f"read_failed: {e}"})
+
+    if not all_positions and not paper_positions:
         return SkillResult(
             ok=True,
-            message="No open positions in sl_state.json — nothing to flatten.",
-            data={"incident_id": incident_id, "flattened": 0},
+            message=(
+                "No open positions found in sl_state.json or "
+                "logs/robinhood_paper_state.json — nothing to flatten."
+            ),
+            data={"incident_id": incident_id, "flattened": []},
         )
 
     # 3. Iterate, fetch price, write outcome, clear.
@@ -195,6 +218,91 @@ def run(args: Dict[str, Any]) -> SkillResult:
             record["clear_error"] = str(e)
 
         flattened.append(record)
+
+    # 3b. Now process the RobinhoodPaperFetcher book — same logic, different
+    #     state file. Each entry in `paper_state["positions"]` is a
+    #     PaperPosition dict keyed by trade_id. Write outcome rows + clear.
+    if paper_positions and not dry_run:
+        for trade_id, pp in list(paper_positions.items()):
+            try:
+                pp_asset = str(pp.get("asset") or pp.get("symbol") or "").upper()
+            except Exception:
+                pp_asset = ""
+            if not pp_asset:
+                skipped.append({"trade_id": trade_id, "reason": "missing_asset"})
+                continue
+            if asset_filter and pp_asset != asset_filter:
+                skipped.append({"trade_id": trade_id, "asset": pp_asset,
+                                 "reason": f"filtered by asset={asset_filter}"})
+                continue
+
+            pp_direction = str(pp.get("direction", "LONG")).upper()
+            pp_entry = float(pp.get("entry_price", 0) or 0)
+            pp_qty = float(pp.get("quantity", 0) or pp.get("qty", 0) or 0)
+            pp_entry_ts = float(pp.get("entry_time", 0) or pp.get("entry_ts", 0) or time.time())
+
+            symbol = pp_asset if pp_asset not in ("BTC", "ETH", "SOL", "DOGE") else f"{pp_asset}/USD"
+            pp_exit = _fetch_price(symbol)
+            if pp_exit <= 0 and pp_entry > 0:
+                pp_exit = pp_entry
+            pp_pnl_pct, pp_pnl_usd = _compute_pnl(pp_direction, pp_entry, pp_exit, pp_qty)
+
+            decision_id = f"paper-flatten-{trade_id}"
+            try:
+                store.write_decision({
+                    "decision_id": decision_id,
+                    "symbol": pp_asset,
+                    "ts_ns": int(pp_entry_ts * 1e9),
+                    "direction": 1 if pp_direction == "LONG" else -1,
+                    "final_action": "ORPHAN_FLATTEN_RECONCILE",
+                    "consensus": "operator_flatten",
+                    "component_signals": {
+                        "source": "skill:flatten-positions",
+                        "book": "robinhood_paper",
+                        "trade_id": trade_id,
+                        "incident_id": incident_id,
+                    },
+                })
+                store.flush()
+                store.write_outcome({
+                    "decision_id": decision_id,
+                    "symbol": pp_asset,
+                    "direction": pp_direction,
+                    "entry_price": pp_entry,
+                    "exit_price": pp_exit,
+                    "pnl_pct": pp_pnl_pct,
+                    "pnl_usd": pp_pnl_usd,
+                    "duration_s": max(0.0, time.time() - pp_entry_ts),
+                    "exit_reason": "operator_flatten",
+                    "regime": "unknown",
+                    "entry_ts": pp_entry_ts,
+                    "exit_ts": time.time(),
+                })
+                store.flush()
+            except Exception as e:
+                skipped.append({"trade_id": trade_id, "asset": pp_asset,
+                                "reason": f"warm_store_write_failed: {e}"})
+                continue
+
+            flattened.append({
+                "asset": pp_asset, "trade_id": trade_id, "direction": pp_direction,
+                "entry_price": pp_entry, "exit_price": pp_exit, "qty": pp_qty,
+                "pnl_pct": round(pp_pnl_pct, 4), "pnl_usd": round(pp_pnl_usd, 4),
+                "book": "robinhood_paper",
+            })
+
+        # 3c. Atomically rewrite robinhood_paper_state.json with positions
+        #     cleared. Equity/stats are preserved — the operator wants
+        #     positions reset, not a full equity wipe (that's reset_fresh_start's job).
+        try:
+            paper_state["positions"] = {}
+            tmp = paper_state_path + ".tmp"
+            import json as _json
+            with open(tmp, "w", encoding="utf-8") as _fh:
+                _json.dump(paper_state, _fh, indent=2)
+            os.replace(tmp, paper_state_path)
+        except Exception as e:
+            skipped.append({"asset": "PAPER_STATE_CLEAR", "reason": f"rewrite_failed: {e}"})
 
     # 4. Audit incident row to warm_store.
     if not dry_run and store is not None:

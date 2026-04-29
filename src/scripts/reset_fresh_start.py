@@ -226,6 +226,10 @@ def flatten_open_positions_first():
     PnL to warm_store so finetune sees the outcome. Mirror of the
     /flatten-positions skill at module scope so this script can call it
     as a pre-step before files are wiped.
+
+    Defensive against shape drift in the skill's data dict — `flattened`
+    can be either a list (current contract) or an int (older shape some
+    callers used). Either way we extract a count without crashing.
     """
     try:
         from skills.flatten_positions.action import run as flatten_run
@@ -233,12 +237,22 @@ def flatten_open_positions_first():
     except Exception as e:
         logger.warning(f"flatten_positions pre-step failed: {e}")
         return
-    if result.ok:
-        n = len(result.data.get("flattened", [])) if result.data else 0
-        total = result.data.get("total_pnl_usd", 0.0) if result.data else 0.0
-        logger.info(f"flatten pre-step: closed {n} positions, realized PnL ${total:+.2f}")
-    else:
+    if not result.ok:
         logger.warning(f"flatten pre-step refused: {result.error}")
+        return
+
+    data = result.data or {}
+    flat_field = data.get("flattened")
+    if isinstance(flat_field, list):
+        n = len(flat_field)
+    elif isinstance(flat_field, int):
+        n = flat_field
+    else:
+        n = 0
+    total = data.get("total_pnl_usd")
+    if not isinstance(total, (int, float)):
+        total = 0.0
+    logger.info(f"flatten pre-step: closed {n} positions, realized PnL ${total:+.2f}")
 
 
 def main():
