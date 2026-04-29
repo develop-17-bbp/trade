@@ -32,40 +32,114 @@ This document covers the one-time bring-up of the 3-peer ACT topology:
 
 ## 1. Tailscale install (each box)
 
-Run as Administrator:
+**Important:** Tailscale's native SSH server (`--ssh`) is **not supported on Windows**.
+Use Tailscale only for the mesh transport; run Windows OpenSSH Server on each Windows
+box for the actual SSH daemon. (Confirmed Tailscale 1.96.3 returns
+`500 Internal Server Error: The Tailscale SSH server is not supported on windows`.)
+
+Run as Administrator (PowerShell, NOT cmd.exe — `#` lines are comments):
 
 ```powershell
+# 1. Install Tailscale
 winget install --id Tailscale.Tailscale
-tailscale up --hostname=<acer | act5090 | act4060> --ssh --unattended --accept-routes
+
+# 2. Bring up the mesh (no --ssh on Windows)
+tailscale up --hostname=<acer | act5090 | act4060> --unattended --accept-routes --accept-dns
+# Browser opens; sign in with the same account on all three boxes.
+
+# 3. Verify
+tailscale status
 ```
 
-`--ssh` enables Tailscale-native SSH so we don't need to run Windows OpenSSH Server.
 `--unattended` keeps the daemon up across reboots.
 `--accept-routes` lets each box reach private subnets advertised by peers.
+`--accept-dns` enables MagicDNS so peers resolve by short name (act5090, act4060).
 
 Tag the bots in the Tailscale admin console:
 - `act5090` → tag `tag:act-bot`
 - `act4060` → tag `tag:act-bot`
 - `acer` → leave untagged (operator)
 
+## 1.5 Windows OpenSSH Server (on each bot — 5090 + 4060)
+
+The Acer doesn't need this; it's the SSH client. The two bots need an SSH daemon.
+
+```powershell
+# As Administrator
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Set-Service -Name sshd -StartupType Automatic
+Start-Service sshd
+
+# Confirm port 22 is listening
+Get-NetTCPConnection -LocalPort 22 -State Listen
+```
+
+The Tailscale firewall + ACL controls who can reach port 22, so no extra firewall
+config is needed beyond the default Windows rule that OpenSSH installs.
+
+### Generate keys + exchange
+
+On the **Acer** (operator):
+```powershell
+ssh-keygen -t ed25519 -f $HOME\.ssh\id_ed25519_act -C "acer-operator" -N '""'
+Get-Content $HOME\.ssh\id_ed25519_act.pub
+```
+
+On the **5090**:
+```powershell
+ssh-keygen -t ed25519 -f $HOME\.ssh\id_ed25519_act -C "act5090" -N '""'
+Get-Content $HOME\.ssh\id_ed25519_act.pub
+```
+
+On the **4060**:
+```powershell
+ssh-keygen -t ed25519 -f $HOME\.ssh\id_ed25519_act -C "act4060" -N '""'
+Get-Content $HOME\.ssh\id_ed25519_act.pub
+```
+
+Paste each box's public key into the *other* boxes' `C:\ProgramData\ssh\administrators_authorized_keys`:
+- 5090's `administrators_authorized_keys` gets: Acer's pubkey + 4060's pubkey
+- 4060's `administrators_authorized_keys` gets: Acer's pubkey + 5090's pubkey
+
+Lock file ACL on each bot:
+```powershell
+icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r
+icacls C:\ProgramData\ssh\administrators_authorized_keys /grant "Administrators:F" /grant "SYSTEM:F"
+```
+
+`~/.ssh/config` on each box (so `ssh act5090` resolves the right key + Tailscale name):
+```
+Host act5090
+  HostName act5090
+  User admin
+  IdentityFile ~/.ssh/id_ed25519_act
+
+Host act4060
+  HostName act4060
+  User admin
+  IdentityFile ~/.ssh/id_ed25519_act
+```
+
+(The bare hostname works because Tailscale MagicDNS resolves it. Alternatively use
+`act5090.<your-tailnet>.ts.net`.)
+
 ## 2. ACL policy (Tailscale admin console -> Access Controls)
 
-Paste:
+Since we're using Windows OpenSSH (not Tailscale-native SSH), the `ssh` block doesn't
+apply — use a regular `acls` block to allow tag-to-tag traffic on port 22:
 
 ```jsonc
 {
   "tagOwners": { "tag:act-bot": ["autogroup:admin"] },
-  "ssh": [
-    // Operator (untagged) -> both bots, only as 'admin'
-    { "action": "accept", "src": ["autogroup:admin"], "dst": ["tag:act-bot"], "users": ["admin"] },
-    // Bot <-> bot (5090 <-> 4060) for warm_store sync + adapter shipping
-    { "action": "accept", "src": ["tag:act-bot"], "dst": ["tag:act-bot"], "users": ["admin"] }
+  "acls": [
+    // Operator (untagged Acer) + bots can SSH the bots on port 22
+    { "action": "accept", "src": ["autogroup:admin", "tag:act-bot"], "dst": ["tag:act-bot:22"] }
   ]
 }
 ```
 
-Important: do NOT use `autogroup:nonroot` in `users` when `dst` is a custom tag — that
-opens ssh access as ANY non-root account on the destination. Lock to explicit `admin`.
+That's it — auth is handled by Windows OpenSSH key files; Tailscale only controls
+network-layer reachability.
 
 ## 3. Smoke tests
 
