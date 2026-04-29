@@ -190,17 +190,17 @@ ai:
   # or pinned below via `profile:`. Per-role overrides via
   # ACT_SCANNER_MODEL / ACT_ANALYST_MODEL still win over profile.
   #
-  #   dense_r1      — deepseek-r1:32b + deepseek-r1:7b   (default)
-  #                   Both DeepSeek-R1 distills (dense). Most
-  #                   consistent output. Safest for paper soak —
-  #                   fewer variance sources when debugging shadow
-  #                   plan quality. ~25 GB combined.
-  #
-  #   moe_agentic   — qwen3-coder:30b + qwen2.5-coder:7b
+  #   moe_agentic   — qwen3-coder:30b + qwen2.5-coder:7b   (DEFAULT)
   #                   MoE analyst (Qwen3-Coder-30B-A3B, ~3B active)
   #                   + dense coder worker. 2026 agentic gold
-  #                   standard; best tool-use speed; less raw
-  #                   reasoning depth than R1. ~24 GB combined.
+  #                   standard; best tool-use speed; clean JSON.
+  #                   ~24 GB combined.
+  #
+  #   dense_r1      — deepseek-r1:7b + deepseek-r1:32b   (deprecated)
+  #                   Operator deprecated 2026-04-30 — needs deepseek
+  #                   models pulled (~25 GB combined). Available for
+  #                   operators who explicitly opt in via
+  #                   ACT_BRAIN_PROFILE=dense_r1.
   #
   #   hybrid        — qwen3-coder:30b + deepseek-r1:7b
   #                   MoE agentic analyst + dense R1 scanner.
@@ -217,7 +217,7 @@ ai:
   # OLLAMA_NUM_PARALLEL=4.
   dual_brain:
     enabled: true
-    profile: dense_r1                   # one of: dense_r1 | moe_agentic | hybrid
+    profile: moe_agentic                # one of: moe_agentic | hybrid | dense_r1 (deprecated)
     scanner_role: "market_survey"
     analyst_role: "trade_plan_compile"
     fallback_cross: true                # if primary fails, try the other

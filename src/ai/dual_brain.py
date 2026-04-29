@@ -142,12 +142,15 @@ BRAIN_PROFILES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# Default profile: dense_r1 fits comfortably on 32 GB RTX 5090
-# (deepseek-r1:7b ~6GB + deepseek-r1:32b ~20GB = ~26GB). The
-# qwen3_r1 pair (qwen3:32b + deepseek-r1:32b = ~42GB) is excellent
-# but requires >40GB VRAM; ACT_BRAIN_PROFILE=qwen3_r1 selects it
-# explicitly on hardware that can hold it.
-DEFAULT_PROFILE = "dense_r1"
+# Default profile: moe_agentic. Operator deprecated deepseek-r1 family
+# 2026-04-30 — too aggressive a default for boxes that don't have it
+# pre-pulled, and the MoE Qwen pair gives strictly better tool-use /
+# JSON-strict output for the agentic loop. moe_agentic fits in ~24 GB
+# (qwen2.5-coder:7b ~5GB + qwen3-coder:30b ~18GB) so it works on both
+# the 32 GB 5090 (live trading) and any 24 GB+ training box.
+# Operator can still pick dense_r1 explicitly via
+# `setx ACT_BRAIN_PROFILE dense_r1` if they re-add the deepseek models.
+DEFAULT_PROFILE = "moe_agentic"
 PROFILE_ENV = "ACT_BRAIN_PROFILE"
 
 # Approximate Q4_K_M VRAM footprint by model name. Used for the
@@ -265,8 +268,10 @@ def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if needed <= cap + 2:
         return profile
 
-    # Profile doesn't fit. Walk fallback chain.
-    for fallback_name in ("dense_r1", "moe_agentic"):
+    # Profile doesn't fit. Walk fallback chain — moe_agentic first
+    # (operator-preferred default, no deepseek dependency), dense_r1 last
+    # only when explicitly available.
+    for fallback_name in ("moe_agentic", "hybrid", "dense_r1"):
         if fallback_name == name:
             continue   # already on this one; don't loop
         candidate = BRAIN_PROFILES.get(fallback_name)
@@ -293,7 +298,7 @@ def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     # surfaces the contradiction rather than silently using a model
     # they banned.
     logger.error(
-        "[BRAIN] AUTO-DOWNGRADE: every fallback (dense_r1, moe_agentic) "
+        "[BRAIN] AUTO-DOWNGRADE: every fallback (moe_agentic, hybrid, dense_r1) "
         "is blocked by ACT_FORBID_MODELS=%r AND profile %r doesn't fit "
         "in %.1f GB. Either widen the forbid list or shrink the profile.",
         os.environ.get("ACT_FORBID_MODELS", ""), name, cap,

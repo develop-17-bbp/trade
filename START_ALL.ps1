@@ -85,41 +85,44 @@ $geneticInterval = [math]::Round([math]::Max(0.25, $adaptInterval), 2)
 # Population: scales linearly with compute score
 $geneticPop = [math]::Min(500, [math]::Max(10, [math]::Floor($computeScore * 2)))
 
-# ── Dual-brain models — default dense_r1 for 32GB RTX 5090 safety ──
-# qwen3_r1 (qwen3:32b + deepseek-r1:32b) needs ~42 GB and OOMs on 32 GB.
-# dense_r1 (deepseek-r1:7b + deepseek-r1:32b ~= 26 GB) fits.
-# moe_agentic (qwen2.5-coder:7b + qwen3-coder:30b ~= 24 GB) also fits.
-# Operator can override to qwen3_r1 on >40 GB hardware via
-# `setx ACT_BRAIN_PROFILE qwen3_r1`.
+# ── Dual-brain models — default moe_agentic for any 24 GB+ box ──
+# Operator deprecated deepseek-r1 family 2026-04-30: moe_agentic
+# (qwen2.5-coder:7b + qwen3-coder:30b ~= 24 GB) is now the default for
+# both the 32 GB RTX 5090 and any other box that has ~24 GB free VRAM.
+# Smaller boxes (8 GB 4060 etc.) should set ACT_SCANNER_MODEL locally
+# and OLLAMA_REMOTE_URL pointing at the 5090 for analyst calls.
+# Operator can override to dense_r1 via `setx ACT_BRAIN_PROFILE dense_r1`
+# only if they've re-pulled the deepseek-r1 models.
 $brainProfile = $env:ACT_BRAIN_PROFILE
-if (-not $brainProfile) { $brainProfile = "dense_r1" }
+if (-not $brainProfile) { $brainProfile = "moe_agentic" }
 
 switch ($brainProfile) {
     "qwen3_r1"             { $scannerModel = "qwen3:32b";          $analystModel = "deepseek-r1:32b" }
     "dense_r1"             { $scannerModel = "deepseek-r1:7b";     $analystModel = "deepseek-r1:32b" }
     "moe_agentic"          { $scannerModel = "qwen2.5-coder:7b";   $analystModel = "qwen3-coder:30b" }
+    "hybrid"               { $scannerModel = "deepseek-r1:7b";     $analystModel = "qwen3-coder:30b" }
     "devstral_qwen3coder"  { $scannerModel = "devstral:24b";       $analystModel = "qwen3-coder:30b" }
     default {
-        WARN "Unknown ACT_BRAIN_PROFILE=$brainProfile -- defaulting to dense_r1"
-        $brainProfile = "dense_r1"
-        $scannerModel = "deepseek-r1:7b"; $analystModel = "deepseek-r1:32b"
+        WARN "Unknown ACT_BRAIN_PROFILE=$brainProfile -- defaulting to moe_agentic"
+        $brainProfile = "moe_agentic"
+        $scannerModel = "qwen2.5-coder:7b"; $analystModel = "qwen3-coder:30b"
     }
 }
 
-# ── Safety: reject profiles that won't fit 32 GB VRAM ──
+# ── Safety: reject profiles that won't fit available VRAM ──
 # qwen3_r1 needs ~42 GB. On cards <40 GB VRAM, auto-downgrade to
-# dense_r1 before the Python process even starts to prevent the
+# moe_agentic before the Python process even starts to prevent the
 # "empty LLM response → parse_failures → zero trades" chain.
 try {
     $vramLine = & nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null | Select-Object -First 1
     if ($vramLine) {
         $vramGiB = [int]$vramLine / 1024.0
         if ($brainProfile -eq "qwen3_r1" -and $vramGiB -lt 40) {
-            WARN "Profile qwen3_r1 needs ~42 GB VRAM but only $([int]$vramGiB) GB detected - auto-downgrading to dense_r1"
-            $brainProfile = "dense_r1"
-            $scannerModel = "deepseek-r1:7b"
-            $analystModel = "deepseek-r1:32b"
-            _SetEnvPersistent "ACT_BRAIN_PROFILE" "dense_r1"
+            WARN "Profile qwen3_r1 needs ~42 GB VRAM but only $([int]$vramGiB) GB detected - auto-downgrading to moe_agentic"
+            $brainProfile = "moe_agentic"
+            $scannerModel = "qwen2.5-coder:7b"
+            $analystModel = "qwen3-coder:30b"
+            _SetEnvPersistent "ACT_BRAIN_PROFILE" "moe_agentic"
         }
     }
 } catch {
