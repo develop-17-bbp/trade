@@ -169,6 +169,17 @@ def reset_state_files():
         'logs/TRADES_DETAILED_REPORT.csv',
         'logs/benchmark_history.json',
         'logs/training_state.json',
+        # Position tracker — without this clear, the bot recovers the
+        # orphan positions from sl_state.json on next startup and the
+        # frontend keeps showing "172 open" right back.
+        'data/sl_state.json',
+        # Paper trading position state files (older + newer paths)
+        'data/paper_state.json',
+        'data/paper_positions.json',
+        # SafeEntryState — rolling-Sharpe history. Reset so the
+        # readiness gate's per-trade Sharpe recomputes from a clean
+        # slate; warm_store still has every outcome for finetune corpus.
+        'data/safe_entry_state.json',
     ]
 
     archived_files = []
@@ -210,11 +221,35 @@ def update_config_initial_capital(balance: float):
     logger.info(f"Updated config.yaml: initial_capital ${old_capital:.2f} -> ${balance:.2f}")
 
 
+def flatten_open_positions_first():
+    """Close every open position recorded on disk and persist the realized
+    PnL to warm_store so finetune sees the outcome. Mirror of the
+    /flatten-positions skill at module scope so this script can call it
+    as a pre-step before files are wiped.
+    """
+    try:
+        from skills.flatten_positions.action import run as flatten_run
+        result = flatten_run({"confirm": True})
+    except Exception as e:
+        logger.warning(f"flatten_positions pre-step failed: {e}")
+        return
+    if result.ok:
+        n = len(result.data.get("flattened", [])) if result.data else 0
+        total = result.data.get("total_pnl_usd", 0.0) if result.data else 0.0
+        logger.info(f"flatten pre-step: closed {n} positions, realized PnL ${total:+.2f}")
+    else:
+        logger.warning(f"flatten pre-step refused: {result.error}")
+
+
 def main():
     parser = argparse.ArgumentParser(description='ACT Fresh Start — Reset P&L, Keep Lessons')
     parser.add_argument('--dry-run', action='store_true', help='Preview only, no changes')
     parser.add_argument('--skip-robinhood', action='store_true', help='Skip Robinhood balance fetch')
     parser.add_argument('--initial-balance', type=float, default=None, help='Manual initial balance')
+    parser.add_argument('--no-flatten', action='store_true',
+                        help='Skip the /flatten-positions pre-step. Default behaviour now '
+                             'flattens open positions first so the realized PnL is recorded '
+                             'in warm_store BEFORE state files are wiped.')
     args = parser.parse_args()
 
     print()
@@ -234,9 +269,19 @@ def main():
     print()
 
     if args.dry_run:
-        print("  [DRY RUN] Would archive trades to memory and reset state files")
+        print("  [DRY RUN] Would flatten open positions, archive trades to memory, reset state files")
         print("  [DRY RUN] No changes made")
         return
+
+    # Step 1.5: Flatten open positions FIRST so the loss is recorded as
+    # realized in warm_store (and seeded into the finetune corpus) BEFORE
+    # state files are reset. Without this, the bot's in-flight 172-stack
+    # would just be deleted with no realized-PnL entry — the dashboard
+    # resets but warm_store loses the lesson.
+    if not args.no_flatten:
+        print("  [0/4] Flattening any open positions (writes operator_flatten outcomes)...")
+        flatten_open_positions_first()
+        print()
 
     # Step 2: Archive trades into memory (LLM LEARNS from these)
     print("  [1/4] Archiving trades into v8.0 memory system...")
