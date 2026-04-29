@@ -1,0 +1,22 @@
+name: flatten-positions
+description: >
+  Close every open position recorded in data/sl_state.json. For each
+  position, fetches the current price, computes realized PnL vs entry,
+  writes an outcome row to warm_store with exit_reason='operator_flatten',
+  and clears the position from sl_state. Halts the agentic loop first
+  (ACT_DISABLE_AGENTIC_LOOP=1) so the bot can't immediately re-enter.
+
+  Cures the position-stacking failure mode (172 stuck paper longs from
+  2026-04-29) by recording every loss as realized in warm_store — the
+  drawdown is preserved, not erased — and clearing the in-flight book
+  so the new max_open_positions_per_asset cap can apply to the next
+  round of entries.
+
+  Pair with: setting ACT_MAX_OPEN_POSITIONS_PER_ASSET (default 3) before
+  the next bot start.
+reversible: false
+requires_confirmation: true
+tags:
+  - ops
+  - destructive
+  - position_management

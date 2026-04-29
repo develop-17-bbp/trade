@@ -4287,6 +4287,46 @@ class TradingExecutor:
         #     align for 'sniper'; a looser subset for 'normal'; else reject.
         self._last_conviction_tier = getattr(self, '_last_conviction_tier', {})
         self._last_macro_bias = getattr(self, '_last_macro_bias', {})
+
+        # ── Position-stacking cap (refuses re-entry when N positions already open) ──
+        # Prevents the failure mode that produced 172 stacked ETH longs on
+        # 2026-04-29: every conviction sniper fired again and again on the same
+        # setup, with each entry sized full-conviction, all underwater together.
+        # The cap is enforced BEFORE conviction gate so the operator sees a
+        # MAX_POSITIONS_REJECT row with the open count, not a CONVICTION_REJECT
+        # that masks the real cause.
+        if signal in ('BUY', 'SELL'):
+            _max_per_asset = int(os.environ.get('ACT_MAX_OPEN_POSITIONS_PER_ASSET') or '3')
+            _open_for_asset = sum(
+                1 for k, p in self.positions.items()
+                if k == asset and isinstance(p, dict) and p.get('qty', 0) > 0
+            )
+            if _open_for_asset >= _max_per_asset:
+                print(f"  [{self._ex_tag}:{asset}] MAX POSITIONS REJECT: "
+                      f"already {_open_for_asset} open >= cap {_max_per_asset}")
+                try:
+                    from src.orchestration.warm_store import get_store as _gw
+                    import uuid as _uuid_mp
+                    import time as _time_mp
+                    _gw().write_decision({
+                        "decision_id": f"max-positions-reject-{_uuid_mp.uuid4().hex}",
+                        "symbol": asset,
+                        "ts_ns": _time_mp.time_ns(),
+                        "direction": 1 if signal == 'BUY' else -1,
+                        "final_action": "MAX_POSITIONS_REJECT",
+                        "consensus": "position_stacking_cap",
+                        "veto": True,
+                        "component_signals": {
+                            "source": "position_stacking_cap",
+                            "open_for_asset": _open_for_asset,
+                            "cap": _max_per_asset,
+                            "reason": "per-asset stacking cap reached",
+                        },
+                    })
+                except Exception as _mse:
+                    logger.debug("[STACKING-CAP] warm_store write failed: %s", _mse)
+                return
+
         _harden_enabled = (os.environ.get('ACT_ROBINHOOD_HARDEN') or '').strip().lower() in ('1', 'true', 'yes', 'on')
         if _harden_enabled and signal in ('BUY', 'SELL'):
             try:
