@@ -135,9 +135,22 @@ class UnslothQLoRABackend:
         *,
         output_root: str = DEFAULT_OUTPUT_ROOT,
         ollama_host: str = DEFAULT_OLLAMA_HOST,
+        export: str = "gguf",
+        lora_r: Optional[int] = None,
     ):
+        """`export` = 'gguf' (default) does the full merge + GGUF + Ollama
+        register pipeline (5090 path). 'lora_only' stops after step 4
+        (LoRA training) and writes adapter_model.safetensors only — used
+        by the 4060 box which uploads the LoRA delta to the 5090 over
+        SSH; the 5090 watcher merges + GGUF-quantizes locally.
+
+        `lora_r` overrides DEFAULT_LORA_R (env-driven default = 16).
+        Pass 8 from the 4060 to fit the smaller VRAM budget.
+        """
         self.output_root = Path(output_root)
         self.ollama_host = ollama_host
+        self.export = export
+        self.lora_r = int(lora_r) if lora_r is not None else DEFAULT_LORA_R
         self.output_root.mkdir(parents=True, exist_ok=True)
 
     # ── TrainerBackend.train ────────────────────────────────────────────
@@ -187,10 +200,10 @@ class UnslothQLoRABackend:
         # ── 2. Attach LoRA ─────────────────────────────────────────────
         try:
             model = FastLanguageModel.get_peft_model(
-                model, r=DEFAULT_LORA_R,
+                model, r=self.lora_r,
                 target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                                 "gate_proj", "up_proj", "down_proj"],
-                lora_alpha=DEFAULT_LORA_R,
+                lora_alpha=self.lora_r,
                 lora_dropout=0.0, bias="none",
                 use_gradient_checkpointing=True,
                 random_state=3407,
@@ -238,6 +251,39 @@ class UnslothQLoRABackend:
         except Exception as e:
             logger.warning("training step failed: %s", e)
             return False
+
+        # ── 4b. Save metadata sidecar for cross-box deploy ─────────────
+        try:
+            (run_dir / "metadata.json").write_text(json.dumps({
+                "out_tag": out_tag,
+                "base_model": base_model,
+                "hf_repo": _resolve_hf_id(base_model),
+                "lora_r": self.lora_r,
+                "epochs": DEFAULT_EPOCHS,
+                "batch": DEFAULT_BATCH_SIZE,
+                "grad_accum": DEFAULT_GRAD_ACCUM,
+                "lr": DEFAULT_LEARNING_RATE,
+                "max_seq_len": DEFAULT_MAX_SEQ_LEN,
+                "n_train_rows": len(rows),
+                "trained_at": int(time.time()),
+                "export_mode": self.export,
+            }, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.debug("metadata write failed: %s", e)
+
+        # ── lora_only path: persist adapter only, skip GGUF + Ollama ───
+        if self.export == "lora_only":
+            try:
+                model.save_pretrained(str(run_dir))   # writes adapter_model.safetensors
+                tokenizer.save_pretrained(str(run_dir))
+                logger.info(
+                    "train(lora_only) succeeded: %s in %.1fs (%d rows) → %s",
+                    out_tag, time.time() - t0, len(sft_rows), run_dir,
+                )
+                return True
+            except Exception as e:
+                logger.warning("LoRA save_pretrained failed: %s", e)
+                return False
 
         # ── 5. Merge LoRA, save as GGUF, register in Ollama ────────────
         gguf_path = run_dir / "model.gguf"

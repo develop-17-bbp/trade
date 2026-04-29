@@ -200,10 +200,17 @@ def run_cycle(
     pause_agentic: bool = True,
     analyst_incumbent: Optional[str] = None,
     scanner_incumbent: Optional[str] = None,
+    brains: Optional[List[str]] = None,
 ) -> CycleReport:
     """Run one full fine-tune cycle: filter → split → train analyst →
     train scanner → gate both → promote or reject. Never raises.
+
+    `brains` filters which brains to train. None = both. Used by the
+    two-box deploy: 5090 nightly passes ['analyst'], 4060 every-3h
+    passes ['scanner'].
     """
+    do_analyst = (brains is None) or ("analyst" in brains)
+    do_scanner = (brains is None) or ("scanner" in brains)
     started = time.time()
     prev_disable_env = os.environ.get(DISABLE_AGENTIC_ENV)
     try:
@@ -240,27 +247,32 @@ def run_cycle(
 
         ts = int(time.time())
 
+        analyst_result: Optional[TrainerResult] = None
+        scanner_result: Optional[TrainerResult] = None
+
         # ── Analyst first (heavier, more important) ────────────────────
-        analyst_result = _train_one_brain(
-            backend, brain="analyst",
-            incumbent=analyst_incumbent,
-            challenger_tag=f"{analyst_incumbent}-act-{ts}",
-            train_set=train_set, val_set=val_set,
-            format_fn=format_analyst_sft_example,
-            min_improvement_pct=min_improvement_pct,
-            max_regression_pct=max_regression_pct,
-        )
+        if do_analyst:
+            analyst_result = _train_one_brain(
+                backend, brain="analyst",
+                incumbent=analyst_incumbent,
+                challenger_tag=f"{analyst_incumbent}-act-{ts}",
+                train_set=train_set, val_set=val_set,
+                format_fn=format_analyst_sft_example,
+                min_improvement_pct=min_improvement_pct,
+                max_regression_pct=max_regression_pct,
+            )
 
         # ── Scanner second ────────────────────────────────────────────
-        scanner_result = _train_one_brain(
-            backend, brain="scanner",
-            incumbent=scanner_incumbent,
-            challenger_tag=f"{scanner_incumbent}-act-{ts}",
-            train_set=train_set, val_set=val_set,
-            format_fn=_format_scanner_safe,
-            min_improvement_pct=min_improvement_pct,
-            max_regression_pct=max_regression_pct,
-        )
+        if do_scanner:
+            scanner_result = _train_one_brain(
+                backend, brain="scanner",
+                incumbent=scanner_incumbent,
+                challenger_tag=f"{scanner_incumbent}-act-{ts}",
+                train_set=train_set, val_set=val_set,
+                format_fn=_format_scanner_safe,
+                min_improvement_pct=min_improvement_pct,
+                max_regression_pct=max_regression_pct,
+            )
 
         return CycleReport(
             started_at=started, finished_at=time.time(),

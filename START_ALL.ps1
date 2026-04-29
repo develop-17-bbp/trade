@@ -507,7 +507,7 @@ if ($env:ACT_REAL_CAPITAL_ENABLED -eq "1") {
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  LAUNCHING 7 PARALLEL PROCESSES ($tier)" -ForegroundColor Cyan
+Write-Host "  LAUNCHING 10 PARALLEL PROCESSES ($tier)" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -592,21 +592,53 @@ if (Test-Path $mcpScript) {
     WARN "scripts\start_mcp.ps1 not found - MCP server NOT started. Claude Code MCP will be unreachable."
 }
 
+# ── 9: Nightly Analyst Fine-Tune (BelowNormal) ──
+# Polls clock every 60s; at ACT_ANALYST_NIGHTLY_HOUR_UTC ± window, fires
+# one analyst-only QLoRA cycle with bot paused. Hard cap: 1 cycle / 24h.
+# Honors ACT_DISABLE_FINETUNE=1.
+STEP 9 "Nightly Analyst Fine-Tune [BelowNormal]"
+$nightlyScript = Join-Path $PSScriptRoot "scripts\nightly_analyst_finetune.py"
+if (Test-Path $nightlyScript) {
+    $p9 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Analyst Nightly Fine-Tune && cd /d $dir && set PYTHONUNBUFFERED=1 && python -m scripts.nightly_analyst_finetune" -PassThru
+    try { $p9.PriorityClass = "BelowNormal" } catch {}
+    Start-Sleep 1
+    OK "Analyst Nightly PID=$($p9.Id)  (fires ~03:00 UTC; ACT_DISABLE_FINETUNE=1 to halt)"
+} else {
+    WARN "scripts\nightly_analyst_finetune.py not found - skipping."
+}
+
+# ── 10: Scanner Adapter Watcher (BelowNormal) ──
+# Polls models/unsloth_adapters/scanner-act-*.ready markers from the 4060
+# upload pipeline. On marker: merge LoRA → GGUF → ollama create → champion
+# gate → hot-swap if promoted. Honors ACT_DISABLE_FINETUNE=1.
+STEP 10 "Scanner Adapter Watcher [BelowNormal]"
+$watcherScript = Join-Path $PSScriptRoot "scripts\scanner_adapter_watcher.py"
+if (Test-Path $watcherScript) {
+    $p10 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Scanner Adapter Watcher && cd /d $dir && set PYTHONUNBUFFERED=1 && python -m scripts.scanner_adapter_watcher" -PassThru
+    try { $p10.PriorityClass = "BelowNormal" } catch {}
+    Start-Sleep 1
+    OK "Watcher PID=$($p10.Id)  (polls every 60s; processes 4060 uploads)"
+} else {
+    WARN "scripts\scanner_adapter_watcher.py not found - skipping."
+}
+
 # ── Summary ──
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "   ALL 8 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
+Write-Host "   ALL 10 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
 Write-Host ""
-Write-Host "   #  Process        Priority      Interval  GPU Use" -ForegroundColor White
-Write-Host "   1  API Server     AboveNormal   always    none" -ForegroundColor White
-Write-Host "   2  Trading Bot    HIGH          always    LLM inference" -ForegroundColor Red
-Write-Host "   3  Adapt Loop     Normal        ${adaptInterval}h        retrain+finetune" -ForegroundColor White
-Write-Host "   4  Auto Loop      Normal        ${autoInterval}h      health check" -ForegroundColor White
-Write-Host "   5  Genetic Loop   BelowNormal   ${geneticInterval}h        CPU backtest" -ForegroundColor White
-Write-Host "   6  Frontend       BelowNormal   always    none" -ForegroundColor White
-Write-Host "   7  Tunnel         Idle          always    none" -ForegroundColor White
-Write-Host "   8  MCP Server     Normal        always    none" -ForegroundColor White
+Write-Host "   #  Process            Priority      Interval  GPU Use" -ForegroundColor White
+Write-Host "   1  API Server         AboveNormal   always    none" -ForegroundColor White
+Write-Host "   2  Trading Bot        HIGH          always    LLM inference" -ForegroundColor Red
+Write-Host "   3  Adapt Loop         Normal        ${adaptInterval}h        retrain" -ForegroundColor White
+Write-Host "   4  Auto Loop          Normal        ${autoInterval}h      health check" -ForegroundColor White
+Write-Host "   5  Genetic Loop       BelowNormal   ${geneticInterval}h        CPU backtest" -ForegroundColor White
+Write-Host "   6  Frontend           BelowNormal   always    none" -ForegroundColor White
+Write-Host "   7  Tunnel             Idle          always    none" -ForegroundColor White
+Write-Host "   8  MCP Server         Normal        always    none" -ForegroundColor White
+Write-Host "   9  Analyst Nightly    BelowNormal   ~03:00UTC analyst QLoRA" -ForegroundColor Cyan
+Write-Host "  10  Scanner Watcher    BelowNormal   60s poll  scanner merge+gate" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "   VRAM: Ollama ~$([math]::Min($gpuVRAM-2, 12))GB | LoRA ~$([math]::Max(2, $gpuVRAM-14))GB | System ~2GB" -ForegroundColor Yellow
 Write-Host "   Dashboard:  http://localhost:5173" -ForegroundColor Green
