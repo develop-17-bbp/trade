@@ -86,6 +86,9 @@ polymarket:
   max_portfolio_exposure_pct: 15   # never >15% of equity on PM markets combined
 exchanges:
 - name: robinhood
+  enabled: true                     # crypto live on the 5090
+  asset_class: CRYPTO
+  venue: robinhood
   assets:
   - BTC
   - ETH
@@ -100,6 +103,34 @@ exchanges:
   trend_only: true
   tf_alignment_override: true
   compound_pct: 50
+- name: alpaca
+  enabled: false                    # 4060 sets ACT_BOX_ROLE=stocks → enabled=true at startup
+  asset_class: STOCK
+  venue: alpaca
+  paper: true                       # paper soak only until ACT_STOCKS_REAL_CAPITAL_ENABLED=1
+  data_feed: iex                    # free-tier IEX; flip to 'sip' on AlgoTrader Plus
+  assets:
+  - SPY                             # 1× S&P 500 — best ETF overall
+  - QQQ                             # 1× Nasdaq-100 — best for higher returns
+  - TQQQ                            # 3× leveraged Nasdaq-100 — aggressive AI thematic, no overnight
+  - SOXL                            # 3× leveraged semis — aggressive AI thematic, no overnight
+  spread_pct_per_side: 0.005        # SIP. IEX paper-soak adjustment in stocks_conviction.
+  round_trip_spread_pct: 0.01
+  min_expected_move_pct: 0.15       # SIP threshold. IEX bumps to 0.25 via stocks_conviction.
+  intraday_position_pct_max: 15     # default for 1× ETFs (SPY/QQQ)
+  overnight_position_pct_max: 5     # default for 1× ETFs
+  leveraged_intraday_pct_max: 5     # TQQQ/SOXL hard cap regardless of conviction
+  leveraged_overnight_pct_max: 0    # TQQQ/SOXL forced flat-by-EOD
+  pre_close_blackout_min: 5         # all symbols
+  leveraged_pre_close_blackout_min: 30  # TQQQ/SOXL only
+  rth_only: true
+  longs_only: false                 # short via inverse ETFs (SOXS/SQQQ); native shorts ETB-gated
+  max_daily_margin_exposure_pct: 200  # post-2026-04-14 PDT replacement
+- name: polymarket
+  enabled: false
+  asset_class: POLYMARKET
+  venue: polymarket
+  shadow_default: true
 exchange:
   name: robinhood
 assets:

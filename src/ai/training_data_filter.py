@@ -112,6 +112,7 @@ class FilterStats:
 def load_experience_samples(
     *,
     asset: Optional[str] = None,
+    asset_class: Optional[str] = None,
     max_age_days: float = DEFAULT_MAX_AGE_DAYS,
     min_pnl_abs_pct: float = DEFAULT_MIN_PNL_ABS_PCT,
     require_matched_thesis: bool = DEFAULT_REQUIRE_MATCHED_THESIS,
@@ -155,10 +156,29 @@ def load_experience_samples(
         if asset:
             query += " AND d.symbol = ? "
             params.append(asset.upper())
+        if asset_class:
+            # The asset_class column was added in a later migration. Older
+            # warm_store deployments may not have it yet; fall back to no-
+            # filter on OperationalError below rather than failing the
+            # whole load.
+            query += " AND d.asset_class = ? "
+            params.append(asset_class.upper())
         cutoff = time.time() - (max_age_days * 86400.0)
         query += " AND o.exit_ts >= ? ORDER BY o.exit_ts DESC LIMIT ?"
         params.extend([cutoff, int(limit)])
-        rows = cur.execute(query, tuple(params)).fetchall()
+        try:
+            rows = cur.execute(query, tuple(params)).fetchall()
+        except sqlite3.OperationalError as e:
+            if asset_class and "no such column" in str(e).lower():
+                logger.debug(
+                    "training_data_filter: asset_class column missing; falling back to symbol-only filter"
+                )
+                # Drop the asset_class clause and retry
+                query = query.replace(" AND d.asset_class = ? ", " ")
+                params = [p for i, p in enumerate(params) if i != (1 if asset else 0)]
+                rows = cur.execute(query, tuple(params)).fetchall()
+            else:
+                raise
     except Exception as e:
         logger.debug("training_data_filter: query failed: %s", e)
         try:

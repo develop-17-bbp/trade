@@ -192,6 +192,7 @@ def run_cycle(
     backend: TrainerBackend,
     *,
     asset: Optional[str] = None,
+    asset_class: Optional[str] = None,
     max_age_days: float = DEFAULT_MAX_AGE_DAYS,
     min_pnl_abs_pct: float = DEFAULT_MIN_PNL_ABS_PCT,
     min_samples: int = DEFAULT_MIN_SAMPLES,
@@ -200,6 +201,8 @@ def run_cycle(
     pause_agentic: bool = True,
     analyst_incumbent: Optional[str] = None,
     scanner_incumbent: Optional[str] = None,
+    analyst_tag_prefix: Optional[str] = None,
+    scanner_tag_prefix: Optional[str] = None,
     brains: Optional[List[str]] = None,
 ) -> CycleReport:
     """Run one full fine-tune cycle: filter → split → train analyst →
@@ -218,7 +221,8 @@ def run_cycle(
             os.environ[DISABLE_AGENTIC_ENV] = "1"
 
         samples, stats = load_experience_samples(
-            asset=asset, max_age_days=max_age_days,
+            asset=asset, asset_class=asset_class,
+            max_age_days=max_age_days,
             min_pnl_abs_pct=min_pnl_abs_pct,
         )
         filter_stats = stats.to_dict() if isinstance(stats, FilterStats) else {}
@@ -252,10 +256,19 @@ def run_cycle(
 
         # ── Analyst first (heavier, more important) ────────────────────
         if do_analyst:
+            # Tag prefix lets the dual-asset 4060 router emit
+            # 'analyst-stocks-act-…' / 'analyst-crypto-act-…' so the 5090
+            # watcher can route promote-on-stocks to ACT_ANALYST_STOCKS_MODEL
+            # vs ACT_ANALYST_MODEL. Crypto-only path keeps the original
+            # `<incumbent>-act-<ts>` shape.
+            a_tag = (
+                f"{analyst_tag_prefix}-act-{ts}"
+                if analyst_tag_prefix else f"{analyst_incumbent}-act-{ts}"
+            )
             analyst_result = _train_one_brain(
                 backend, brain="analyst",
                 incumbent=analyst_incumbent,
-                challenger_tag=f"{analyst_incumbent}-act-{ts}",
+                challenger_tag=a_tag,
                 train_set=train_set, val_set=val_set,
                 format_fn=format_analyst_sft_example,
                 min_improvement_pct=min_improvement_pct,
@@ -264,10 +277,14 @@ def run_cycle(
 
         # ── Scanner second ────────────────────────────────────────────
         if do_scanner:
+            s_tag = (
+                f"{scanner_tag_prefix}-act-{ts}"
+                if scanner_tag_prefix else f"{scanner_incumbent}-act-{ts}"
+            )
             scanner_result = _train_one_brain(
                 backend, brain="scanner",
                 incumbent=scanner_incumbent,
-                challenger_tag=f"{scanner_incumbent}-act-{ts}",
+                challenger_tag=s_tag,
                 train_set=train_set, val_set=val_set,
                 format_fn=_format_scanner_safe,
                 min_improvement_pct=min_improvement_pct,

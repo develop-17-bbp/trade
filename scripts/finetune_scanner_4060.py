@@ -60,6 +60,26 @@ ADAPTER_DIR = REPO_ROOT / "models" / "unsloth_adapters"
 DATA_DIR = REPO_ROOT / "data"
 LOG_DIR = REPO_ROOT / "logs" / "fine_tune"
 
+
+def _asset_class_paths(asset_class: str) -> Dict[str, Path]:
+    """Per-class lock + last-ids marker so crypto and stocks cycles
+    don't clobber each other when the router schedules them in the
+    same outside-RTH window."""
+    cls = (asset_class or "CRYPTO").upper()
+    suffix = "stocks" if cls == "STOCK" else "crypto"
+    return {
+        "lock":     REPO_ROOT / "scripts" / f".{suffix}_train.lock",
+        "last_ids": REPO_ROOT / "scripts" / f".last_{suffix}_train_ids.json",
+    }
+
+
+def _tag_prefix(asset_class: str) -> str:
+    """Output adapter prefix — `scanner-crypto-act-<ts>` vs
+    `scanner-stocks-act-<ts>`. The 5090 watcher picks adapter type
+    from the prefix to route to the right ACT_*_SCANNER_MODEL env."""
+    cls = (asset_class or "CRYPTO").upper()
+    return "scanner-stocks" if cls == "STOCK" else "scanner-crypto"
+
 DEFAULT_INTERVAL_H = float(os.getenv("ACT_SCANNER_FINETUNE_INTERVAL_H", "3.0"))
 SCANNER_BASE = os.getenv("ACT_SCANNER_BASE_MODEL", "qwen2.5-coder:7b")
 MIN_NEW_SAMPLES = int(os.getenv("ACT_SCANNER_MIN_NEW_SAMPLES", "30"))
@@ -197,7 +217,12 @@ def _write_last_ids(ids: Set[str]) -> None:
 
 
 def _count_new_samples(asset_filter: Optional[str] = None) -> tuple[int, Set[str]]:
-    """Return (n_new, all_ids) where n_new is the count not seen in the last run."""
+    """Return (n_new, all_ids) where n_new is the count not seen in the last run.
+
+    Crypto-only legacy entrypoint — preserves the original signature for
+    any test or runner that imported it directly. New callers should use
+    _count_new_samples_for_class() which is asset_class-aware.
+    """
     try:
         from src.ai.training_data_filter import load_experience_samples
         samples, _stats = load_experience_samples(
@@ -210,6 +235,40 @@ def _count_new_samples(asset_filter: Optional[str] = None) -> tuple[int, Set[str
     except Exception as e:
         logger.warning("sample count failed: %s", e)
         return 0, set()
+
+
+def _count_new_samples_for_class(asset_class: str) -> tuple[int, Set[str]]:
+    """Asset-class-aware sample counter. Reads the per-class last-IDs marker
+    so a stocks cycle's progress doesn't decrement crypto's count and vice
+    versa.
+    """
+    paths = _asset_class_paths(asset_class)
+    last_ids_file = paths["last_ids"]
+    try:
+        from src.ai.training_data_filter import load_experience_samples
+        samples, _stats = load_experience_samples(
+            asset_class=asset_class, max_age_days=14.0, min_pnl_abs_pct=0.3,
+        )
+        all_ids = {s.decision_id for s in samples}
+        prev: Set[str] = set()
+        if last_ids_file.exists():
+            try:
+                prev = set(json.loads(last_ids_file.read_text(encoding="utf-8")) or [])
+            except Exception:
+                prev = set()
+        n_new = len(all_ids - prev)
+        return n_new, all_ids
+    except Exception as e:
+        logger.warning("sample count failed for %s: %s", asset_class, e)
+        return 0, set()
+
+
+def _write_last_ids_for_class(asset_class: str, ids: Set[str]) -> None:
+    paths = _asset_class_paths(asset_class)
+    try:
+        paths["last_ids"].write_text(json.dumps(sorted(ids))[:5_000_000], encoding="utf-8")
+    except Exception as e:
+        logger.debug("last_ids write failed: %s", e)
 
 
 def _tar_adapter_dir(out_tag: str) -> Optional[Path]:
@@ -273,11 +332,20 @@ def _upload_and_signal(host: str, remote_dir: str, archive: Path, out_tag: str) 
         return False
 
 
-def _run_one_cycle(dry_run: bool) -> Dict[str, Any]:
-    """One full cycle. Returns a result dict for the audit log."""
+def _run_one_cycle(dry_run: bool, asset_class: str = "CRYPTO") -> Dict[str, Any]:
+    """One full cycle. Returns a result dict for the audit log.
+
+    `asset_class` (CRYPTO/STOCK) selects the warm_store filter, the
+    output tag prefix, and the per-class lock/marker files so the
+    router can interleave crypto + stocks cycles outside RTH without
+    conflicts. Defaults to CRYPTO so existing crypto-only invocations
+    continue to work unchanged.
+    """
     cycle_started = time.time()
+    asset_class = (asset_class or "CRYPTO").upper()
     summary: Dict[str, Any] = {
         "started_at": cycle_started,
+        "asset_class": asset_class,
         "dry_run": dry_run,
         "ok": False,
         "skipped_reason": None,
@@ -305,10 +373,10 @@ def _run_one_cycle(dry_run: bool) -> Dict[str, Any]:
         summary["skipped_reason"] = "warm_store_pull_failed"
         return summary
 
-    n_new, all_ids = _count_new_samples()
+    n_new, all_ids = _count_new_samples_for_class(asset_class)
     summary["n_new_samples"] = n_new
     if n_new < MIN_NEW_SAMPLES:
-        summary["skipped_reason"] = f"only {n_new} new samples (< {MIN_NEW_SAMPLES})"
+        summary["skipped_reason"] = f"only {n_new} new {asset_class} samples (< {MIN_NEW_SAMPLES})"
         return summary
 
     # ── Run the cycle ───────────────────────────────────────────────────
@@ -324,12 +392,14 @@ def _run_one_cycle(dry_run: bool) -> Dict[str, Any]:
             return summary
 
     ts = int(time.time())
-    expected_tag = f"{SCANNER_BASE}-act-{ts}"
-    logger.info("starting scanner-only cycle → %s", expected_tag)
+    prefix = _tag_prefix(asset_class)   # 'scanner-crypto' | 'scanner-stocks'
+    expected_tag = f"{prefix}-act-{ts}"
+    logger.info("starting %s scanner cycle → %s", asset_class, expected_tag)
 
     report = run_cycle(
         backend, brains=["scanner"], pause_agentic=False,
         scanner_incumbent=SCANNER_BASE,
+        scanner_tag_prefix=prefix,
     )
     summary["report"] = report.to_dict()
     persist_report(report)
@@ -344,7 +414,7 @@ def _run_one_cycle(dry_run: bool) -> Dict[str, Any]:
         summary["ok"] = True
         summary["out_tag"] = out_tag
         summary["note"] = "dry-run skipped upload"
-        _write_last_ids(all_ids)
+        _write_last_ids_for_class(asset_class, all_ids)
         return summary
 
     # ── Pack + upload + signal the 5090 watcher ────────────────────────
@@ -363,7 +433,7 @@ def _run_one_cycle(dry_run: bool) -> Dict[str, Any]:
     except Exception:
         pass
 
-    _write_last_ids(all_ids)
+    _write_last_ids_for_class(asset_class, all_ids)
     summary["ok"] = True
     summary["out_tag"] = out_tag
     summary["duration_s"] = round(time.time() - cycle_started, 1)
@@ -389,6 +459,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true", help="single iteration then exit")
     ap.add_argument("--dry-run", action="store_true", help="stub backend, no GPU")
+    ap.add_argument(
+        "--asset-class", default="CRYPTO", choices=["CRYPTO", "STOCK"],
+        help="warm_store asset_class filter; selects tag prefix + per-class lock + last-ids marker (default: CRYPTO for back-compat)",
+    )
     args = ap.parse_args()
 
     _setup_logging()
@@ -400,10 +474,12 @@ def main() -> int:
     try:
         while True:
             try:
-                summary = _run_one_cycle(args.dry_run)
+                summary = _run_one_cycle(args.dry_run, asset_class=args.asset_class)
             except Exception as e:
                 logger.exception("cycle exception: %s", e)
-                summary = {"started_at": time.time(), "ok": False, "skipped_reason": f"exception: {e}"}
+                summary = {"started_at": time.time(), "ok": False,
+                           "asset_class": args.asset_class,
+                           "skipped_reason": f"exception: {e}"}
             _persist_summary(summary)
             logger.info("cycle complete: ok=%s reason=%s", summary.get("ok"), summary.get("skipped_reason"))
             if args.once:

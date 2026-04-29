@@ -83,12 +83,19 @@ def _read_metadata(adapter_dir: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _build_validation(n: int) -> List[Dict[str, Any]]:
-    """Pull the last N filtered scanner-relevant samples from warm_store."""
+def _build_validation(n: int, asset_class: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Pull the last N filtered scanner-relevant samples from warm_store.
+
+    `asset_class` partitions the validation set so a stocks adapter is
+    evaluated only on STOCK rows and a crypto adapter only on CRYPTO
+    rows — without this filter, champion gate would mix asset-class
+    accuracy and silently approve stocks adapters that happen to trade
+    well on crypto data."""
     try:
         from src.ai.training_data_filter import load_experience_samples
         samples, _ = load_experience_samples(
-            asset=None, max_age_days=7.0, min_pnl_abs_pct=0.3,
+            asset=None, asset_class=asset_class,
+            max_age_days=7.0, min_pnl_abs_pct=0.3,
         )
         return [s.to_dict() for s in samples[-n:]]
     except Exception as e:
@@ -173,13 +180,24 @@ def _evaluate_and_swap(out_tag: str, dry_run: bool) -> Dict[str, Any]:
     """Run champion_gate, hot-swap if promote=True. Returns audit dict."""
     audit: Dict[str, Any] = {"out_tag": out_tag, "dry_run": dry_run}
 
-    val = _build_validation(MAX_VAL_SAMPLES)
+    # Phase D dual-asset: route by adapter prefix.
+    #   scanner-stocks-act-* → stocks adapter, validate on STOCK rows,
+    #     promote sets ACT_STOCKS_SCANNER_MODEL on the 4060 over Tailscale.
+    #   scanner-crypto-act-* (or legacy scanner-act-*) → crypto adapter,
+    #     validate on CRYPTO rows, promote sets ACT_SCANNER_MODEL locally.
+    is_stocks = out_tag.startswith("scanner-stocks-")
+    asset_class_filter = "STOCK" if is_stocks else "CRYPTO"
+    audit["asset_class"] = asset_class_filter
+
+    val = _build_validation(MAX_VAL_SAMPLES, asset_class=asset_class_filter)
     audit["validation_n"] = len(val)
     if len(val) < 5:
-        audit["error"] = "insufficient_validation_samples"
+        audit["error"] = f"insufficient_validation_samples_{asset_class_filter.lower()}"
         return audit
 
-    incumbent = os.getenv("ACT_SCANNER_MODEL") or SCANNER_BASE
+    incumbent = (
+        os.getenv("ACT_STOCKS_SCANNER_MODEL") if is_stocks else os.getenv("ACT_SCANNER_MODEL")
+    ) or SCANNER_BASE
 
     if dry_run:
         audit["promote"] = False
@@ -207,16 +225,54 @@ def _evaluate_and_swap(out_tag: str, dry_run: bool) -> Dict[str, Any]:
 
     if audit["promote"]:
         try:
-            from src.ai.dual_brain_trainer import _hot_swap
-            err = _hot_swap("scanner", out_tag)
-            audit["swap_error"] = err
-            if not err:
-                logger.info("PROMOTED scanner adapter %s — bot reads next tick", out_tag)
+            if is_stocks:
+                # Cross-box hot-swap: 4060 owns the live stocks model env.
+                err = _cross_box_hot_swap_stocks(out_tag)
+                audit["swap_error"] = err
+                if not err:
+                    logger.info(
+                        "PROMOTED stocks scanner adapter %s on the 4060 (cross-box ssh)",
+                        out_tag,
+                    )
+            else:
+                from src.ai.dual_brain_trainer import _hot_swap
+                err = _hot_swap("scanner", out_tag)
+                audit["swap_error"] = err
+                if not err:
+                    logger.info(
+                        "PROMOTED crypto scanner adapter %s — bot reads next tick", out_tag,
+                    )
         except Exception as e:
             logger.exception("hot-swap failed: %s", e)
             audit["swap_error"] = str(e)
 
     return audit
+
+
+def _cross_box_hot_swap_stocks(out_tag: str) -> str:
+    """SSH to the 4060 (over Tailscale) and set ACT_STOCKS_SCANNER_MODEL.
+
+    The 4060 is the live stocks-trading box; the env var swap is what
+    flips the next agentic-loop tick to use the new adapter. Returns
+    "" on success, error string otherwise.
+    """
+    peer = os.getenv("ACT_4060_SSH_HOST") or os.getenv("ACT_STOCKS_SSH_HOST")
+    if not peer:
+        return "ACT_4060_SSH_HOST not set"
+    import subprocess
+    cmd = [
+        "ssh", peer,
+        f"powershell.exe -Command \"setx ACT_STOCKS_SCANNER_MODEL '{out_tag}'\"",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return f"ssh setx failed rc={result.returncode}: {result.stderr.strip()[:200]}"
+        return ""
+    except subprocess.TimeoutExpired:
+        return "ssh timeout"
+    except Exception as e:
+        return f"ssh exception: {e}"
 
 
 def _process_marker(marker: Path, dry_run: bool) -> Dict[str, Any]:

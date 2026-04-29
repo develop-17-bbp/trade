@@ -71,6 +71,16 @@ google-genai>=1.0.0
 # Security
 cryptography==46.0.5
 
+# Dual-asset (Phase B/C/D — stocks ACT on the 4060)
+# alpaca-py is the official Anthropic-style SDK; we use alpaca-trade-api for the
+# AlpacaClient in src/data/fetcher.py + raw REST for AlpacaFetcher.
+# pandas_market_calendars provides the live NYSE schedule with holidays + early closes;
+# src/utils/market_hours.py falls back to a hardcoded 2026 list if missing.
+# pyarrow drives compact parquet deltas for warm_store_sync; falls back to JSON.
+alpaca-py>=0.30.0
+pandas_market_calendars>=4.4.0
+pyarrow>=18.0.0
+
 # Optional (install manually if needed):
 # pytorch-forecasting  # Requires specific torch version
 # peft                 # LoRA fine-tuning
