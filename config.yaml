@@ -109,11 +109,28 @@ exchanges:
   venue: alpaca
   paper: true                       # paper soak only until ACT_STOCKS_REAL_CAPITAL_ENABLED=1
   data_feed: iex                    # free-tier IEX; flip to 'sip' on AlgoTrader Plus
+  # Active 1-minute trading basket — these get the full agentic pipeline
+  # (scanner → analyst → conviction gate → executor with EMA trailing SL).
+  # Watchlist scanner (src/trading/watchlist_scanner.py) screens 100
+  # large-caps every 5 minutes and surfaces candidates to the analyst.
   assets:
-  - SPY                             # 1× S&P 500 — best ETF overall
-  - QQQ                             # 1× Nasdaq-100 — best for higher returns
-  - TQQQ                            # 3× leveraged Nasdaq-100 — aggressive AI thematic, no overnight
-  - SOXL                            # 3× leveraged semis — aggressive AI thematic, no overnight
+  - SPY                             # 1× S&P 500 anchor — tightest spreads
+  - QQQ                             # 1× Nasdaq-100 anchor — higher growth tilt
+  - NVDA                            # AI thematic mega-cap
+  - AVGO                            # AI thematic — semis, AI infra
+  - AMD                             # AI thematic — semis
+  - MSFT                            # AI thematic — Azure, Copilot
+  - GOOGL                           # AI thematic — Gemini, GCP
+  - META                            # AI thematic — Llama, MTI
+  - TSLA                            # high-vol playable single-name
+  - AMZN                            # high-vol playable single-name
+  - TQQQ                            # 3× leveraged Nasdaq-100 — intraday only, decay
+  - SOXL                            # 3× leveraged semis — intraday only, decay
+  watchlist:                        # screened every 5min; top N escalate to active pipeline
+    enabled: true
+    scan_interval_s: 300
+    top_n_per_cycle: 10
+    min_score: 1.5                  # filter noise; >=1.0% move OR 1.5x vol typically clears
   spread_pct_per_side: 0.005        # SIP. IEX paper-soak adjustment in stocks_conviction.
   round_trip_spread_pct: 0.01
   min_expected_move_pct: 0.15       # SIP threshold. IEX bumps to 0.25 via stocks_conviction.

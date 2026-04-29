@@ -968,7 +968,29 @@ class PriceFetcher:
             return {'last': 0.0, 'bid': 0.0, 'ask': 0.0}
 
     def fetch_latest_price(self, symbol: str) -> Optional[float]:
-        """Fetch current price. Priority: Bybit → LiveCoinWatch → Alpaca → CCXT."""
+        """Fetch current price. Priority: Bybit → LiveCoinWatch → Alpaca → CCXT.
+
+        For stocks (alpaca venue), goes straight to AlpacaFetcher's stock-
+        ticker path — AlpacaClient.fetch_crypto_price doesn't handle equity
+        symbols. Without this, _close_position falls back to CCXT/Kraken
+        for SPY which fails.
+        """
+        if 'alpaca' in self.exchange_name and symbol.upper() in (
+            'SPY', 'QQQ', 'TQQQ', 'SOXL', 'UPRO', 'SQQQ', 'SOXS', 'IWM', 'DIA',
+        ) or (
+            'alpaca' in self.exchange_name and not any(c in symbol for c in '/:USDT')
+        ):
+            try:
+                from src.data.alpaca_fetcher import AlpacaFetcher
+                if not hasattr(self, '_alpaca_data_fetcher'):
+                    self._alpaca_data_fetcher = AlpacaFetcher(paper=True)
+                snap = self._alpaca_data_fetcher.fetch_ticker(symbol)
+                last = snap.get('last') or snap.get('mid')
+                if last and last > 0:
+                    return float(last)
+            except Exception as e:
+                logger.debug("Alpaca fetch_latest_price routing failed for %s: %s", symbol, e)
+
         # 1. Bybit (if connected — fastest for futures)
         if self.bybit and self.bybit.available:
             price = self.bybit.fetch_crypto_price(symbol)
@@ -981,7 +1003,7 @@ class PriceFetcher:
             if price and price > 0:
                 return price
 
-        # 3. Alpaca data API
+        # 3. Alpaca data API (crypto-only path)
         if self.alpaca and self.alpaca.available:
             price = self.alpaca.fetch_crypto_price(symbol)
             if price and price > 0:
@@ -1005,6 +1027,31 @@ class PriceFetcher:
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = '1d',
                      limit: int = 100) -> List[List[float]]:
+        # Alpaca/stocks routing: when this PriceFetcher was initialised for
+        # the alpaca venue, the CCXT fallback exchange is Kraken (read-only
+        # crypto data). Calling Kraken with 'SPY/USDT:USDT' fails. Route
+        # stocks bars through AlpacaFetcher instead, which hits Alpaca's
+        # data.alpaca.markets v2 endpoint and returns the same [ts, o, h,
+        # l, c, v] shape the executor expects (executor reads ts as ms).
+        if 'alpaca' in self.exchange_name:
+            try:
+                from src.data.alpaca_fetcher import AlpacaFetcher
+                # Cache the AlpacaFetcher on self so we don't construct it
+                # on every bar fetch (the auth probe is ~200ms).
+                if not hasattr(self, '_alpaca_data_fetcher'):
+                    self._alpaca_data_fetcher = AlpacaFetcher(paper=True)
+                rows = self._alpaca_data_fetcher.fetch_ohlcv(
+                    symbol, timeframe=timeframe, limit=limit,
+                )
+                # AlpacaFetcher returns ts in nanoseconds; CCXT/executor
+                # expects milliseconds. Normalise here so the SL/EMA-trail
+                # bookkeeping downstream works identically.
+                return [[int(r[0] / 1e6)] + [float(x) for x in r[1:]] for r in rows]
+            except Exception as e:
+                logger.debug("Alpaca fetch_ohlcv routing failed for %s: %s", symbol, e)
+                # Don't raise — let the CCXT fallback try (may also fail
+                # for stock tickers, but at least we don't double-error).
+
         if not self._available:
             raise RuntimeError("Exchange not available")
         if not hasattr(self.exchange, 'fetch_ohlcv'):
