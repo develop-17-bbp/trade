@@ -4336,6 +4336,41 @@ class TradingExecutor:
                     # rejected before they eat spread.
                     print(f"  [{self._ex_tag}:{asset}] CONVICTION REJECT: "
                           f"tier=reject  reasons={_conv.reasons}")
+                    # Persist the rejection so /diagnose-noop and silence_watchdog
+                    # can answer "why no trades" with concrete numbers. Without this
+                    # row, conviction rejections are invisible to anything reading
+                    # warm_store — they just silently drop the bot below the trade
+                    # rate operator expects.
+                    try:
+                        from src.orchestration.warm_store import get_store as _get_warm
+                        import uuid as _uuid_cr
+                        import time as _time_cr
+                        _get_warm().write_decision({
+                            "decision_id": f"conviction-reject-{_uuid_cr.uuid4().hex}",
+                            "symbol": asset,
+                            "ts_ns": _time_cr.time_ns(),
+                            "direction": {"LONG": 1, "SHORT": -1}.get(_direction, 0),
+                            "confidence": 0.0,
+                            "final_action": "CONVICTION_REJECT",
+                            "consensus": "conviction_gate",
+                            "veto": True,
+                            "component_signals": {
+                                "source": "conviction_gate",
+                                "tier": _conv.tier,
+                                "reasons": list(_conv.reasons or []),
+                                "checks": dict(_conv.checks or {}),
+                                "direction": _direction,
+                                "tf_1h": htf_1h_direction,
+                                "tf_4h": htf_4h_direction,
+                                "hurst_regime": _regime,
+                                "multi_strategy_long": _ms_long,
+                                "multi_strategy_short": _ms_short,
+                                "macro_signed_bias": float(_macro.signed_bias) if _macro else 0.0,
+                                "macro_crisis": bool(_macro.crisis) if _macro else False,
+                            },
+                        })
+                    except Exception as _wse:
+                        logger.debug("[HARDEN] conviction-reject warm_store write failed: %s", _wse)
                     return
 
                 print(f"  [{self._ex_tag}:{asset}] CONVICTION PASS: tier={_conv.tier} "
@@ -10342,6 +10377,11 @@ Respond ONLY with JSON:
                     "source": "agentic_shadow",
                     "steps_taken": result.steps_taken,
                     "terminated_reason": result.terminated_reason,
+                    # Phase D.4 wiring: surface the actual scanner/analyst
+                    # skip-reason text so /diagnose-noop can group rejections
+                    # by literal cause ("low_vol", "macro_crisis", etc.) not
+                    # just by 'skip' / 'max_steps' label.
+                    "skip_reason": getattr(result, "terminated_reason_text", "") or "",
                     "tool_calls": [t.get("name") for t in result.tool_calls],
                     # C17 tick telemetry:
                     "scanner_published": bool(tick_summary.get("scanner_published")),

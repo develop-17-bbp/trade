@@ -88,10 +88,21 @@ _SCHEMA = [
 #                     (multi_strategy / lgbm / lora / llm_agentic / rl)
 # plan_json         → the compiled TradePlan (M1) for post-hoc audit
 # self_critique     → second-LLM verification written at trade close (Phase 5a)
+# asset_class       → CRYPTO / STOCK / POLYMARKET — partitions warm_store
+#                     so finetune corpus filter + readiness gate run per class
+#                     (dual-asset extension, Phase B.2)
+# venue             → 'robinhood' / 'alpaca' / 'polymarket' — concrete venue,
+#                     finer-grained than asset_class for cost-modelling.
 _MIGRATIONS = [
     "ALTER TABLE decisions ADD COLUMN component_signals TEXT DEFAULT '{}'",
     "ALTER TABLE decisions ADD COLUMN plan_json TEXT DEFAULT '{}'",
     "ALTER TABLE decisions ADD COLUMN self_critique TEXT DEFAULT '{}'",
+    "ALTER TABLE decisions ADD COLUMN asset_class TEXT DEFAULT 'CRYPTO'",
+    "ALTER TABLE decisions ADD COLUMN venue       TEXT DEFAULT 'robinhood'",
+    "ALTER TABLE outcomes  ADD COLUMN asset_class TEXT DEFAULT 'CRYPTO'",
+    "ALTER TABLE outcomes  ADD COLUMN venue       TEXT DEFAULT 'robinhood'",
+    "CREATE INDEX IF NOT EXISTS idx_decisions_asset_class ON decisions(asset_class)",
+    "CREATE INDEX IF NOT EXISTS idx_outcomes_asset_class  ON outcomes(asset_class)",
 ]
 
 
@@ -139,6 +150,10 @@ class WarmStore:
 
     def write_decision(self, decision: Dict[str, Any]) -> None:
         """Append a decision row. Buffered — flushes on batch size or timeout."""
+        # Default asset_class/venue to 'CRYPTO'/'robinhood' for back-compat
+        # with all callsites that haven't been updated to pass it explicitly.
+        # Stocks executor passes 'STOCK'/'alpaca'; polymarket passes
+        # 'POLYMARKET'/'polymarket'. Phase B.2 of the dual-asset rollout.
         row = (
             decision.get("decision_id"),
             decision.get("trace_id"),
@@ -155,6 +170,8 @@ class WarmStore:
             json.dumps(decision.get("component_signals") or {}, default=str),
             json.dumps(decision.get("plan") or {}, default=str),
             json.dumps(decision.get("self_critique") or {}, default=str),
+            str(decision.get("asset_class") or "CRYPTO"),
+            str(decision.get("venue")       or "robinhood"),
         )
         with self._lock:
             self._pending_decisions.append(row)
@@ -193,6 +210,8 @@ class WarmStore:
             float(outcome.get("entry_ts", 0.0) or 0.0),
             float(outcome.get("exit_ts", time.time()) or 0.0),
             json.dumps(outcome, default=str),
+            str(outcome.get("asset_class") or "CRYPTO"),
+            str(outcome.get("venue")       or "robinhood"),
         )
         with self._lock:
             self._pending_outcomes.append(row)
@@ -255,16 +274,17 @@ class WarmStore:
                     """INSERT OR REPLACE INTO decisions
                        (decision_id, trace_id, symbol, ts_ns, direction, confidence, consensus,
                         veto, raw_signal, final_action, authority_violations, payload_json,
-                        component_signals, plan_json, self_critique)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        component_signals, plan_json, self_critique, asset_class, venue)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     self._pending_decisions,
                 )
             if self._pending_outcomes:
                 conn.executemany(
                     """INSERT INTO outcomes
                        (decision_id, symbol, direction, entry_price, exit_price, pnl_pct, pnl_usd,
-                        duration_s, exit_reason, regime, entry_ts, exit_ts, payload_json)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        duration_s, exit_reason, regime, entry_ts, exit_ts, payload_json,
+                        asset_class, venue)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     self._pending_outcomes,
                 )
             conn.commit()

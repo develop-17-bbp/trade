@@ -102,6 +102,30 @@ def _count_trades_and_age(path: str) -> Tuple[int, float]:
         return 0, 0.0
 
 
+def _last_order_age_seconds(path: str) -> float:
+    """Seconds since the most-recent outcome's entry. -1.0 if none / db missing.
+
+    Phase D.4 wiring: gives /readiness an advisory `last_order_age_s`
+    metric so the operator notices when the bot has been silent for
+    hours. Paper soak can legitimately go quiet (low-vol days), so this
+    is informational, not a hard gate.
+    """
+    if not os.path.exists(path):
+        return -1.0
+    try:
+        conn = sqlite3.connect(path, timeout=2.0)
+        cur = conn.execute("SELECT MAX(entry_ts) FROM outcomes")
+        row = cur.fetchone()
+        conn.close()
+        latest = float(row[0] or 0.0) if row else 0.0
+        if latest <= 0:
+            return -1.0
+        return max(0.0, time.time() - latest)
+    except Exception as e:
+        logger.debug("readiness_gate: last-order probe failed: %s", e)
+        return -1.0
+
+
 def _count_violations_last_1000(path: str) -> Tuple[int, int]:
     """(violations, decisions_checked) over most recent 1000 decisions."""
     if not os.path.exists(path):
@@ -174,6 +198,21 @@ def evaluate() -> GateState:
         reasons.append(f"trades {n} < required {t['MIN_TRADES']}")
     if age_days < t["MIN_SOAK_DAYS"]:
         reasons.append(f"soak age {age_days:.1f}d < required {t['MIN_SOAK_DAYS']:.1f}d")
+
+    # Phase D.4: surface last-order age as an advisory readiness metric.
+    # Threshold differs by class — stocks have RTH (~6.5h/day) so 6h is the
+    # right yellow line; crypto runs 24/7 so 24h is the right yellow.
+    # Operator can override via ACT_GATE_LAST_ORDER_AGE_MAX_S.
+    last_age_s = _last_order_age_seconds(path)
+    details["last_order_age_s"] = -1 if last_age_s < 0 else int(last_age_s)
+    last_age_max_default = 24 * 3600.0  # 24h default; stocks-role launcher overrides via env
+    last_age_max = float(os.getenv("ACT_GATE_LAST_ORDER_AGE_MAX_S", str(last_age_max_default)))
+    details["last_order_age_max_s"] = int(last_age_max)
+    if last_age_s < 0:
+        details["last_order_age_ok"] = False
+        # Don't append to reasons — never-traded is the paper-soak default.
+    else:
+        details["last_order_age_ok"] = last_age_s <= last_age_max
 
     violations, checked = _count_violations_last_1000(path)
     rate = (violations / checked) if checked else 0.0

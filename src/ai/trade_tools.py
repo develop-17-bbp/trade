@@ -51,6 +51,151 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_OUTPUT_CHARS = 1200
 
 
+# ── Tool input schema validation ─────────────────────────────────────────
+#
+# LLM tool calls hallucinate arg types ~15-52% of the time in production
+# (April 2026 ICLR). Today the per-tool handlers each defend with ad-hoc
+# coercion (`str(args.get('asset') or 'BTC').upper()` etc.) which is
+# robust but scattered, and silently turns garbage into a default rather
+# than telling the LLM it sent garbage.
+#
+# This validator catches the most common LLM failure shapes — wrong type,
+# missing required, out-of-range numeric, out-of-enum string — at the
+# dispatch boundary, returns a structured error to the LLM so its next
+# ReAct turn can correct, and bumps a counter so /status can surface
+# `tool_call_schema_violation_rate`. Designed to be lenient on shapes
+# the existing handlers tolerate (e.g. "asset" passed as int gets
+# coerced to string), aggressive on shapes that genuinely break (e.g.
+# a tool that needs an array gets a string).
+
+_SCHEMA_VIOLATIONS: int = 0
+_TOOL_DISPATCHES: int = 0
+
+
+def schema_violation_rate() -> Dict[str, Any]:
+    """Report the running tool-call schema violation rate. /status
+    surfaces this; target < 5%, alert threshold ~10% sustained."""
+    rate = (_SCHEMA_VIOLATIONS / _TOOL_DISPATCHES) if _TOOL_DISPATCHES else 0.0
+    return {
+        "violations": _SCHEMA_VIOLATIONS,
+        "dispatches": _TOOL_DISPATCHES,
+        "rate":        round(rate, 4),
+    }
+
+
+def _coerce_scalar(value: Any, expected_type: str) -> Optional[Any]:
+    """Best-effort coercion of LLM-emitted values to JSON Schema types.
+    Returns None on irrecoverable mismatch (caller treats as violation)."""
+    if expected_type == "string":
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        return None
+    if expected_type == "integer":
+        if isinstance(value, bool):  # bool is int in Python; reject silently
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+        return None
+    if expected_type == "number":
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+        return None
+    if expected_type == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in ("true", "false"):
+            return value.lower() == "true"
+        return None
+    if expected_type == "array":
+        return value if isinstance(value, list) else None
+    if expected_type == "object":
+        return value if isinstance(value, dict) else None
+    # Unknown type — accept as-is.
+    return value
+
+
+def _validate_input_schema(args: Dict[str, Any], schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """JSON-Schema-flavoured validator for the subset of constructs ACT
+    tools actually use: type, properties{type/enum/minimum/maximum},
+    required. Returns None on pass; on fail returns a digest error dict
+    suitable for the LLM tool_result payload.
+
+    Coerces in place — `args` may be mutated to canonical types so the
+    handler downstream sees clean data."""
+    if not isinstance(schema, dict):
+        return None  # No schema → nothing to check.
+    props = schema.get("properties") or {}
+    required = schema.get("required") or []
+
+    # Required-field check
+    for name in required:
+        if name not in args:
+            return {
+                "error": "schema_violation",
+                "field": name,
+                "detail": f"required field {name!r} missing",
+            }
+
+    # Per-field type + enum + range
+    for name, spec in props.items():
+        if name not in args:
+            continue
+        if not isinstance(spec, dict):
+            continue
+        expected_type = spec.get("type")
+        if expected_type:
+            coerced = _coerce_scalar(args[name], expected_type)
+            if coerced is None:
+                return {
+                    "error": "schema_violation",
+                    "field": name,
+                    "detail": f"expected type {expected_type!r}, got {type(args[name]).__name__}",
+                }
+            args[name] = coerced
+        # enum
+        enum_vals = spec.get("enum")
+        if enum_vals and args[name] not in enum_vals:
+            return {
+                "error": "schema_violation",
+                "field": name,
+                "detail": f"value {args[name]!r} not in {enum_vals}",
+            }
+        # numeric bounds
+        if expected_type in ("integer", "number"):
+            mn = spec.get("minimum")
+            mx = spec.get("maximum")
+            if mn is not None and args[name] < mn:
+                return {
+                    "error": "schema_violation",
+                    "field": name,
+                    "detail": f"value {args[name]} < minimum {mn}",
+                }
+            if mx is not None and args[name] > mx:
+                return {
+                    "error": "schema_violation",
+                    "field": name,
+                    "detail": f"value {args[name]} > maximum {mx}",
+                }
+
+    return None
+
+
 @dataclass
 class Tool:
     """Single LLM-callable tool.
@@ -138,6 +283,22 @@ class ToolRegistry:
             return json.dumps({"error": f"unknown tool {name!r}"})
 
         args = dict(args or {})
+
+        # Bump dispatch counter once per call, even if cache-hit later.
+        # Counters drive `/status` reporting of tool_call_schema_violation_rate
+        # so the operator can spot a regressing analyst prompt or model swap.
+        global _TOOL_DISPATCHES, _SCHEMA_VIOLATIONS
+        _TOOL_DISPATCHES += 1
+
+        # Schema validation at the dispatch boundary — see _validate_input_schema.
+        viol = _validate_input_schema(args, tool.input_schema)
+        if viol is not None:
+            _SCHEMA_VIOLATIONS += 1
+            logger.debug(
+                "tool %s schema_violation: %s (args=%s)",
+                name, viol.get("detail"), args,
+            )
+            return json.dumps(viol)
 
         # Per-tick memoization: skip re-execution when same (name, args)
         # was called earlier in the same tick. Write tools (tag='write')

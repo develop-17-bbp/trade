@@ -23,6 +23,34 @@ from src.agents.debate_engine import DebateEngine
 logger = logging.getLogger(__name__)
 
 
+# Process-local cache of the most-recent (asset → {agent_name: AgentVote}).
+# Populated at the end of every run_cycle so context builders, debug skills,
+# and the analyst seed-context block can pull individual agent rationale
+# without re-running the orchestrator. Survives one tick at a time — gets
+# overwritten on the next cycle for the same asset. Bounded by asset count
+# (typically 2-7), no need for an LRU.
+_LATEST_VOTES_BY_ASSET: Dict[str, Dict[str, "AgentVote"]] = {}
+_LATEST_VOTES_TS: Dict[str, float] = {}
+
+
+def latest_votes(asset: str) -> Optional[Dict[str, "AgentVote"]]:
+    """Return the most-recent per-agent vote map for asset, or None.
+
+    Used by `src/ai/context_builders.py::_agent_votes_block` to seed the
+    analyst LLM with individual agent rationale without forcing it to
+    spend a ReAct turn calling each `ask_<agent>` tool. Wiring repair from
+    Phase D.4 of the dual-asset plan."""
+    return _LATEST_VOTES_BY_ASSET.get(asset.upper())
+
+
+def latest_votes_age_s(asset: str) -> Optional[float]:
+    """Seconds since the last run_cycle for `asset`, or None if never run."""
+    ts = _LATEST_VOTES_TS.get(asset.upper())
+    if ts is None:
+        return None
+    return max(0.0, time.time() - ts)
+
+
 class AgentOrchestrator:
     """
     Central coordinator that runs all 12 agents in the correct order
@@ -279,6 +307,19 @@ class AgentOrchestrator:
 
         # Fix #9: Save votes for outcome-based weight update
         self._last_votes[asset] = dict(votes)
+
+        # Phase D.4 wiring: publish to module-level cache so the analyst
+        # seed-context builder (`_agent_votes_block`) can read individual
+        # agent rationale without re-invoking the orchestrator. Without this,
+        # the analyst sees only the aggregate consensus in TICK_SNAPSHOT.
+        try:
+            asset_key = (asset or "").upper()
+            if asset_key:
+                _LATEST_VOTES_BY_ASSET[asset_key] = dict(votes)
+                _LATEST_VOTES_TS[asset_key] = time.time()
+        except Exception:
+            # Cache publish must never break the cycle — diagnostics only.
+            pass
 
         # ── STEP 2.5: ADVERSARIAL DEBATE ──
         # Agents challenge each other's positions with specific metrics.

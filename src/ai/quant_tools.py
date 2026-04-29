@@ -103,6 +103,63 @@ def _fetch_bars(asset: str, timeframe: str, limit: int) -> Optional[List[List[fl
     return fn(asset, timeframe, limit)
 
 
+# ── Output bounds-checking ──────────────────────────────────────────────
+#
+# LLM tool-call hallucination rate runs 15-52% in production (April 2026
+# ICLR). Even when the tool itself behaves, numeric model fits can return
+# NaN or inf when data is degenerate. Without this guard the analyst LLM
+# silently consumes garbage:
+#   * Hurst in [0, 1]; out-of-range or NaN means the R/S regression failed.
+#   * Half-lives must be positive and finite; OU with kappa→0 returns inf.
+#   * Probabilities/confidences in [0, 1±ε].
+#   * Hawkes alpha/beta must be positive and finite.
+# Violations return a structured error to the LLM so it skips this tool's
+# output rather than trusting a sentinel value it can't reason about.
+
+
+def _is_finite_number(x: Any) -> bool:
+    try:
+        return x is not None and np.isfinite(float(x))
+    except Exception:
+        return False
+
+
+def _validate_quant(name: str, fields: Dict[str, Any], bounds: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Check `fields[k]` against `bounds[k]` per these rules:
+        ("range", lo, hi)       finite + lo ≤ x ≤ hi
+        ("positive",)           finite + x > 0
+        ("nonneg",)              finite + x >= 0
+        ("finite",)              just finite
+    Returns None when all pass. On the first violation, returns a digest
+    error dict the analyst LLM can ingest cheaply.
+    """
+    for key, rule in bounds.items():
+        if key not in fields:
+            continue
+        val = fields[key]
+        if val is None:
+            return {"error": f"{name}_invalid: {key}=None"}
+        if not _is_finite_number(val):
+            return {"error": f"{name}_invalid: {key}={val} non-finite"}
+        f = float(val)
+        kind = rule[0]
+        if kind == "range":
+            lo, hi = rule[1], rule[2]
+            if not (lo <= f <= hi):
+                return {"error": f"{name}_out_of_range: {key}={f} not in [{lo},{hi}]"}
+        elif kind == "positive":
+            if f <= 0:
+                return {"error": f"{name}_invalid: {key}={f} not positive"}
+        elif kind == "nonneg":
+            if f < 0:
+                return {"error": f"{name}_invalid: {key}={f} negative"}
+        elif kind == "finite":
+            pass  # already covered by _is_finite_number
+        else:
+            return {"error": f"{name}_unknown_rule: {kind!r}"}
+    return None
+
+
 def _closes_from_raw(raw: List[List[float]]) -> Optional[np.ndarray]:
     """Extract close column from an OHLCV rows list. Robust to varying
     row widths — some sources return [ts, o, h, l, c, v] and some
@@ -145,6 +202,17 @@ def _ou_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     theta = result.get("theta")
     z = result.get("z_score") or result.get("z")
     sig = result.get("signal") or 0
+    err = _validate_quant("ou", {
+        "half_life": half_life,
+        "theta": theta,
+        "z_score": z,
+    }, {
+        "half_life": ("positive",),
+        "theta":     ("finite",),
+        "z_score":   ("finite",),
+    })
+    if err is not None:
+        return err
     summary = (
         f"OU({asset}/{tf}): half_life={half_life} theta={theta} "
         f"z_score={z} signal={sig}"
@@ -172,12 +240,15 @@ def _hurst_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"hurst_failed: {type(e).__name__}: {e}"}
     h = result.get("hurst")
+    err = _validate_quant("hurst", {"hurst": h}, {"hurst": ("range", 0.0, 1.0)})
+    if err is not None:
+        return err
     regime = result.get("regime") or (
-        "trending" if (h or 0) > 0.55 else
-        "mean_reverting" if (h or 0) < 0.45 else "random_walk"
+        "trending" if h > 0.55 else
+        "mean_reverting" if h < 0.45 else "random_walk"
     )
     return {
-        "summary": f"Hurst({asset}/{tf}): H={h:.3f} regime={regime}" if h is not None else "Hurst: unavailable",
+        "summary": f"Hurst({asset}/{tf}): H={h:.3f} regime={regime}",
         "hurst": h,
         "regime": regime,
     }
@@ -200,8 +271,16 @@ def _kalman_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"kalman_failed: {type(e).__name__}: {e}"}
     level = result.get("level")
     slope = result.get("slope")
+    err = _validate_quant("kalman", {
+        "level": level, "slope": slope,
+    }, {
+        "level": ("finite",),
+        "slope": ("finite",),
+    })
+    if err is not None:
+        return err
     return {
-        "summary": f"Kalman({asset}/{tf}): level={level:.4f} slope={slope:+.5f}" if level is not None else "Kalman: unavailable",
+        "summary": f"Kalman({asset}/{tf}): level={level:.4f} slope={slope:+.5f}",
         "level": level,
         "slope": slope,
     }
@@ -232,6 +311,9 @@ def _hmm_regime_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"hmm_failed: {type(e).__name__}: {e}"}
     regime = result.get("regime") or result.get("state_label")
     conf = result.get("confidence") or 0.0
+    err = _validate_quant("hmm", {"confidence": conf}, {"confidence": ("range", 0.0, 1.0 + 1e-6)})
+    if err is not None:
+        return err
     return {
         "summary": f"HMM({asset}/{tf}): regime={regime} confidence={conf:.2f}",
         "regime": regime,
@@ -268,15 +350,26 @@ def _hawkes_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         intensity = hp.current_intensity(np.asarray(times, dtype=np.float64), len(closes))
     except Exception as e:
         return {"error": f"hawkes_failed: {type(e).__name__}: {e}"}
+    alpha = params.get("alpha")
+    beta = params.get("beta")
+    err = _validate_quant("hawkes", {
+        "alpha": alpha, "beta": beta, "intensity": intensity,
+    }, {
+        "alpha":     ("positive",),
+        "beta":      ("positive",),
+        "intensity": ("nonneg",),
+    })
+    if err is not None:
+        return err
     return {
         "summary": (
             f"Hawkes({asset}/{tf}): events={len(times)} "
-            f"alpha={params.get('alpha')} beta={params.get('beta')} "
+            f"alpha={alpha} beta={beta} "
             f"intensity={intensity:.3f}"
         ),
         "events": len(times),
-        "alpha": params.get("alpha"),
-        "beta": params.get("beta"),
+        "alpha": alpha,
+        "beta": beta,
         "intensity": intensity,
     }
 
@@ -311,6 +404,23 @@ def _cointegration_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     half_life = result.get("half_life")
     z = result.get("z_score") or result.get("z")
     cointegrated = bool(result.get("cointegrated", False))
+    # Cointegration is the most numerically fragile of the bunch — half_life can
+    # come back as nan (no mean-reversion in residuals); validate before passing
+    # to the LLM.
+    bounds = {
+        "p_value":   ("range", 0.0, 1.0 + 1e-6),
+        "beta":      ("finite",),
+        "z_score":   ("finite",),
+    }
+    if half_life is not None:
+        # Only enforce positivity when the engine returned something —
+        # not-cointegrated pairs legitimately omit it.
+        bounds["half_life"] = ("positive",)
+    err = _validate_quant("cointegration", {
+        "p_value": pvalue, "beta": beta, "z_score": z, "half_life": half_life,
+    }, bounds)
+    if err is not None:
+        return err
     return {
         "summary": (
             f"Coint({a},{b}/{tf}): cointegrated={cointegrated} "

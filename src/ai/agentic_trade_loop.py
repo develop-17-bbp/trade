@@ -55,6 +55,12 @@ class LoopResult:
     steps_taken: int
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     terminated_reason: str = ""                 # 'plan' | 'skip' | 'max_steps' | 'disabled' | 'parse_failures'
+    # Phase D.4 wiring: the actual reason text emitted by the scanner / analyst
+    # when terminated_reason='skip'. Without this, /diagnose-noop sees only the
+    # bare 'skip' label and operator can't tell 'no setup, low vol' from
+    # 'tool error, retry next tick' from 'authority violation'. Stored on the
+    # decision row's component_signals.skip_reason.
+    terminated_reason_text: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -62,6 +68,7 @@ class LoopResult:
             "steps_taken": self.steps_taken,
             "tool_calls": list(self.tool_calls),
             "terminated_reason": self.terminated_reason,
+            "terminated_reason_text": self.terminated_reason_text,
         }
 
 
@@ -388,6 +395,7 @@ class AgenticTradeLoop:
                     steps_taken=step + 1,
                     tool_calls=tool_calls,
                     terminated_reason="skip",
+                    terminated_reason_text=reason,
                 )
 
             # Unknown envelope — nudge.
@@ -402,6 +410,7 @@ class AgenticTradeLoop:
             steps_taken=self.max_steps,
             tool_calls=tool_calls,
             terminated_reason="max_steps",
+            terminated_reason_text=f"agentic loop hit ACT_AGENTIC_MAX_STEPS={self.max_steps}",
         )
 
     def _call_llm(self) -> str:
