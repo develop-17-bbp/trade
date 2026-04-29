@@ -136,13 +136,43 @@ def main():
         config = yaml.safe_load(f)
 
     # Check for multi-exchange config
-    exchanges = config.get('exchanges', [])
+    exchanges_all = config.get('exchanges', [])
+
+    # Filter by `enabled: true` AND match ACT_BOX_ROLE if both are set.
+    # 5090 (crypto box): only robinhood + polymarket should fire.
+    # 4060 (stocks box): only alpaca should fire.
+    # Without ACT_BOX_ROLE: enabled-only filter (safe default).
+    box_role = (os.environ.get('ACT_BOX_ROLE') or '').strip().lower()
+    asset_class_for_role = {
+        'crypto': 'CRYPTO', 'stocks': 'STOCK', 'stock': 'STOCK',
+        'polymarket': 'POLYMARKET',
+    }.get(box_role)
+
+    def _exchange_passes(ex_cfg: dict) -> bool:
+        cfg_class = (ex_cfg.get('asset_class') or '').upper()
+        # When ACT_BOX_ROLE is set, the role-matching exchange is force-enabled
+        # AND non-matching exchanges are force-disabled. This lets the same
+        # config.yaml ship with `enabled: false` defaults so the 5090 doesn't
+        # accidentally fire stocks (which would route SPY through Kraken),
+        # while the 4060 with ACT_BOX_ROLE=stocks gets alpaca regardless of
+        # the disk default.
+        if asset_class_for_role:
+            return cfg_class == asset_class_for_role
+        # No role filter — fall back to honouring the explicit enabled flag.
+        return bool(ex_cfg.get('enabled', True))
+
+    exchanges = [ex for ex in exchanges_all if _exchange_passes(ex)]
+    skipped = [ex['name'] for ex in exchanges_all if ex not in exchanges]
+    if skipped:
+        print(f"  [MAIN] Skipping disabled / role-filtered exchanges: {skipped}")
 
     if len(exchanges) >= 2:
         # Multi-exchange mode — run each in its own thread
         print("=" * 60)
         print("  MULTI-EXCHANGE MODE")
         print(f"  Exchanges: {[e['name'] for e in exchanges]}")
+        if box_role:
+            print(f"  ACT_BOX_ROLE={box_role}")
         print("=" * 60)
 
         threads = []
@@ -174,6 +204,19 @@ def main():
         config['assets'] = ex_cfg.get('assets', config.get('assets', ['BTC', 'ETH']))
         executor = TradingExecutor(config)
         executor.run()
+
+    elif not exchanges and exchanges_all:
+        # All exchanges filtered out by enabled/role flags. Don't fall through
+        # to legacy single-exchange — that would re-enable the disabled robinhood
+        # config silently. Exit cleanly so the operator sees the filter result.
+        print("=" * 60)
+        print("  [MAIN] No exchanges enabled for this box.")
+        if box_role:
+            print(f"  ACT_BOX_ROLE={box_role} - no exchange in config matches this role.")
+        print("  Edit config.yaml to set `enabled: true` on the exchange you want, ")
+        print("  or unset ACT_BOX_ROLE to skip role filtering.")
+        print("=" * 60)
+        sys.exit(0)
 
     else:
         # Legacy single exchange config
