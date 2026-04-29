@@ -109,28 +109,131 @@ exchanges:
   venue: alpaca
   paper: true                       # paper soak only until ACT_STOCKS_REAL_CAPITAL_ENABLED=1
   data_feed: iex                    # free-tier IEX; flip to 'sip' on AlgoTrader Plus
-  # Active 1-minute trading basket — these get the full agentic pipeline
-  # (scanner → analyst → conviction gate → executor with EMA trailing SL).
-  # Watchlist scanner (src/trading/watchlist_scanner.py) screens 100
-  # large-caps every 5 minutes and surfaces candidates to the analyst.
+  # Active basket — top-100 US large-caps. Each gets the full agentic
+  # pipeline (scanner → analyst → conviction gate → executor with
+  # EMA trailing SL) every cycle.
+  # Rate-limit math: 100 symbols × bar+quote = ~150 calls/min, under
+  # Alpaca free tier 200/min cap. If you hit 429s, bump poll_seconds
+  # below from 60 to 90.
+  poll_seconds: 60                  # executor sleep between cycles
   assets:
-  - SPY                             # 1× S&P 500 anchor — tightest spreads
-  - QQQ                             # 1× Nasdaq-100 anchor — higher growth tilt
-  - NVDA                            # AI thematic mega-cap
-  - AVGO                            # AI thematic — semis, AI infra
-  - AMD                             # AI thematic — semis
-  - MSFT                            # AI thematic — Azure, Copilot
-  - GOOGL                           # AI thematic — Gemini, GCP
-  - META                            # AI thematic — Llama, MTI
-  - TSLA                            # high-vol playable single-name
-  - AMZN                            # high-vol playable single-name
-  - TQQQ                            # 3× leveraged Nasdaq-100 — intraday only, decay
-  - SOXL                            # 3× leveraged semis — intraday only, decay
-  watchlist:                        # screened every 5min; top N escalate to active pipeline
-    enabled: true
+  # Mega-caps (1-20)
+  - NVDA
+  - MSFT
+  - AAPL
+  - AMZN
+  - GOOGL
+  - META
+  - TSLA
+  - AVGO
+  - BRK-B
+  - JPM
+  - LLY
+  - UNH
+  - V
+  - XOM
+  - MA
+  - JNJ
+  - COST
+  - HD
+  - PG
+  - WMT
+  # Tier 2 (21-50)
+  - ABBV
+  - BAC
+  - NFLX
+  - CVX
+  - KO
+  - MRK
+  - AMD
+  - CRM
+  - ORCL
+  - TMO
+  - ABT
+  - ADBE
+  - PEP
+  - ACN
+  - MCD
+  - LIN
+  - CSCO
+  - NKE
+  - DIS
+  - WFC
+  - INTC
+  - IBM
+  - CAT
+  - T
+  - AXP
+  - GS
+  - VZ
+  - GE
+  - BX
+  - TXN
+  # Tier 3 (51-80)
+  - QCOM
+  - BLK
+  - NOW
+  - ISRG
+  - INTU
+  - AMGN
+  - BKNG
+  - BA
+  - GILD
+  - DE
+  - AMAT
+  - SYK
+  - NEE
+  - SCHW
+  - BMY
+  - RTX
+  - AAL
+  - LMT
+  - SBUX
+  - PFE
+  - MDT
+  - COP
+  - MO
+  - USB
+  - SO
+  - DUK
+  - TJX
+  - HON
+  - MMC
+  - SPGI
+  # Tier 4 (81-100, includes ETF anchors + leveraged for backwards-compat)
+  - CB
+  - MDLZ
+  - PLD
+  - ICE
+  - MMM
+  - ELV
+  - ETN
+  - REGN
+  - CL
+  - DHR
+  - BSX
+  - ADP
+  - PYPL
+  - FDX
+  - EMR
+  - ZTS
+  - NOC
+  - GD
+  - KKR
+  - GOOG
+  # ETF anchors + leveraged satellites — kept in the active basket so
+  # operator's original 12-symbol intent is preserved alongside the
+  # expansion. SPY/QQQ are the only allowed-overnight leveraged-class
+  # exposures; TQQQ/SOXL force flat-by-EOD via authority_rules_stocks.
+  - SPY
+  - QQQ
+  - TQQQ
+  - SOXL
+  watchlist:                        # disabled with 100-symbol active basket — no need for separate screener
+    enabled: false
     scan_interval_s: 300
     top_n_per_cycle: 10
-    min_score: 1.5                  # filter noise; >=1.0% move OR 1.5x vol typically clears
+    min_score: 1.5
   spread_pct_per_side: 0.005        # SIP. IEX paper-soak adjustment in stocks_conviction.
   round_trip_spread_pct: 0.01
   min_expected_move_pct: 0.15       # SIP threshold. IEX bumps to 0.25 via stocks_conviction.
