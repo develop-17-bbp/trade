@@ -179,32 +179,97 @@ class RobinhoodPaperFetcher:
 
     def get_live_price(self, asset: str) -> Dict[str, float]:
         """
-        Get real-time bid/ask/mid from Robinhood.
+        Get real-time bid/ask/mid for a crypto asset.
+
+        Tries sources in priority order:
+          1. Robinhood Crypto API (when authenticated) - matches the venue
+             we simulate against, includes RH spread inclusively.
+          2. Alpaca crypto API (when APCA env keys present) - 24/7 live
+             quotes; differs from RH by exchange but real-time.
+          3. CCXT/Kraken (no auth needed) - last-resort fallback.
+          4. Empty dict - caller must handle missing price.
+
+        Without this fallback chain, position-monitor calls returned {}
+        when RH client wasn't authenticated, leaving paper positions'
+        current_price frozen at entry forever. Operator's screenshot
+        showed exactly this: BTC entry $75,000, current $75,000, PnL +$0
+        even when real BTC was at $76,236. 2026-04-30 fix.
 
         Returns:
-            {'bid': float, 'ask': float, 'mid': float, 'spread_pct': float, 'timestamp': str}
+            {'bid', 'ask', 'mid', 'spread_pct', 'source', 'timestamp'}
+            (empty dict only when ALL sources fail)
         """
-        if not self._client:
-            return {}
+        # Tier 1: Robinhood Crypto API (when authenticated)
+        if self._client:
+            symbol = f"{asset}-USD"
+            try:
+                data = self._client.get_best_price(symbol)
+                if data and "results" in data and data["results"]:
+                    r = data["results"][0]
+                    bid = float(r.get("bid_inclusive_of_sell_spread", 0))
+                    ask = float(r.get("ask_inclusive_of_buy_spread", 0))
+                    mid = float(r.get("price", (bid + ask) / 2 if bid and ask else 0))
+                    if mid > 0:
+                        self.stats['price_snapshots'] += 1
+                        return {
+                            'bid': bid, 'ask': ask, 'mid': mid,
+                            'spread_pct': ((ask - bid) / mid * 100) if mid > 0 else 0,
+                            'buy_spread': r.get('buy_spread'),
+                            'sell_spread': r.get('sell_spread'),
+                            'timestamp': r.get('timestamp', ''),
+                            'source': 'robinhood',
+                        }
+            except Exception as e:
+                logger.debug("[PAPER] RH live price failed for %s: %s", asset, e)
 
-        symbol = f"{asset}-USD"
-        data = self._client.get_best_price(symbol)
-        if data and "results" in data and data["results"]:
-            r = data["results"][0]
-            bid = float(r.get("bid_inclusive_of_sell_spread", 0))
-            ask = float(r.get("ask_inclusive_of_buy_spread", 0))
-            mid = float(r.get("price", (bid + ask) / 2 if bid and ask else 0))
-            spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 0
-            self.stats['price_snapshots'] += 1
-            return {
-                'bid': bid,
-                'ask': ask,
-                'mid': mid,
-                'spread_pct': spread_pct,
-                'buy_spread': r.get('buy_spread'),
-                'sell_spread': r.get('sell_spread'),
-                'timestamp': r.get('timestamp', ''),
-            }
+        # Tier 2: Alpaca crypto (uses BTC/USD format)
+        try:
+            import os as _os
+            if _os.environ.get('APCA_API_KEY_ID'):
+                from src.data.alpaca_fetcher import AlpacaFetcher
+                af = AlpacaFetcher(paper=True)
+                if af.available:
+                    sym = f"{asset}/USD"
+                    tk = af.fetch_ticker(sym)
+                    bid = float(tk.get('bid') or 0)
+                    ask = float(tk.get('ask') or 0)
+                    last = float(tk.get('last') or 0)
+                    mid = (bid + ask) / 2 if (bid > 0 and ask > 0) else last
+                    if mid > 0:
+                        self.stats['price_snapshots'] += 1
+                        return {
+                            'bid': bid if bid > 0 else mid,
+                            'ask': ask if ask > 0 else mid,
+                            'mid': mid,
+                            'spread_pct': ((ask - bid) / mid * 100) if (bid > 0 and ask > 0) else 0,
+                            'timestamp': tk.get('quote_ts') or tk.get('trade_ts', ''),
+                            'source': 'alpaca_crypto',
+                        }
+        except Exception as e:
+            logger.debug("[PAPER] Alpaca crypto live price failed for %s: %s", asset, e)
+
+        # Tier 3: CCXT/Kraken (no auth needed)
+        try:
+            import ccxt
+            ex = ccxt.kraken({'enableRateLimit': True})
+            ticker = ex.fetch_ticker(f"{asset}/USD")
+            bid = float(ticker.get('bid') or 0)
+            ask = float(ticker.get('ask') or 0)
+            last = float(ticker.get('last') or 0)
+            mid = (bid + ask) / 2 if (bid > 0 and ask > 0) else last
+            if mid > 0:
+                self.stats['price_snapshots'] += 1
+                return {
+                    'bid': bid if bid > 0 else mid,
+                    'ask': ask if ask > 0 else mid,
+                    'mid': mid,
+                    'spread_pct': ((ask - bid) / mid * 100) if (bid > 0 and ask > 0) else 0,
+                    'timestamp': ticker.get('datetime', ''),
+                    'source': 'kraken',
+                }
+        except Exception as e:
+            logger.debug("[PAPER] CCXT/Kraken live price failed for %s: %s", asset, e)
+
         return {}
 
     def get_account_snapshot(self) -> Dict:
