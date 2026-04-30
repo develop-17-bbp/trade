@@ -75,9 +75,16 @@ class Candidate:
     last_price: float = 0.0
     direction_hint: str = "FLAT"   # 'LONG' / 'SHORT' / 'FLAT'
     reasons: List[str] = field(default_factory=list)
+    # Multi-timeframe alignment (2026-04-30 upgrade): pre-fetched 1h + 4h
+    # slope so the LLM analyst's first ReAct turn already has TF-aligned
+    # context instead of spending 2-3 extra steps calling get_recent_bars
+    # for each candidate. None until pre-fetched.
+    slope_1h_pct: Optional[float] = None
+    slope_4h_pct: Optional[float] = None
+    mtf_aligned: Optional[bool] = None        # True when 5m mom + 1h slope + 4h slope all agree
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "symbol": self.symbol,
             "score": round(self.score, 3),
             "pct_move_5m": round(self.pct_move_5m, 3),
@@ -87,6 +94,13 @@ class Candidate:
             "direction_hint": self.direction_hint,
             "reasons": list(self.reasons),
         }
+        if self.slope_1h_pct is not None:
+            out["slope_1h_pct"] = round(self.slope_1h_pct, 3)
+        if self.slope_4h_pct is not None:
+            out["slope_4h_pct"] = round(self.slope_4h_pct, 3)
+        if self.mtf_aligned is not None:
+            out["mtf_aligned"] = self.mtf_aligned
+        return out
 
 
 # ── Scoring ─────────────────────────────────────────────────────────────
@@ -239,10 +253,62 @@ class WatchlistScanner:
                 bars = fetcher.fetch_ohlcv(sym, timeframe=self.timeframe, limit=30)
                 cand = _score_candidate(sym, bars)
                 if cand is not None:
+                    # Pre-fetch 1h + 4h slope so the analyst's FIRST
+                    # turn already has multi-timeframe alignment without
+                    # needing extra get_recent_bars tool calls. Saves
+                    # ~2-3 ReAct steps per analyzed candidate. We only
+                    # do this for the highest-score candidates (top 20)
+                    # to bound API calls — 100 symbols × 3 timeframes
+                    # would push past Alpaca's 200/min cap.
                     new_candidates.append(cand)
             except Exception as e:
                 logger.debug("[WATCHLIST] %s scan error: %s", sym, e)
                 continue
+
+        # Pre-fetch 1h + 4h slope for the top-K candidates only so the
+        # analyst sees pre-computed MTF alignment in its seed context.
+        # Top-20 × 2 extra calls = 40 extra/scan; well under the
+        # Alpaca free-tier 200/min cap.
+        new_candidates.sort(key=lambda c: c.score, reverse=True)
+        for cand in new_candidates[:20]:
+            try:
+                bars_1h = fetcher.fetch_ohlcv(cand.symbol, timeframe="1Hour", limit=8)
+                if bars_1h and len(bars_1h) >= 4:
+                    closes_1h = [float(b[4]) for b in bars_1h]
+                    if closes_1h[0] > 0:
+                        cand.slope_1h_pct = (
+                            (closes_1h[-1] - closes_1h[0]) / closes_1h[0] * 100.0
+                        )
+            except Exception as e:
+                logger.debug("[WATCHLIST] %s 1h fetch failed: %s", cand.symbol, e)
+            try:
+                bars_4h = fetcher.fetch_ohlcv(cand.symbol, timeframe="1Hour", limit=24)
+                if bars_4h and len(bars_4h) >= 12:
+                    # Use 24×1Hour as proxy for 4h slope (free tier doesn't
+                    # always serve 4Hour cleanly; rolling-24h covers the
+                    # equivalent regime view).
+                    closes_4h = [float(b[4]) for b in bars_4h]
+                    if closes_4h[0] > 0:
+                        cand.slope_4h_pct = (
+                            (closes_4h[-1] - closes_4h[0]) / closes_4h[0] * 100.0
+                        )
+            except Exception as e:
+                logger.debug("[WATCHLIST] %s 4h fetch failed: %s", cand.symbol, e)
+            # Compute MTF alignment: True iff direction_hint matches
+            # 1h slope sign AND 4h slope sign (all 3 same direction).
+            if (cand.slope_1h_pct is not None and cand.slope_4h_pct is not None
+                    and cand.direction_hint != "FLAT"):
+                want_up = cand.direction_hint == "LONG"
+                ok_1h = (cand.slope_1h_pct > 0) if want_up else (cand.slope_1h_pct < 0)
+                ok_4h = (cand.slope_4h_pct > 0) if want_up else (cand.slope_4h_pct < 0)
+                cand.mtf_aligned = ok_1h and ok_4h
+                if cand.mtf_aligned:
+                    cand.reasons.append(
+                        f"MTF_aligned (1h={cand.slope_1h_pct:+.1f}%/4h={cand.slope_4h_pct:+.1f}%)"
+                    )
+                    # Bonus score for full alignment so MTF-aligned setups
+                    # surface ahead of pure 5m-momentum noise.
+                    cand.score += 1.5
 
         new_candidates.sort(key=lambda c: c.score, reverse=True)
         with self._lock:

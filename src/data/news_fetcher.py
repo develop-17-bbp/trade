@@ -67,8 +67,14 @@ class NewsFetcher:
                       'institution', 'tesla', 'microstrategy', 'el salvador'],
     }
 
-    # Ticker keywords
+    # Ticker keywords. Crypto + top-50 US large-cap stocks so the
+    # FinBERT sentiment layer + agents see news for stock symbols too.
+    # Without stock entries, get_news_digest('NVDA') returned zero
+    # headlines → sentiment_decoder returned conf=0.2 baseline →
+    # 13-agent voter consensus stayed FLAT every tick on stocks.
+    # 2026-04-30 fix: stocks now get the full sentiment alpha pipeline.
     TICKER_MAP = {
+        # Crypto (existing)
         'BTC': ['bitcoin', 'btc', 'satoshi'],
         'ETH': ['ethereum', 'eth', 'ether', 'vitalik'],
         'SOL': ['solana', 'sol'],
@@ -79,6 +85,52 @@ class NewsFetcher:
         'AVAX': ['avalanche', 'avax'],
         'LINK': ['chainlink', 'link'],
         'MATIC': ['polygon', 'matic'],
+        # Mega-caps (top 20)
+        'NVDA':  ['nvidia', 'nvda', 'jensen huang', 'h100', 'b200', 'blackwell', 'cuda'],
+        'MSFT':  ['microsoft', 'msft', 'satya nadella', 'azure', 'copilot'],
+        'AAPL':  ['apple', 'aapl', 'tim cook', 'iphone', 'ipad', 'mac', 'app store', 'cupertino'],
+        'AMZN':  ['amazon', 'amzn', 'andy jassy', 'aws', 'prime', 'bezos'],
+        'GOOGL': ['google', 'googl', 'alphabet', 'sundar pichai', 'gemini', 'youtube', 'android'],
+        'GOOG':  ['google', 'goog', 'alphabet'],
+        'META':  ['meta', 'facebook', 'instagram', 'zuckerberg', 'reels', 'whatsapp'],
+        'TSLA':  ['tesla', 'tsla', 'elon musk', 'cybertruck', 'optimus', 'fsd', 'robotaxi'],
+        'AVGO':  ['broadcom', 'avgo'],
+        'BRK-B': ['berkshire', 'buffett', 'munger', 'brk'],
+        'JPM':   ['jpmorgan', 'jpm', 'jamie dimon', 'chase'],
+        'LLY':   ['eli lilly', 'lly', 'mounjaro', 'zepbound', 'tirzepatide'],
+        'UNH':   ['unitedhealth', 'unh'],
+        'V':     ['visa', 'visa inc'],
+        'XOM':   ['exxon', 'xom', 'exxonmobil'],
+        'MA':    ['mastercard'],
+        'JNJ':   ['johnson & johnson', 'jnj'],
+        'COST':  ['costco'],
+        'HD':    ['home depot'],
+        'PG':    ['procter', 'gamble', 'p&g'],
+        'WMT':   ['walmart', 'wmt'],
+        # Tier 2
+        'ABBV':  ['abbvie'],
+        'BAC':   ['bank of america', 'bofa'],
+        'NFLX':  ['netflix', 'nflx', 'reed hastings'],
+        'CVX':   ['chevron'],
+        'KO':    ['coca-cola', 'coca cola', 'coke'],
+        'MRK':   ['merck'],
+        'AMD':   ['amd', 'lisa su', 'advanced micro', 'mi300', 'mi325'],
+        'CRM':   ['salesforce', 'benioff'],
+        'ORCL':  ['oracle', 'larry ellison'],
+        'PEP':   ['pepsi', 'pepsico'],
+        'COIN':  ['coinbase', 'coin', 'brian armstrong'],
+        'MSTR':  ['microstrategy', 'mstr', 'saylor'],
+        'INTC':  ['intel', 'intc', 'pat gelsinger'],
+        'IBM':   ['ibm', 'international business machines'],
+        'DIS':   ['disney', 'dis', 'iger'],
+        # ETFs
+        'SPY':   ['s&p 500', 'sp500', 's&p500', 'spx', 'spy'],
+        'QQQ':   ['nasdaq 100', 'nasdaq-100', 'qqq'],
+        'IWM':   ['russell 2000', 'iwm'],
+        'TQQQ':  ['tqqq', '3x leveraged nasdaq'],
+        'SOXL':  ['soxl', '3x semiconductor'],
+        'SOXS':  ['soxs', '3x inverse semiconductor'],
+        'SQQQ':  ['sqqq', '3x inverse nasdaq'],
     }
 
     def __init__(self, user_agent: str = 'CryptoTradeBot/2.0',

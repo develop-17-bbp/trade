@@ -49,6 +49,25 @@ class PolymarketArbitrageAgent(BaseAgent):
         asset = context.get('asset', 'BTC')
         reasons = []
 
+        # Polymarket only has crypto event markets wired in this build.
+        # For stock symbols (NVDA / SPY / etc.) the fetcher returns an
+        # empty list and this agent emits direction=0 confidence=0 with
+        # 'No crypto markets available' reasoning. The 13-agent voter
+        # then mixes that zero-confidence vote into the consensus,
+        # diluting actual stock signals from the other 12 agents.
+        # 2026-04-30 fix: when the asset is non-crypto, return an
+        # explicitly weight=0 vote so the orchestrator's weighted
+        # consensus excludes it entirely (vs a "soft 0" that still
+        # nudges the average toward neutral).
+        _CRYPTO_ASSETS = {'BTC', 'ETH', 'SOL', 'AAVE', 'XRP', 'ADA', 'DOGE',
+                          'DOT', 'AVAX', 'LINK', 'MATIC', 'BNB', 'TRX'}
+        if asset.upper() not in _CRYPTO_ASSETS:
+            return AgentVote(
+                direction=0, confidence=0.0, position_scale=1.0,
+                reasoning=f"[POLYMARKET_SKIP] {asset} is non-crypto; agent abstains",
+                metadata={'asset_class_skip': True, 'weight_override': 0.0},
+            )
+
         try:
             fetcher = self._get_fetcher()
             markets = fetcher.fetch_all_crypto_probabilities()
