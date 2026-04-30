@@ -302,13 +302,47 @@ def _submit_alpaca(symbol: str, side: str) -> int:
         equity = 100000.0
 
     notional = equity * (SIZE_PCT / 100.0)
-    # Quick price probe for sizing
+    # Quick price probe for sizing. CRITICAL: use AlpacaFetcher directly
+    # for stock symbols. PriceFetcher.fetch_latest_price falls through
+    # to CCXT/Kraken for non-crypto symbols on alpaca venue, and Kraken
+    # doesn't have stock tickers (AMD/NVDA/etc) → "kraken does not
+    # have market symbol" error → script aborts.
+    last_px = 0.0
     try:
-        last_px = float(fetcher.fetch_latest_price(symbol) or 0)
-    except Exception:
-        last_px = 0.0
+        from src.data.alpaca_fetcher import AlpacaFetcher
+        af = AlpacaFetcher(paper=True)
+        if af.available:
+            tk = af.fetch_ticker(symbol)
+            # Prefer mid-quote when both bid + ask available; else last trade
+            bid = float(tk.get("bid") or 0)
+            ask = float(tk.get("ask") or 0)
+            last = float(tk.get("last") or 0)
+            if bid > 0 and ask > 0:
+                last_px = (bid + ask) / 2.0
+            elif last > 0:
+                last_px = last
+            elif ask > 0:
+                last_px = ask
+            elif bid > 0:
+                last_px = bid
+        # Fallback: last close from the bar series we already fetched
+        # in _pick_asset_alpaca. Refetch one bar to get the most recent
+        # close — cheap because AlpacaFetcher is HTTP not socket.
+        if last_px <= 0:
+            bars = af.fetch_ohlcv(symbol, timeframe="1Min", limit=2)
+            if bars:
+                last_px = float(bars[-1][4])
+    except Exception as e:
+        logger.debug("AlpacaFetcher price probe failed: %s", e)
+    # Last-resort fallback: PriceFetcher's path (works for crypto since
+    # the alpaca_crypto venue routes through Alpaca crypto data API).
     if last_px <= 0:
-        logger.error("Could not get last price for %s", symbol)
+        try:
+            last_px = float(fetcher.fetch_latest_price(symbol) or 0)
+        except Exception:
+            last_px = 0.0
+    if last_px <= 0:
+        logger.error("Could not get last price for %s (tried Alpaca quote, Alpaca bars, fetcher fallback)", symbol)
         return 4
     qty = notional / last_px
     if not is_crypto:
