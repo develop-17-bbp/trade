@@ -82,6 +82,17 @@ def _force_stock(asset: str, side: str, qty: int, limit_price: float | None) -> 
     logger.info(f"[OK]   AlpacaExecutor health: {health}")
 
     logger.info(f"[INFO] Submitting test order: {side.upper()} {qty} x {asset}")
+    # `intent` kwarg is only present in the operator's local edit on
+    # some boxes — pass it via **kwargs only when the signature accepts
+    # it so this script works against any committed version of
+    # AlpacaExecutor.submit_order.
+    import inspect
+    extra: dict = {}
+    try:
+        if "intent" in inspect.signature(ex.submit_order).parameters:
+            extra["intent"] = "open"
+    except (TypeError, ValueError):
+        pass
     res = ex.submit_order(
         symbol=asset, side=side, qty=qty,
         limit_price=limit_price,
@@ -91,7 +102,7 @@ def _force_stock(asset: str, side: str, qty: int, limit_price: float | None) -> 
             "size_pct": 1.0, "reasoning": "force_test_trade.py diagnostic",
             "force_test": True,
         },
-        intent="open",
+        **extra,
     )
     if res.submitted:
         logger.info(f"[OK]   ORDER ACCEPTED order_id={res.order_id} decision_id={res.decision_id}")
