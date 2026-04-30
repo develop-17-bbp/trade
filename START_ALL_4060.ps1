@@ -145,19 +145,27 @@ try {
 # The list below is ranked: configured scanner first, then small fallbacks
 # in order of "good enough for both roles in 8 GB". Pull whichever is
 # missing AND likely to be needed.
+# BOTH the local scanner AND the small backup analyst get pre-pulled.
+# Without the backup pulled, LLM-GATE's tier-2 fallback can't fire when
+# the remote 30b is unreachable, and the bot collapses to scanner-as-both
+# (tier 3, single brain). Pulling llama3.2:3b ahead of time keeps the
+# dual-brain dual even during 5090 outages. ~2 GB download; fits in
+# 8 GB VRAM alongside qwen2.5-coder:7b (~5 GB).
 $localScanner = if ($env:ACT_SCANNER_MODEL) { $env:ACT_SCANNER_MODEL } else { "qwen2.5-coder:7b" }
-$localFallbackChain = @($localScanner, "llama3.2:3b")
+$backupAnalyst = if ($env:ACT_ANALYST_BACKUP_MODEL) { $env:ACT_ANALYST_BACKUP_MODEL } else { "llama3.2:3b" }
+$localPullChain = @($localScanner, $backupAnalyst)
 try {
     $localTags = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 5 -ErrorAction Stop
     $localModels = @($localTags.models | ForEach-Object { $_.name })
-    foreach ($m in $localFallbackChain) {
+    foreach ($m in $localPullChain) {
         $present = $localModels | Where-Object { $_ -like "$m*" }
         if ($present) {
             Ok "local model present: $m"
-        } elseif ($m -eq $localScanner) {
-            Warn "local scanner $m NOT pulled - pulling now (8GB box: this is the LLM-GATE fallback path)"
+        } else {
+            $role = if ($m -eq $localScanner) { "scanner" } else { "backup analyst (LLM-GATE tier 2)" }
+            Warn "local $role $m NOT pulled - pulling now"
             & ollama pull $m
-            if ($LASTEXITCODE -eq 0) { Ok "pulled $m" } else { Warn "ollama pull $m failed - bot will boot in legacy-voter mode if remote also fails" }
+            if ($LASTEXITCODE -eq 0) { Ok "pulled $m ($role)" } else { Warn "ollama pull $m failed - if this is the scanner, bot may boot in legacy-voter mode when remote also fails" }
         }
     }
 } catch {

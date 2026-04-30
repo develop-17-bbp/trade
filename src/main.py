@@ -154,45 +154,92 @@ def main():
                         "is listed by `ollama list` on that peer."
                     )
                     _llm_gate_failures.append((_m, _probe_at, "unreachable"))
-            # Auto-fallback: if the (remote) analyst probe failed but the
-            # local scanner is reachable, override ACT_ANALYST_MODEL so the
-            # local scanner serves both roles for this boot. Quality drops
-            # (a 7B serving as analyst has weaker reasoning than a 30B),
-            # but the bot keeps trading instead of dropping into legacy-
-            # voter / shadow mode. The 4060 with 8 GB VRAM specifically
-            # benefits: when its Tailscale link to the 5090 is flaky, the
-            # local qwen2.5-coder:7b takes over rather than the bot
-            # silently degrading.
+            # Tiered fallback when the primary (remote) analyst is down.
+            # Operator request 2026-04-30: keep dual-brain dual. Don't
+            # collapse to scanner-doing-both — try a dedicated SMALL
+            # backup analyst first, so the bot still has two LLMs.
             #
-            # Triggered only when:
-            #   1. OLLAMA_REMOTE_URL is configured (otherwise no remote
-            #      route exists and this is a non-remote local-only setup)
-            #   2. The analyst was the failing probe (not the scanner)
-            #   3. At least one scanner probe passed
-            #   4. Scanner != analyst (avoids the no-op when the profile
-            #      happens to use the same model for both roles)
+            # Tier order:
+            #   1. Primary remote analyst (e.g. qwen3-coder:30b @ 5090)
+            #   2. Local backup analyst (default llama3.2:3b — 2 GB,
+            #      fits alongside 7B scanner in 8 GB VRAM, different
+            #      model family so it's an actual second brain). Set
+            #      ACT_ANALYST_BACKUP_MODEL to pick a different one.
+            #   3. Scanner-as-both (last resort, single brain). Opt-out
+            #      via ACT_DISABLE_LOCAL_ANALYST_FALLBACK=1.
             _analyst_failed_remote = (
                 bool(_remote)
                 and any(f[0] == _analyst and f[1] == _remote for f in _llm_gate_failures)
             )
             _scanner_passed = any(p[0] == _scanner for p in _llm_gate_passes)
-            if _analyst_failed_remote and _scanner_passed and _scanner != _analyst:
-                print(
-                    f"  [LLM-GATE] FALLBACK: remote analyst {_analyst} unreachable at "
-                    f"{_remote}; local scanner {_scanner} will serve BOTH roles for "
-                    "this boot. Quality drops (7B reasoning < 30B). Restart when "
-                    "the remote peer is reachable to pick the analyst back up. "
-                    "Set ACT_DISABLE_LOCAL_ANALYST_FALLBACK=1 to opt out."
-                )
-                if os.environ.get("ACT_DISABLE_LOCAL_ANALYST_FALLBACK", "").strip() != "1":
+            _opt_out_fallback = os.environ.get(
+                "ACT_DISABLE_LOCAL_ANALYST_FALLBACK", ""
+            ).strip() == "1"
+
+            if _analyst_failed_remote and not _opt_out_fallback:
+                _backup = (
+                    os.environ.get("ACT_ANALYST_BACKUP_MODEL") or "llama3.2:3b"
+                ).strip()
+
+                # Tier 2: probe the backup analyst at local Ollama.
+                _backup_ok = False
+                if _backup and _backup != _analyst and _backup != _scanner:
+                    _bp_payload = _json.dumps({
+                        "model": _backup, "prompt": "Reply OK.", "stream": False,
+                        "keep_alive": -1,
+                        "options": {"num_ctx": _ctx, "num_predict": 8, "temperature": 0.0},
+                    }).encode("utf-8")
+                    _bp_req = _ureq.Request(
+                        f"{_ollama}/api/generate", data=_bp_payload,
+                        headers={"Content-Type": "application/json"}, method="POST",
+                    )
+                    try:
+                        with _ureq.urlopen(_bp_req, timeout=180.0) as _bp_r:
+                            _bp_data = _json.loads(_bp_r.read().decode("utf-8"))
+                        _bp_txt = (_bp_data.get("response") or "").strip()
+                        if _bp_txt:
+                            _backup_ok = True
+                            print(
+                                f"  [LLM-GATE] FALLBACK (tier 2): backup analyst "
+                                f"{_backup} @ {_ollama} responded {_bp_txt[:40]!r} -- "
+                                f"using as analyst (primary {_analyst} unreachable at {_remote}). "
+                                "Dual-brain stays dual."
+                            )
+                            os.environ["ACT_ANALYST_MODEL"] = _backup
+                            _llm_gate_failures = [
+                                f for f in _llm_gate_failures
+                                if not (f[0] == _analyst and f[1] == _remote)
+                            ]
+                            _llm_gate_passes.append((_backup, _ollama))
+                        else:
+                            print(
+                                f"  [LLM-GATE] FALLBACK (tier 2): backup {_backup} "
+                                f"returned empty -- not pulled or VRAM-evicted. "
+                                "Falling through to scanner-as-both (tier 3)."
+                            )
+                    except (_uerr.URLError, OSError) as _bp_e:
+                        print(
+                            f"  [LLM-GATE] FALLBACK (tier 2): backup {_backup} "
+                            f"unreachable at {_ollama}: {_bp_e}. "
+                            f"Run 'ollama pull {_backup}' to enable the dual-brain "
+                            "fallback. Falling through to scanner-as-both (tier 3)."
+                        )
+
+                # Tier 3: scanner serves both roles (last resort, single
+                # brain). Only fires if tier 2 didn't.
+                if not _backup_ok and _scanner_passed and _scanner != _analyst:
+                    print(
+                        f"  [LLM-GATE] FALLBACK (tier 3): scanner {_scanner} will "
+                        "serve BOTH roles for this boot. Quality drops (single brain). "
+                        "Pull a small analyst (e.g. 'ollama pull llama3.2:3b') so the "
+                        "next failure-mode boot keeps dual-brain via tier 2."
+                    )
                     os.environ["ACT_ANALYST_MODEL"] = _scanner
-                    # Reclassify the failure so the DEGRADED summary below
-                    # doesn't trigger — we now have a working analyst path.
                     _llm_gate_failures = [
                         f for f in _llm_gate_failures
                         if not (f[0] == _analyst and f[1] == _remote)
                     ]
-                    _llm_gate_passes.append((_scanner, _ollama))  # synthetic: scanner now also serves analyst
+                    _llm_gate_passes.append((_scanner, _ollama))
 
             # Summary + escalate when both probes fail. The bot continues
             # in either case, but a both-fail boot deserves a louder line
