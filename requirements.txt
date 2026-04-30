@@ -81,13 +81,14 @@ alpaca-py>=0.30.0
 pandas_market_calendars>=4.4.0
 pyarrow>=18.0.0
 
-# Optional (install manually if needed):
-# pytorch-forecasting  # Requires specific torch version
-# peft                 # LoRA fine-tuning
-# bitsandbytes         # Quantization
-# accelerate           # HuggingFace accelerate
-# trl                  # RLHF training
-# llama-cpp-python     # Local LLM inference
-# PyWavelets>=1.3.0    # Wavelet support for indicators
-# chromadb             # Vector DB (currently using custom SQLite MemoryVault)
-# kafka-python-ng      # Kafka streaming (if needed, replaces unmaintained kafka-python)
+# Optional install-manually-on-the-GPU-box (real QLoRA fine-tune path):
+#   peft, bitsandbytes, accelerate, trl  — paired with Unsloth on the
+#   training machine. Not in main reqs because they pull torch-build
+#   constraints that would break the inference-only boxes.
+# Optional Polymarket live (commented because most operators stay shadow-mode):
+#   py-clob-client>=0.1.0
+# Optional Polygon historical (survivorship-bias-aware backtests, training-only):
+#   polygon-api-client>=2.0.0
+#
+# Removed 2026-04-29 (no live importer, no near-term plan):
+#   pytorch-forecasting, llama-cpp-python, PyWavelets, chromadb, kafka-python-ng

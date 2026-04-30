@@ -90,18 +90,35 @@ def main():
             _ollama = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
             _ctx = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
 
-            print(f"  [LLM-GATE] probing scanner={_scanner} + analyst={_analyst} at {_ollama}")
+            # Remote-analyst awareness: when the operator points
+            # OLLAMA_REMOTE_URL at a peer Ollama (e.g. 4060 → 5090 over
+            # Tailscale), the analyst doesn't live locally — probing it
+            # at 127.0.0.1 would fail. Probe each model at the URL that
+            # actually serves it.
+            _remote = (os.environ.get("OLLAMA_REMOTE_URL") or "").strip().rstrip("/")
+            _remote_model = (os.environ.get("OLLAMA_REMOTE_MODEL") or "").strip()
+
+            def _probe_url_for(_model: str) -> str:
+                # If remote is configured AND this model matches the
+                # remote-pinned analyst, probe the remote URL.
+                if _remote and _model and _model == _remote_model:
+                    return _remote
+                return _ollama
+
+            print(f"  [LLM-GATE] probing scanner={_scanner} + analyst={_analyst} at {_ollama}"
+                  + (f" (analyst remote: {_remote})" if _remote else ""))
             for _m in [_scanner, _analyst]:
                 if not _m or _m in (_scanner if _m == _analyst else "_"):
                     if _m == _analyst and _analyst == _scanner:
                         continue  # don't double-probe when both roles share a model
+                _probe_at = _probe_url_for(_m)
                 _payload = _json.dumps({
                     "model": _m, "prompt": "Reply OK.", "stream": False,
                     "keep_alive": -1,
                     "options": {"num_ctx": _ctx, "num_predict": 8, "temperature": 0.0},
                 }).encode("utf-8")
                 _req = _ureq.Request(
-                    f"{_ollama}/api/generate", data=_payload,
+                    f"{_probe_at}/api/generate", data=_payload,
                     headers={"Content-Type": "application/json"}, method="POST",
                 )
                 try:
@@ -110,18 +127,20 @@ def main():
                     _txt = (_data.get("response") or "").strip()
                     if not _txt:
                         print(
-                            f"  [LLM-GATE] FAIL: {_m} returned empty -- VRAM eviction "
-                            "likely. Drop OLLAMA_NUM_CTX (currently "
-                            f"{_ctx}) to 4096 and restart, OR set "
+                            f"  [LLM-GATE] FAIL: {_m} @ {_probe_at} returned empty -- "
+                            "VRAM eviction likely on that host. Drop OLLAMA_NUM_CTX "
+                            f"(currently {_ctx}) to 4096 and restart, OR set "
                             "ACT_SKIP_LLM_HEALTH_GATE=1 to boot anyway."
                         )
                         sys.exit(2)
-                    print(f"  [LLM-GATE] OK: {_m} responded {_txt[:40]!r}")
+                    print(f"  [LLM-GATE] OK: {_m} @ {_probe_at} responded {_txt[:40]!r}")
                 except (_uerr.URLError, OSError) as _e:
                     print(
-                        f"  [LLM-GATE] FAIL: {_m} unreachable: {_e}. "
-                        f"Verify Ollama is running at {_ollama} and the model is "
-                        "pulled (`ollama pull {_m}`). Set "
+                        f"  [LLM-GATE] FAIL: {_m} unreachable at {_probe_at}: {_e}. "
+                        "Verify Ollama is running at that URL and the model is "
+                        f"pulled there. For a remote analyst, check that "
+                        "OLLAMA_REMOTE_URL points at a reachable peer + the model "
+                        "is listed by `ollama list` on that peer. Set "
                         "ACT_SKIP_LLM_HEALTH_GATE=1 to boot without LLM."
                     )
                     sys.exit(2)
@@ -142,22 +161,32 @@ def main():
     # 5090 (crypto box): only robinhood + polymarket should fire.
     # 4060 (stocks box): only alpaca should fire.
     # Without ACT_BOX_ROLE: enabled-only filter (safe default).
-    box_role = (os.environ.get('ACT_BOX_ROLE') or '').strip().lower()
-    asset_class_for_role = {
+    #
+    # ACT_BOX_ROLE can be a single class ("stocks") or comma-separated
+    # ("stocks,crypto") so a single box can run multiple asset classes.
+    # Use case: 4060 with ACT_BOX_ROLE="stocks,crypto" runs alpaca stocks
+    # AND alpaca crypto in parallel threads.
+    box_roles = [
+        r.strip().lower()
+        for r in (os.environ.get('ACT_BOX_ROLE') or '').split(',')
+        if r.strip()
+    ]
+    role_to_class = {
         'crypto': 'CRYPTO', 'stocks': 'STOCK', 'stock': 'STOCK',
         'polymarket': 'POLYMARKET',
-    }.get(box_role)
+    }
+    allowed_classes = {role_to_class[r] for r in box_roles if r in role_to_class}
 
     def _exchange_passes(ex_cfg: dict) -> bool:
         cfg_class = (ex_cfg.get('asset_class') or '').upper()
-        # When ACT_BOX_ROLE is set, the role-matching exchange is force-enabled
+        # When ACT_BOX_ROLE is set, role-matching exchanges are force-enabled
         # AND non-matching exchanges are force-disabled. This lets the same
         # config.yaml ship with `enabled: false` defaults so the 5090 doesn't
         # accidentally fire stocks (which would route SPY through Kraken),
         # while the 4060 with ACT_BOX_ROLE=stocks gets alpaca regardless of
         # the disk default.
-        if asset_class_for_role:
-            return cfg_class == asset_class_for_role
+        if allowed_classes:
+            return cfg_class in allowed_classes
         # No role filter — fall back to honouring the explicit enabled flag.
         return bool(ex_cfg.get('enabled', True))
 
@@ -171,8 +200,8 @@ def main():
         print("=" * 60)
         print("  MULTI-EXCHANGE MODE")
         print(f"  Exchanges: {[e['name'] for e in exchanges]}")
-        if box_role:
-            print(f"  ACT_BOX_ROLE={box_role}")
+        if box_roles:
+            print(f"  ACT_BOX_ROLE={','.join(box_roles)}")
         print("=" * 60)
 
         threads = []
@@ -211,8 +240,8 @@ def main():
         # config silently. Exit cleanly so the operator sees the filter result.
         print("=" * 60)
         print("  [MAIN] No exchanges enabled for this box.")
-        if box_role:
-            print(f"  ACT_BOX_ROLE={box_role} - no exchange in config matches this role.")
+        if box_roles:
+            print(f"  ACT_BOX_ROLE={','.join(box_roles)} - no exchange in config matches this role.")
         print("  Edit config.yaml to set `enabled: true` on the exchange you want, ")
         print("  or unset ACT_BOX_ROLE to skip role filtering.")
         print("=" * 60)

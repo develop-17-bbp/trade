@@ -264,9 +264,26 @@ def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
     scanner = profile.get("scanner_model", "")
     analyst = profile.get("analyst_model", "")
-    needed = _vram_estimate_gb(scanner) + _vram_estimate_gb(analyst)
-    if needed <= cap + 2:
-        return profile
+
+    # Remote-analyst awareness: when OLLAMA_REMOTE_URL is set, the
+    # analyst doesn't load on the local GPU — only the scanner counts
+    # against local VRAM. Without this branch the auto-downgrade wrongly
+    # fires on small boxes (e.g. 8 GB 4060) and routes to dense_r1
+    # locally, which OOMs since deepseek-r1:32b ~20 GB doesn't fit either.
+    _remote_analyst = (os.environ.get("OLLAMA_REMOTE_URL") or "").strip() != ""
+    if _remote_analyst:
+        needed = _vram_estimate_gb(scanner)
+        if needed <= cap + 2:
+            logger.info(
+                "[BRAIN] remote analyst configured (OLLAMA_REMOTE_URL); "
+                "scanner-only VRAM check: scanner=%s ~%.1f GB / cap %.1f GB — fits",
+                scanner, needed, cap,
+            )
+            return profile
+    else:
+        needed = _vram_estimate_gb(scanner) + _vram_estimate_gb(analyst)
+        if needed <= cap + 2:
+            return profile
 
     # Profile doesn't fit. Walk fallback chain — moe_agentic first
     # (operator-preferred default, no deepseek dependency), dense_r1 last

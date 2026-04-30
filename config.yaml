@@ -84,6 +84,19 @@ polymarket:
   host: https://clob.polymarket.com
   api_key: null                    # populate via POLYMARKET_API_KEY env
   max_portfolio_exposure_pct: 15   # never >15% of equity on PM markets combined
+
+# ── Cross-lane alpha ranker (Phase 5.1) ───────────────────────────
+# Highest-EV setups across all enabled lanes get admitted, but a single
+# asset class can never exceed `max_class_pct[CLASS]` of NAV. Prevents
+# the ranker from routing the entire risk envelope into options on a
+# directional day. Operator can retune live via this file (no code).
+cross_lane:
+  max_class_pct:
+    CRYPTO:     35   # robinhood + alpaca_crypto share this ceiling
+    STOCK:      45
+    OPTIONS:    20   # leveraged exposure → tightest cap
+    POLYMARKET: 15
+  top_k: 10          # max admitted candidates per scan cycle
 exchanges:
 - name: robinhood
   enabled: true                     # crypto live on the 5090
@@ -246,6 +259,26 @@ exchanges:
   rth_only: true
   longs_only: false                 # short via inverse ETFs (SOXS/SQQQ); native shorts ETB-gated
   max_daily_margin_exposure_pct: 200  # post-2026-04-14 PDT replacement
+- name: alpaca_crypto
+  # Optional alpaca-crypto venue. Disabled by default; enable on the 4060
+  # by setting ACT_BOX_ROLE="stocks,crypto" (comma-separated to run both
+  # stocks and crypto in parallel threads). Same Alpaca paper account as
+  # the stocks-side alpaca exchange — paper P&L is shared.
+  enabled: false
+  asset_class: CRYPTO
+  venue: alpaca
+  paper: true
+  data_feed: iex                    # crypto on Alpaca uses CCC-aggregated feed regardless
+  poll_seconds: 60
+  assets:
+  - BTC
+  - ETH
+  spread_pct_per_side: 0.15         # Alpaca crypto spread ~0.30% round-trip (vs RH 1.69%)
+  round_trip_spread_pct: 0.30
+  min_expected_move_pct: 0.50       # Looser than stocks (crypto runs 24/7, more setups)
+  intraday_position_pct_max: 15
+  overnight_position_pct_max: 15    # crypto fine to hold overnight (no daily-reset decay)
+  rth_only: false                   # 24/7 venue
 - name: polymarket
   enabled: false
   asset_class: POLYMARKET

@@ -22,6 +22,7 @@ filter, and warm_store_sync replication all see the new venue cleanly.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 import os
 import time
@@ -30,6 +31,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+# Cadence for the RTH-closed heartbeat — see _maybe_emit_rth_heartbeat.
+# Without this, an overnight period (~17.5h) produces zero log lines from
+# this executor and operator can't distinguish "correctly idle, market
+# closed" from "broken." 15 min is short enough to confirm liveness in
+# the next dashboard refresh and rare enough not to flood logs.
+_RTH_HEARTBEAT_INTERVAL = _dt.timedelta(minutes=15)
 
 
 @dataclass
@@ -62,6 +70,7 @@ class AlpacaExecutor:
         self._client = AlpacaClient(paper=paper)
         self.available = self._client.available
         self.paper = paper
+        self._last_rth_heartbeat: Optional[_dt.datetime] = None
 
     # ── Public API ─────────────────────────────────────────────────
 
@@ -124,6 +133,7 @@ class AlpacaExecutor:
 
         # ── Market-hours gate ────────────────────────────────────
         if not is_us_market_open():
+            self._maybe_emit_rth_heartbeat()
             return self._reject(symbol, side, qty,
                                 reason="market_closed", plan=plan)
 
@@ -184,6 +194,33 @@ class AlpacaExecutor:
         )
 
     # ── Internals ──────────────────────────────────────────────────
+
+    def _maybe_emit_rth_heartbeat(self) -> None:
+        """Log one INFO line per `_RTH_HEARTBEAT_INTERVAL` while RTH closed.
+
+        Why: stocks-lane silence outside 13:30–20:00 UTC is correct
+        behavior, not breakage. Without a periodic log line saying so,
+        an operator scanning autonomous_loop.log every morning sees zero
+        ALPACA-EXEC entries and assumes the bot is broken. This emits
+        one heartbeat line stating the next NYSE open + a hint that
+        crypto/options lanes (if enabled) are still firing.
+        """
+        from src.utils.market_hours import next_open
+        now = _dt.datetime.now(_dt.timezone.utc)
+        last = self._last_rth_heartbeat
+        if last is not None and (now - last) < _RTH_HEARTBEAT_INTERVAL:
+            return
+        try:
+            nxt = next_open(now)
+            nxt_iso = nxt.isoformat()
+        except Exception:
+            nxt_iso = "unknown"
+        logger.info(
+            "[ALPACA-EXEC] RTH closed; next open=%s UTC; stocks-lane idle "
+            "by design (alpaca-crypto / alpaca-options unaffected if enabled)",
+            nxt_iso,
+        )
+        self._last_rth_heartbeat = now
 
     def _reject(self, symbol: str, side: str, qty: float, *,
                 reason: str, plan: Optional[Dict[str, Any]] = None) -> StocksOrderResult:
