@@ -140,6 +140,19 @@ BRAIN_PROFILES: Dict[str, Dict[str, Any]] = {
         "analyst_temperature": 0.2,
         "description": "Devstral 24B agentic scanner + Qwen3-Coder 30B analyst (strict JSON / tool-use pair).",
     },
+    # Local-only 8GB profile: both roles served by qwen2.5-coder:7b.
+    # Scanner reuses the analyst weights to keep VRAM at ~5GB total.
+    # For the 4060 box (8GB) when OLLAMA_REMOTE_URL is unset and a
+    # 30B analyst can't fit. Sacrifices analyst depth for guaranteed
+    # local availability. Operator directive 2026-04-30: 4060 must
+    # still produce LLM-driven Alpaca trades after remote model removal.
+    "local_8gb": {
+        "scanner_model": "qwen2.5-coder:7b",
+        "analyst_model": "qwen2.5-coder:7b",
+        "scanner_temperature": 0.3,
+        "analyst_temperature": 0.2,
+        "description": "Single 7B model on both ends. ~5GB VRAM total. Use when only 8-10GB available locally and no remote analyst.",
+    },
 }
 
 # Default profile: moe_agentic. Operator deprecated deepseek-r1 family
@@ -286,9 +299,10 @@ def _resolve_profile(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             return profile
 
     # Profile doesn't fit. Walk fallback chain — moe_agentic first
-    # (operator-preferred default, no deepseek dependency), dense_r1 last
-    # only when explicitly available.
-    for fallback_name in ("moe_agentic", "hybrid", "dense_r1"):
+    # (operator-preferred default, no deepseek dependency), dense_r1
+    # next, local_8gb last (single 7B shared by scanner+analyst — only
+    # path that fits on a 4060-class box with no remote analyst).
+    for fallback_name in ("moe_agentic", "hybrid", "dense_r1", "local_8gb"):
         if fallback_name == name:
             continue   # already on this one; don't loop
         candidate = BRAIN_PROFILES.get(fallback_name)

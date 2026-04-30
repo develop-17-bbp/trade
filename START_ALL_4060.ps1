@@ -97,26 +97,35 @@ if (-not $env:ACT_BOX_ROLE) {
     _SetEnvDual "ACT_BOX_ROLE" "stocks"
 }
 
-# 4b. Tailscale-routed analyst (THE 30B LIVES ON THE 5090, NOT HERE)
-# The 4060 has 8GB VRAM and cannot host qwen3-coder:30b locally - that
-# would OOM on first inference. Default the remote-analyst env so the
-# dual_brain router calls the 5090 over Tailscale for analyst inference,
-# while the 7b scanner stays local. Operator overrides win.
-if (-not $env:OLLAMA_REMOTE_URL) {
-    _SetEnvDual "OLLAMA_REMOTE_URL" "http://act5090:11434"
-    Ok "OLLAMA_REMOTE_URL defaulted to http://act5090:11434 (Tailscale, persisted via setx)"
-} else {
+# 4b. Brain profile selection — remote-analyst preferred, local-8gb fallback
+# The 4060 has 8GB VRAM and cannot host a 30B analyst locally. If the
+# operator has configured OLLAMA_REMOTE_URL (analyst on 5090 via Tailscale)
+# we use the moe_agentic profile (7B scanner local + 30B analyst remote).
+# When remote is INTENTIONALLY unset (operator removed it 2026-04-30), we
+# fall back to local_8gb (single qwen2.5-coder:7b on both ends, ~5GB VRAM)
+# so LLM-driven Alpaca trades still fire — degraded analyst depth but
+# non-zero output. Operator overrides win in either case.
+$_remoteSet = [bool]$env:OLLAMA_REMOTE_URL
+if ($_remoteSet) {
     Ok "OLLAMA_REMOTE_URL preset by operator: $env:OLLAMA_REMOTE_URL"
-}
-if (-not $env:OLLAMA_REMOTE_MODEL) {
-    _SetEnvDual "OLLAMA_REMOTE_MODEL" "qwen3-coder:30b"
-    Ok "OLLAMA_REMOTE_MODEL defaulted to qwen3-coder:30b (analyst, persisted via setx)"
+    if (-not $env:OLLAMA_REMOTE_MODEL) {
+        _SetEnvDual "OLLAMA_REMOTE_MODEL" "qwen3-coder:30b"
+        Ok "OLLAMA_REMOTE_MODEL defaulted to qwen3-coder:30b (analyst, persisted via setx)"
+    } else {
+        Ok "OLLAMA_REMOTE_MODEL preset by operator: $env:OLLAMA_REMOTE_MODEL"
+    }
+    if (-not $env:ACT_BRAIN_PROFILE) {
+        _SetEnvDual "ACT_BRAIN_PROFILE" "moe_agentic"
+        Ok "ACT_BRAIN_PROFILE defaulted to moe_agentic (7b local + 30b remote)"
+    }
 } else {
-    Ok "OLLAMA_REMOTE_MODEL preset by operator: $env:OLLAMA_REMOTE_MODEL"
-}
-if (-not $env:ACT_BRAIN_PROFILE) {
-    _SetEnvDual "ACT_BRAIN_PROFILE" "moe_agentic"
-    Ok "ACT_BRAIN_PROFILE defaulted to moe_agentic (7b local + 30b remote, persisted via setx)"
+    Warn "OLLAMA_REMOTE_URL is unset - falling back to local-only LLM (degraded analyst depth)"
+    if (-not $env:ACT_BRAIN_PROFILE) {
+        _SetEnvDual "ACT_BRAIN_PROFILE" "local_8gb"
+        Ok "ACT_BRAIN_PROFILE defaulted to local_8gb (qwen2.5-coder:7b on both ends, fits 8GB VRAM)"
+    } else {
+        Ok "ACT_BRAIN_PROFILE preset by operator: $env:ACT_BRAIN_PROFILE"
+    }
 }
 # Mirror the 5090's START_ALL.ps1 default - ACT_AGENTIC_LOOP=1 makes
 # the agentic shadow loop fire on every per-asset tick. Without this
