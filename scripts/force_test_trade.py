@@ -59,6 +59,11 @@ def main() -> int:
     p.add_argument("--venue", choices=["alpaca", "robinhood"], default="alpaca",
                    help="Target venue. alpaca (default) hits Alpaca paper API; "
                         "robinhood writes to the bot's internal paper-sim state.")
+    p.add_argument("--target-pct", type=float, default=1.0,
+                   help="Take-profit target as %% above (LONG) / below (SHORT) entry. "
+                        "Default 1%%. The bot's position-monitor auto-closes when TP hits.")
+    p.add_argument("--stop-pct", type=float, default=5.0,
+                   help="Stop-loss as %% below (LONG) / above (SHORT) entry. Default 5%%.")
     args = p.parse_args()
 
     asset = args.asset.upper().strip()
@@ -70,7 +75,9 @@ def main() -> int:
         if not is_crypto:
             logger.error("Robinhood paper-sim only supports crypto (BTC, ETH)")
             return 2
-        return _force_robinhood_paper(asset, args.side, args.qty)
+        return _force_robinhood_paper(asset, args.side, args.qty,
+                                       target_pct=args.target_pct,
+                                       stop_pct=args.stop_pct)
 
     # Alpaca path requires APCA keys
     if not os.environ.get("APCA_API_KEY_ID") or not os.environ.get("APCA_API_SECRET_KEY"):
@@ -83,13 +90,20 @@ def main() -> int:
     return _force_stock(asset, args.side, int(args.qty), args.limit)
 
 
-def _force_robinhood_paper(asset: str, side: str, qty: float) -> int:
+def _force_robinhood_paper(asset: str, side: str, qty: float,
+                            target_pct: float = 1.0,
+                            stop_pct: float = 5.0) -> int:
     """Robinhood paper-sim: writes a synthetic position to the bot's
     RobinhoodPaperFetcher state. Visible in the bot's dashboard +
     logs/robinhood_paper_state.json. Does NOT touch Robinhood servers.
 
+    Operator-configured TP/SL: defaults to TP=+1% / SL=-5% (LONG).
+    The bot's existing position-monitor (when running) auto-closes
+    the position when live price hits TP or SL — i.e. fire-and-hold
+    until +1% gain (or -5% drawdown if it goes the wrong way first).
+
     Use this on the 5090 to verify the paper-sim pipeline writes state
-    correctly.
+    correctly AND to simulate "buy spot, hold for 1% profit" behavior.
     """
     import yaml
     from pathlib import Path
@@ -120,14 +134,22 @@ def _force_robinhood_paper(asset: str, side: str, qty: float) -> int:
         logger.warning(f"[WARN] using fallback price ${fill_price} for {asset}")
 
     direction = "LONG" if side == "buy" else "SHORT"
-    logger.info(f"[INFO] RH paper-sim: {direction} {qty} {asset} @ ~${fill_price}")
+    if direction == "LONG":
+        tp_price = fill_price * (1.0 + target_pct / 100.0)
+        sl_price = fill_price * (1.0 - stop_pct / 100.0)
+    else:
+        tp_price = fill_price * (1.0 - target_pct / 100.0)
+        sl_price = fill_price * (1.0 + stop_pct / 100.0)
+
+    logger.info(f"[INFO] RH paper-sim: {direction} {qty} {asset} @ ~${fill_price:,.2f}")
+    logger.info(f"       TP={tp_price:,.2f} ({target_pct:+.1f}%)  SL={sl_price:,.2f} ({-stop_pct:+.1f}%)")
     pos = pf.record_entry(
         asset=asset, direction=direction, price=fill_price,
         score=10, quantity=qty,
-        sl_price=fill_price * 0.95 if direction == "LONG" else fill_price * 1.05,
-        tp_price=fill_price * 1.05 if direction == "LONG" else fill_price * 0.95,
+        sl_price=sl_price, tp_price=tp_price,
         ml_confidence=0.5, llm_confidence=0.5,
-        size_pct=1.0, reasoning="force_test_trade.py diagnostic",
+        size_pct=1.0,
+        reasoning=f"force_test_trade.py: spot-long hold to +{target_pct:.1f}% gain",
     )
     if pos is None:
         logger.error("[FAIL] record_entry returned None - check RobinhoodPaperFetcher logs")
@@ -138,8 +160,12 @@ def _force_robinhood_paper(asset: str, side: str, qty: float) -> int:
     logger.info(f"       direction={getattr(pos, 'direction', '?')}")
     logger.info(f"       entry_price=${getattr(pos, 'entry_price', 0):,.2f}")
     logger.info(f"       qty={getattr(pos, 'quantity', '?')}")
+    logger.info(f"       tp_price=${getattr(pos, 'tp_price', tp_price):,.2f}")
+    logger.info(f"       sl_price=${getattr(pos, 'sl_price', sl_price):,.2f}")
     logger.info(f"       Position is now in logs/robinhood_paper_state.json (will appear in bot's dashboard).")
     logger.info(f"       It does NOT appear on Robinhood's app or website - this is internal sim only.")
+    logger.info(f"       The bot's position-monitor will auto-close when price reaches TP (+{target_pct:.1f}%) or SL (-{stop_pct:.1f}%).")
+    logger.info(f"       Until then it holds as spot {direction}.")
     return 0
 
 
