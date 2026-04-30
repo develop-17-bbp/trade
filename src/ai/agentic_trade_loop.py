@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_MAX_STEPS = int(os.getenv("ACT_AGENTIC_MAX_STEPS", "12"))
-MAX_PARSE_FAILURES = 2
+MAX_PARSE_FAILURES = int(os.getenv("ACT_AGENTIC_MAX_PARSE_FAILURES", "4"))
 DISABLE_ENV = "ACT_DISABLE_AGENTIC_LOOP"
 
 
@@ -306,6 +306,30 @@ class AgenticTradeLoop:
                     self.asset, parse_failures, MAX_PARSE_FAILURES, step + 1, preview,
                 )
                 if parse_failures >= MAX_PARSE_FAILURES:
+                    # Tech-blended last-chance: when the LLM kept emitting
+                    # unparseable output, the analyst is broken (Ollama
+                    # 503, model output drift, prose-only replies). If
+                    # the technical lane has a high-conviction signal in
+                    # tick_state, promote it to a TradePlan rather than
+                    # exit with skip - operator directive 2026-04-30:
+                    # trades must fire automatically. Same gate stack
+                    # still runs in submit_trade_plan.
+                    if os.getenv("ACT_LLM_TECH_BLENDED", "0") == "1":
+                        promoted = self._maybe_promote_technical_signal(
+                            f"parse_failures={parse_failures}"
+                        )
+                        if promoted is not None:
+                            logger.info(
+                                "[agentic_loop:%s] tech-blended override on "
+                                "parse_failures - promoting tier=%s direction=%s",
+                                self.asset, promoted.entry_tier, promoted.direction,
+                            )
+                            return LoopResult(
+                                plan=promoted, steps_taken=step + 1,
+                                tool_calls=tool_calls,
+                                terminated_reason="plan",
+                                terminated_reason_text=f"tech_blended:parse_failures={parse_failures}",
+                            )
                     return LoopResult(
                         plan=TradePlan.skip(self.asset, thesis="LLM produced unparseable output"),
                         steps_taken=step + 1,
@@ -430,7 +454,24 @@ class AgenticTradeLoop:
                 "content": "Envelope unrecognised. Use exactly one of {tool_call, plan, skip}.",
             })
 
-        # Out of budget — emit skip rather than an unbounded loop.
+        # Out of budget - tech-blended last-chance same as parse_failures:
+        # when the LLM exhausted max_steps without compiling a plan, the
+        # analyst was reasoning but never settled. Promote a strong tech
+        # signal if one exists rather than waste the tick.
+        if os.getenv("ACT_LLM_TECH_BLENDED", "0") == "1":
+            promoted = self._maybe_promote_technical_signal("max_steps_reached")
+            if promoted is not None:
+                logger.info(
+                    "[agentic_loop:%s] tech-blended override on max_steps - "
+                    "promoting tier=%s direction=%s",
+                    self.asset, promoted.entry_tier, promoted.direction,
+                )
+                return LoopResult(
+                    plan=promoted, steps_taken=self.max_steps,
+                    tool_calls=tool_calls,
+                    terminated_reason="plan",
+                    terminated_reason_text="tech_blended:max_steps_reached",
+                )
         return LoopResult(
             plan=TradePlan.skip(self.asset, thesis="max_steps reached"),
             steps_taken=self.max_steps,
