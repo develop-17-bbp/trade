@@ -703,7 +703,12 @@ if (Test-Path $exploreScript) {
     # quiet-hours cooldown. Operator directive 2026-04-30: trades must
     # fire automatically once START_ALL runs - this proves the path
     # without waiting for the LLM lane or the 4-hour soak gate.
-    $p12 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Paper Exploration && cd /d $dir && set PYTHONUNBUFFERED=1 && powershell -Command `"python scripts\paper_exploration_tick.py --venue auto --relaxed --force; while (`$true) { Start-Sleep -Seconds 900; python scripts\paper_exploration_tick.py --venue auto --relaxed }`"" -PassThru
+    # 5090 is the Robinhood box - hardcode --venue robinhood so a stray
+    # APCA_API_KEY_ID env var doesn't accidentally route exploration to
+    # Alpaca paper. Operator's RH dashboard would show zero new positions
+    # in that case (the trade landed at Alpaca instead). Operator directive
+    # 2026-04-30: 5090 must trade in Robinhood at any cost.
+    $p12 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Paper Exploration && cd /d $dir && set PYTHONUNBUFFERED=1 && powershell -Command `"python scripts\paper_exploration_tick.py --venue robinhood --relaxed --force; while (`$true) { Start-Sleep -Seconds 900; python scripts\paper_exploration_tick.py --venue robinhood --relaxed }`"" -PassThru
     try { $p12.PriorityClass = "Idle" } catch {}
     Start-Sleep 1
     OK "Paper Exploration PID=$($p12.Id)  (forced first trade + 15min poll; ACT_DISABLE_PAPER_EXPLORATION=1 to halt)"
