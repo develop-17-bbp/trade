@@ -78,11 +78,24 @@ QUIET_HOURS = float(os.environ.get("ACT_PAPER_EXPLORATION_QUIET_HOURS", "4"))
 SIZE_PCT = float(os.environ.get("ACT_PAPER_EXPLORATION_SIZE_PCT", "0.5"))
 MAX_PER_DAY = int(os.environ.get("ACT_PAPER_EXPLORATION_MAX_PER_DAY", "8"))
 
-# Asset selection: comma-sep tickers from env, else venue-specific defaults.
-# Picks one asset per call by highest 15-bar |momentum|.
+# Asset selection: comma-sep tickers from env, else use the project's
+# top-100 large-cap list + BTC/ETH on Alpaca crypto. Operator directive
+# 2026-04-30: 4060 should consider top 100 stocks + BTC + ETH, not the
+# 4-ETF SPY/QQQ/TQQQ/SOXL minimal basket.
+def _build_default_alpaca_basket() -> str:
+    try:
+        from src.trading.watchlist_scanner import TOP_100_LARGE_CAPS
+        crypto = ["BTC/USD", "ETH/USD"]
+        return ",".join(crypto + list(TOP_100_LARGE_CAPS))
+    except Exception:
+        # Fallback if watchlist module unavailable - keep BTC/ETH at the
+        # head so crypto coverage exists when stocks RTH is closed.
+        return ("BTC/USD,ETH/USD,NVDA,MSFT,AAPL,AMZN,GOOGL,META,TSLA,AVGO,"
+                "JPM,LLY,UNH,V,XOM,MA,JNJ,COST,HD,PG,WMT,SPY,QQQ")
+
 ALPACA_BASKET = os.environ.get(
     "ACT_PAPER_EXPLORATION_ALPACA_BASKET",
-    "BTC/USD,ETH/USD,SPY,QQQ,NVDA,AAPL,MSFT,TSLA,AMD,META",
+    _build_default_alpaca_basket(),
 ).split(",")
 ROBINHOOD_BASKET = os.environ.get(
     "ACT_PAPER_EXPLORATION_RH_BASKET",

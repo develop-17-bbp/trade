@@ -824,8 +824,24 @@ def build_analyst_llm_call(
     The agentic loop's iterated tool-use is the Analyst's natural
     habitat; scanner runs once per tick independently, not inside the
     loop.
+
+    Model fallback chain (operator directive 2026-04-30: 4060 must
+    produce LLM trades using ANY local model that works). Tries:
+      1. The configured analyst (e.g. qwen3:8b on local_8gb profile)
+      2. ACT_ANALYST_BACKUP_MODEL env (default llama3.2:3b - already
+         pre-pulled by START_ALL_4060.ps1)
+      3. The scanner model as last resort (already loaded; no extra VRAM)
+    Each step short-circuits on the first non-empty response. Net: when
+    the primary analyst is overloaded / parse-failing / 503, smaller
+    compliant models still produce SOMETHING the parser can handle
+    instead of the loop emitting empty -> parse_failures -> skip.
     """
     cfg = _resolve(config, ANALYST)
+    scanner_cfg = _resolve(config, SCANNER)
+    backup_model = (
+        os.environ.get("ACT_ANALYST_BACKUP_MODEL", "").strip()
+        or "llama3.2:3b"
+    )
 
     def _closure(messages: List[Dict[str, Any]]) -> str:
         # Flatten the message list into a single prompt (the existing
@@ -841,6 +857,34 @@ def build_analyst_llm_call(
                 continue  # system prompt is the Analyst's fixed one
             prompt_parts.append(f"[{role}]\n{content}")
         prompt = "\n\n".join(prompt_parts)
-        return _llm_call(cfg.model, prompt, cfg.system_prompt, cfg.temperature)
+
+        # Tier 1: configured analyst.
+        text = _llm_call(cfg.model, prompt, cfg.system_prompt, cfg.temperature)
+        if text and text.strip():
+            return text
+
+        # Tier 2: small backup analyst (llama3.2:3b by default - already
+        # pre-pulled, fits 8GB VRAM alongside scanner).
+        if backup_model and backup_model.lower() != cfg.model.lower():
+            logger.info(
+                "[BRAIN] analyst %s returned empty -> falling back to %s",
+                cfg.model, backup_model,
+            )
+            text = _llm_call(backup_model, prompt, cfg.system_prompt, cfg.temperature)
+            if text and text.strip():
+                return text
+
+        # Tier 3: scanner as analyst (already loaded; lowest depth but
+        # guaranteed available since scanner ran successfully this tick).
+        if scanner_cfg.model.lower() not in (cfg.model.lower(), backup_model.lower()):
+            logger.info(
+                "[BRAIN] backup %s also empty -> falling back to scanner %s as analyst",
+                backup_model, scanner_cfg.model,
+            )
+            text = _llm_call(scanner_cfg.model, prompt, cfg.system_prompt, cfg.temperature)
+            if text and text.strip():
+                return text
+
+        return ""
 
     return _closure
