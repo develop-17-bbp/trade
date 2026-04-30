@@ -20,6 +20,16 @@
 #   ACT_FINETUNE_PRIORITY      'stocks' (default) | 'crypto' | 'alternate'
 #   ACT_DISABLE_AGENTIC_LOOP=1 kill switch for live trading
 #   ACT_DISABLE_FINETUNE=1     kill switch for finetune router
+#
+# Auto-set defaults (this script populates them if unset):
+#   OLLAMA_REMOTE_URL    = http://act5090:11434     analyst served on 5090
+#   OLLAMA_REMOTE_MODEL  = qwen3-coder:30b          which model lives remote
+#   ACT_BRAIN_PROFILE    = moe_agentic              7b local + 30b remote
+# The 4060 has 8GB VRAM and CANNOT host the 30b analyst locally. Pointing
+# it at the 5090 over Tailscale is the only way the moe_agentic profile
+# fits. The 7b scanner stays local (fits in 8GB). Operator can override
+# any of these by setting the env var manually before launching this
+# script.
 
 $Host.UI.RawUI.BackgroundColor = [System.ConsoleColor]::Black
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -75,6 +85,45 @@ if (-not $env:ACT_5090_SSH_HOST) {
 if (-not $env:ACT_BOX_ROLE) {
     Warn "ACT_BOX_ROLE not set - defaulting to 'stocks' for the 4060"
     [Environment]::SetEnvironmentVariable("ACT_BOX_ROLE", "stocks", "Process")
+}
+
+# 4b. Tailscale-routed analyst (THE 30B LIVES ON THE 5090, NOT HERE)
+# The 4060 has 8GB VRAM and cannot host qwen3-coder:30b locally - that
+# would OOM on first inference. Default the remote-analyst env so the
+# dual_brain router calls the 5090 over Tailscale for analyst inference,
+# while the 7b scanner stays local. Operator overrides win.
+if (-not $env:OLLAMA_REMOTE_URL) {
+    [Environment]::SetEnvironmentVariable("OLLAMA_REMOTE_URL", "http://act5090:11434", "Process")
+    Ok "OLLAMA_REMOTE_URL defaulted to http://act5090:11434 (Tailscale)"
+} else {
+    Ok "OLLAMA_REMOTE_URL preset by operator: $env:OLLAMA_REMOTE_URL"
+}
+if (-not $env:OLLAMA_REMOTE_MODEL) {
+    [Environment]::SetEnvironmentVariable("OLLAMA_REMOTE_MODEL", "qwen3-coder:30b", "Process")
+    Ok "OLLAMA_REMOTE_MODEL defaulted to qwen3-coder:30b (analyst)"
+} else {
+    Ok "OLLAMA_REMOTE_MODEL preset by operator: $env:OLLAMA_REMOTE_MODEL"
+}
+if (-not $env:ACT_BRAIN_PROFILE) {
+    [Environment]::SetEnvironmentVariable("ACT_BRAIN_PROFILE", "moe_agentic", "Process")
+    Ok "ACT_BRAIN_PROFILE defaulted to moe_agentic (7b local + 30b remote)"
+}
+
+# 4c. Probe the remote analyst before launch so silence has a stated reason
+# Warn-only: if 5090 is unreachable, the bot still boots into shadow mode
+# (LLM-GATE catches it). Hard-fail would be too brittle if 5090 reboots.
+$probeUrl = $env:OLLAMA_REMOTE_URL
+$probeModel = $env:OLLAMA_REMOTE_MODEL
+try {
+    $resp = Invoke-RestMethod -Uri "$probeUrl/api/tags" -TimeoutSec 5 -ErrorAction Stop
+    $hasModel = $resp.models | Where-Object { $_.name -like "$probeModel*" }
+    if ($hasModel) {
+        Ok "remote analyst reachable: $probeModel @ $probeUrl"
+    } else {
+        Warn "remote $probeUrl reachable but $probeModel NOT pulled there - run 'ollama pull $probeModel' on the 5090"
+    }
+} catch {
+    Warn "remote analyst unreachable at $probeUrl - check Tailscale + 5090 firewall (TCP 11434) + OLLAMA_HOST=0.0.0.0:11434 on the 5090"
 }
 
 # 5. GPU (informational)
