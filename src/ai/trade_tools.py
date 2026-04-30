@@ -657,6 +657,79 @@ def _build_default_registry_uncached() -> ToolRegistry:
         tag="write",
     ))
 
+    # ── Options tools (Alpaca options Level 3) ────────────────────────
+    # These let the analyst evaluate option contracts alongside spot
+    # stock/crypto each tick, picking whichever has higher EV. Long-
+    # directional only in this commit (single-leg long_call / long_put);
+    # multi-leg spreads come later. Operator pre-req: Alpaca paper
+    # account must have options Level 3 cleared, and the alpaca_options
+    # exchange enabled (ACT_BOX_ROLE includes 'options').
+
+    reg.register(Tool(
+        name="get_option_chain",
+        description=(
+            "Fetch a filtered options chain snapshot for an underlying. "
+            "Returns top-K contracts in the DTE window with bid/ask + "
+            "greeks (delta/gamma/theta/vega) + IV. Use this BEFORE "
+            "submit_option_trade to pick the best strike + expiration "
+            "for a directional thesis. ATM/near-ATM contracts have "
+            "the tightest spreads — that's where most edge survives "
+            "the fill cost."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "underlying": {"type": "string",
+                               "description": "Stock ticker e.g. 'SPY', 'NVDA', 'TSLA'"},
+                "side":       {"type": "string", "enum": ["call", "put"]},
+                "min_dte":    {"type": "integer", "minimum": 1, "maximum": 365,
+                               "description": "Min days to expiration. Default 7 (avoid 0-DTE)."},
+                "max_dte":    {"type": "integer", "minimum": 1, "maximum": 365,
+                               "description": "Max days to expiration. Default 45 (short-dated)."},
+                "limit":      {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+            "required": ["underlying", "side"],
+        },
+        handler=_handle_get_option_chain,
+        tag="read_only",
+    ))
+
+    reg.register(Tool(
+        name="submit_option_trade",
+        description=(
+            "Submit a long-directional option order (long_call OR "
+            "long_put). Re-validated against DTE window, greek caps, "
+            "and RTH gate; the LLM cannot bypass these. Use this when "
+            "you've identified a directional setup AND determined that "
+            "an option's leverage/defined-risk profile beats the "
+            "underlying's spot trade. Returns {status, order_id?, "
+            "occ_symbol, reason?}."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "underlying": {"type": "string"},
+                "side":       {"type": "string", "enum": ["call", "put"]},
+                "strike":     {"type": "number", "minimum": 0.01,
+                               "description": "Contract strike price."},
+                "expiration": {"type": "string",
+                               "description": "ISO date YYYY-MM-DD."},
+                "qty":        {"type": "integer", "minimum": 1, "maximum": 100,
+                               "description": "Number of contracts (each = 100 shares)."},
+                "limit_price": {"type": "number", "minimum": 0.01,
+                                "description": "Optional limit; omit for market order."},
+                "delta_estimate": {"type": "number",
+                                   "description": "Optional delta from chain; used for greek-cap check."},
+                "vega_estimate":  {"type": "number",
+                                   "description": "Optional vega from chain; used for greek-cap check."},
+                "conviction_tier": {"type": "string", "enum": ["sniper", "normal"]},
+            },
+            "required": ["underlying", "side", "strike", "expiration", "qty"],
+        },
+        handler=_handle_submit_option_trade,
+        tag="write",
+    ))
+
     return reg
 
 
@@ -808,4 +881,123 @@ def _handle_submit_plan(args: Dict[str, Any]) -> Dict[str, Any]:
         "direction": plan.direction,
         "entry_tier": plan.entry_tier,
         "size_pct": plan.size_pct,
+    }
+
+
+# ── Options handlers ───────────────────────────────────────────────
+
+
+def _handle_get_option_chain(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a filtered options chain snapshot.
+
+    Errors collapse to {"error": ..., "contracts": []} so the LLM
+    sees a structured answer it can reason over instead of a stack
+    trace.
+    """
+    underlying = str(args.get("underlying") or "").upper().strip()
+    if not underlying:
+        return {"error": "underlying_required", "contracts": []}
+    side = str(args.get("side") or "call").lower().strip()
+    if side not in ("call", "put"):
+        return {"error": f"bad_side:{side}", "contracts": []}
+    min_dte = int(args.get("min_dte") or 7)
+    max_dte = int(args.get("max_dte") or 45)
+    limit = int(args.get("limit") or 20)
+    try:
+        from src.data.alpaca_options_fetcher import AlpacaOptionsFetcher
+        f = AlpacaOptionsFetcher(paper=True)
+        if not f.available:
+            return {"error": "alpaca_unavailable", "contracts": []}
+        contracts = f.chain(
+            underlying, side=side,
+            min_dte=min_dte, max_dte=max_dte, limit=limit,
+        )
+    except Exception as e:
+        return {"error": f"chain_fetch_failed: {type(e).__name__}: {e}",
+                "contracts": []}
+    # Compact summary first, then top-K rows. Bid/ask spread + greeks
+    # in 1-2 decimals so the LLM can compare contracts without drowning
+    # in precision.
+    rows = []
+    for c in contracts[:limit]:
+        rows.append({
+            "symbol":     c.get("symbol"),
+            "strike":     c.get("strike"),
+            "expiration": c.get("expiration"),
+            "dte":        c.get("dte"),
+            "bid":        round(float(c.get("bid") or 0), 2),
+            "ask":        round(float(c.get("ask") or 0), 2),
+            "delta":      None if c.get("delta") is None else round(c["delta"], 3),
+            "vega":       None if c.get("vega") is None else round(c["vega"], 2),
+            "iv":         None if c.get("iv") is None else round(c["iv"], 3),
+        })
+    return {
+        "underlying": underlying,
+        "side":       side,
+        "count":      len(rows),
+        "contracts":  rows,
+        "note": (
+            "ATM/near-ATM contracts have tightest spreads. Pick a strike "
+            "+ expiration that balances delta exposure against premium "
+            "cost; check delta is within the per-position cap (default 0.5)."
+        ),
+    }
+
+
+def _handle_submit_option_trade(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Submit a single-leg long call/put. Validated by the executor's
+    DTE / greek-cap / RTH gates; the LLM cannot bypass them.
+    """
+    underlying = str(args.get("underlying") or "").upper().strip()
+    side = str(args.get("side") or "").lower().strip()
+    if not underlying or side not in ("call", "put"):
+        return {"status": "rejected",
+                "reason": f"bad_args underlying={underlying} side={side}"}
+    try:
+        strike = float(args.get("strike"))
+    except (TypeError, ValueError):
+        return {"status": "rejected", "reason": f"bad_strike:{args.get('strike')}"}
+    expiration = str(args.get("expiration") or "").strip()
+    qty = int(args.get("qty") or 1)
+    limit_price = args.get("limit_price")
+    if limit_price is not None:
+        try:
+            limit_price = float(limit_price)
+        except (TypeError, ValueError):
+            limit_price = None
+    delta_estimate = args.get("delta_estimate")
+    vega_estimate = args.get("vega_estimate")
+    conviction_tier = str(args.get("conviction_tier") or "normal").lower()
+
+    try:
+        from src.trading.alpaca_options_executor import AlpacaOptionsExecutor
+        ex = AlpacaOptionsExecutor(paper=True)
+    except Exception as e:
+        return {"status": "rejected",
+                "reason": f"executor_init_failed:{type(e).__name__}:{e}"}
+
+    res = ex.submit_long_directional(
+        underlying=underlying,
+        side=side,
+        strike=strike,
+        expiration=expiration,
+        qty=qty,
+        limit_price=limit_price,
+        delta_estimate=(float(delta_estimate)
+                        if delta_estimate is not None else None),
+        vega_estimate=(float(vega_estimate)
+                       if vega_estimate is not None else None),
+        conviction_tier=conviction_tier,
+        plan={
+            "asset": underlying, "direction": "LONG_CALL" if side == "call" else "LONG_PUT",
+            "strike": strike, "expiration": expiration,
+            "qty": qty, "conviction_tier": conviction_tier,
+        },
+    )
+    return {
+        "status":     "accepted" if res.submitted else "rejected",
+        "order_id":   res.order_id,
+        "occ_symbol": res.occ_symbol,
+        "reason":     res.reason,
+        "decision_id": res.decision_id,
     }

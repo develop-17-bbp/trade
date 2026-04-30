@@ -153,7 +153,7 @@ OUTCOMES (what success looks like):
      the next tick's analyst (you) is smarter.
 
 OPERATOR'S OPERATIONS (everything a human trader does, available as tools):
-   - submit_trade_plan       — open a new position
+   - submit_trade_plan       — open a new SPOT position (stocks long/short, crypto long)
    - close_paper_position    — exit (full or partial via fraction=0.5 etc)
    - modify_paper_position   — adjust SL/TP on an open position
    - query_open_positions_detail — per-position state (entry, PnL, age, thesis)
@@ -161,6 +161,24 @@ OPERATOR'S OPERATIONS (everything a human trader does, available as tools):
    - query_robinhood_balance — buying power
    - query_recent_plans      — your own prior decisions
    - query_venue_capabilities — what the venue supports (long/short/leverage)
+   - get_option_chain        — pull option chain snapshot for an underlying
+                               (returns top-K contracts in DTE window with
+                               bid/ask + greeks + IV).
+   - submit_option_trade     — open a long_call OR long_put (single-leg).
+                               When you see a strong directional thesis on
+                               a liquid underlying (SPY/QQQ/NVDA/AAPL/etc),
+                               COMPARE the spot trade vs the option trade:
+                                 * spot:   1:1 exposure, ties up underlying-price capital
+                                 * call:   leveraged upside (5-10x), expires worthless
+                                           if wrong, defined risk = premium paid
+                                 * put:    same as call but for downside; useful when
+                                           shorting is restricted (non-ETB symbols) or
+                                           when defined risk beats borrow cost
+                               Pick the option when EV per dollar at risk > spot,
+                               OR when the underlying isn't shortable but you
+                               want downside exposure. Always call get_option_chain
+                               FIRST to see the actual bid/ask + delta before
+                               sizing — the chain probe is cheap.
 
 HOLD-UNTIL-PROFIT MODE (when ACT_HOLD_UNTIL_PROFIT=1 in paper mode):
 The operator may set this flag to suppress the body's auto-SL bleeding
