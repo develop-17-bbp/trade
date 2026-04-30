@@ -118,20 +118,64 @@ def _force_robinhood_paper(asset: str, side: str, qty: float,
     from src.data.robinhood_fetcher import RobinhoodPaperFetcher
     pf = RobinhoodPaperFetcher(config=config)
 
-    # Pull live price for a realistic fill. If RH client unavailable,
-    # use a hardcoded reasonable price as last resort so the test
-    # still runs.
+    # Pull live price. Try sources in priority order:
+    #   1. RH client mid (best — same data the bot's monitor uses if RH connected)
+    #   2. Alpaca crypto endpoint (almost always reachable; APCA keys in env)
+    #   3. LiveCoinWatch (broad crypto coverage, separate API)
+    #   4. Hardcoded approx (LAST RESORT — produces synthetic-fill warnings).
+    # The hardcoded fallback was causing test entries to open at $75K
+    # while live BTC was $76K+, making positions show $0 unrealized PnL
+    # forever instead of an immediate +1.5% gain. Real-price fills
+    # match what the bot's position-monitor sees on the next tick, so
+    # PnL accounting is honest.
     fill_price = None
     if pf.connected:
         try:
             quote = pf.get_live_price(asset)
             if quote.get("mid"):
                 fill_price = float(quote["mid"])
+                logger.info(f"[PRICE] tier-1 RH mid: ${fill_price:,.2f}")
         except Exception as e:
-            logger.warning(f"live price fetch failed: {e}; using fallback")
+            logger.debug(f"RH live price failed: {e}")
+    if not fill_price:
+        try:
+            from src.data.alpaca_fetcher import AlpacaFetcher
+            af = AlpacaFetcher(paper=True)
+            if af.available:
+                # Crypto symbols on Alpaca need slash form: BTC -> BTC/USD
+                alpaca_sym = asset if "/" in asset else f"{asset}/USD"
+                tk = af.fetch_ticker(alpaca_sym)
+                bid = float(tk.get("bid") or 0)
+                ask = float(tk.get("ask") or 0)
+                last = float(tk.get("last") or 0)
+                if bid > 0 and ask > 0:
+                    fill_price = (bid + ask) / 2.0
+                elif last > 0:
+                    fill_price = last
+                if fill_price:
+                    logger.info(f"[PRICE] tier-2 Alpaca crypto: ${fill_price:,.2f}")
+        except Exception as e:
+            logger.debug(f"Alpaca crypto price probe failed: {e}")
+    if not fill_price:
+        try:
+            from src.data.livecoinwatch_fetcher import LiveCoinWatchFetcher
+            import os as _os
+            lcw_key = _os.environ.get("LIVECOINWATCH_API_KEY", "")
+            if lcw_key:
+                lcw = LiveCoinWatchFetcher(api_key=lcw_key)
+                px = lcw.get_price(asset)
+                if px:
+                    fill_price = float(px)
+                    logger.info(f"[PRICE] tier-3 LiveCoinWatch: ${fill_price:,.2f}")
+        except Exception as e:
+            logger.debug(f"LiveCoinWatch price probe failed: {e}")
     if not fill_price:
         fill_price = {"BTC": 75000.0, "ETH": 2200.0}.get(asset, 100.0)
-        logger.warning(f"[WARN] using fallback price ${fill_price} for {asset}")
+        logger.warning(
+            f"[WARN] all live-price sources failed - using SYNTHETIC fallback ${fill_price} for {asset}. "
+            "Position will show wrong unrealized PnL until next monitor tick. "
+            "Set ROBINHOOD_API_KEY or LIVECOINWATCH_API_KEY for real fills."
+        )
 
     direction = "LONG" if side == "buy" else "SHORT"
     if direction == "LONG":
