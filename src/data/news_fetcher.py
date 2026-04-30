@@ -164,49 +164,87 @@ class NewsFetcher:
     def fetch_all(self, query: str = 'crypto', limit: int = 100) -> List[NewsItem]:
         """Fetch from all available sources, dedupe, and return sorted by recency.
 
-        Priority order (use primary sources first, fallback to CoinGecko only if needed):
-        1. NewsAPI (if key available) - HIGH QUALITY news + crypto keywords
-        2. CryptoPanic (if token available) - REAL-TIME crypto news
-        3. Reddit (always available) - Community sentiment + discussion threads
-        4. CoinGecko (fallback only) - Trending data when other sources insufficient
+        Source priority depends on the asset class detected from `query`:
 
-        The `limit` parameter controls the maximum number of headlines returned
-        after deduplication; internally each source is queried with the same
-        limit.  Defaults to a generous 100 to avoid starving the sentiment layer.
+        STOCKS (NVDA, SPY, AAPL, ...):
+          1. Alpaca News API — symbol-tagged headlines, the proper feed
+          2. NewsAPI — generic web news with stock keyword
+          3. Reddit r/investing / r/stocks fallback
+          (Skips CryptoPanic + CoinGecko + r/cryptocurrency — wrong universe.)
+
+        CRYPTO (BTC, ETH, ...) and unknown queries:
+          1. NewsAPI (general news + crypto keyword)
+          2. CryptoPanic (real-time crypto)
+          3. Reddit r/cryptocurrency / r/Bitcoin
+          4. CoinGecko trending (fallback)
+
+        Asset class detection: query matches a stock TICKER_MAP entry,
+        OR caller passed a known stock ticker. Defaults to crypto path
+        for backwards compatibility.
         """
         items: List[NewsItem] = []
         sources_used: List[str] = []
 
-        # PRIMARY: General news via NewsAPI (highest quality when available)
-        if self.newsapi_key:
-            newsapi_items = self._fetch_newsapi(f"{query} crypto", limit)
-            newsapi_items.extend(self._fetch_newsapi(f"Binance {query}", limit // 2))
-            items.extend(newsapi_items)
-            sources_used.append(f"NewsAPI ({len(newsapi_items)} items)")
-        else:
-            sources_used.append("NewsAPI (⚠️  no key configured)")
+        # Asset-class routing: is this a stock symbol query?
+        q_upper = (query or "").strip().upper()
+        # Stocks set: any TICKER_MAP key not in the crypto whitelist.
+        _CRYPTO_TICKERS = {'BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOGE', 'DOT',
+                            'AVAX', 'LINK', 'MATIC'}
+        _STOCK_TICKERS = {k for k in self.TICKER_MAP.keys() if k not in _CRYPTO_TICKERS}
+        is_stock_query = q_upper in _STOCK_TICKERS
 
-        # SECONDARY: CryptoPanic (real-time crypto specific)
-        if self.cryptopanic_token:
-            cp_items = self._fetch_cryptopanic(limit)
-            items.extend(cp_items)
-            sources_used.append(f"CryptoPanic ({len(cp_items)} items)")
-        else:
-            sources_used.append("CryptoPanic (⚠️  no token configured)")
+        if is_stock_query:
+            # PRIMARY: Alpaca News API — symbol-tagged
+            alp_items = self._fetch_alpaca_news(symbols=[q_upper], limit=limit)
+            items.extend(alp_items)
+            sources_used.append(f"Alpaca news ({len(alp_items)} items)")
 
-        # TERTIARY: Reddit (community sentiment)
-        reddit_items = self._fetch_reddit(query, limit)
-        items.extend(reddit_items)
-        sources_used.append(f"Reddit ({len(reddit_items)} items)")
+            # SECONDARY: NewsAPI with stock keyword (e.g. "Nvidia stock")
+            if self.newsapi_key:
+                # Use full-name keyword for better recall
+                kws = self.TICKER_MAP.get(q_upper, [q_upper.lower()])
+                primary_kw = kws[0] if kws else q_upper.lower()
+                na_items = self._fetch_newsapi(f"{primary_kw} stock earnings", limit)
+                items.extend(na_items)
+                sources_used.append(f"NewsAPI ({len(na_items)} items)")
+            else:
+                sources_used.append("NewsAPI (no key)")
 
-        # FALLBACK: CoinGecko trending (only if primary sources returned few items)
-        # Don't use CoinGecko if we already have good data from NewsAPI/CryptoPanic
-        if len(items) < limit // 2:
-            cg_items = self._fetch_coingecko_trending()
-            items.extend(cg_items)
-            sources_used.append(f"CoinGecko FALLBACK ({len(cg_items)} items)")
+            # Note: skipping crypto-only sources for stock queries — that
+            # was the bug: NewsAPI was queried with "{stock} crypto"
+            # which returned nothing relevant; CryptoPanic + CoinGecko
+            # never have stock data; r/cryptocurrency is wrong universe.
+
         else:
-            sources_used.append("CoinGecko (skipped - sufficient items from primary sources)")
+            # PRIMARY: General news via NewsAPI (highest quality when available)
+            if self.newsapi_key:
+                newsapi_items = self._fetch_newsapi(f"{query} crypto", limit)
+                newsapi_items.extend(self._fetch_newsapi(f"Binance {query}", limit // 2))
+                items.extend(newsapi_items)
+                sources_used.append(f"NewsAPI ({len(newsapi_items)} items)")
+            else:
+                sources_used.append("NewsAPI (no key configured)")
+
+            # SECONDARY: CryptoPanic (real-time crypto specific)
+            if self.cryptopanic_token:
+                cp_items = self._fetch_cryptopanic(limit)
+                items.extend(cp_items)
+                sources_used.append(f"CryptoPanic ({len(cp_items)} items)")
+            else:
+                sources_used.append("CryptoPanic (no token configured)")
+
+            # TERTIARY: Reddit (community sentiment)
+            reddit_items = self._fetch_reddit(query, limit)
+            items.extend(reddit_items)
+            sources_used.append(f"Reddit ({len(reddit_items)} items)")
+
+            # FALLBACK: CoinGecko trending
+            if len(items) < limit // 2:
+                cg_items = self._fetch_coingecko_trending()
+                items.extend(cg_items)
+                sources_used.append(f"CoinGecko FALLBACK ({len(cg_items)} items)")
+            else:
+                sources_used.append("CoinGecko (skipped - sufficient items)")
 
         # Deduplicate by title similarity
         items = self._dedupe(items)
@@ -348,6 +386,84 @@ class NewsFetcher:
                             timestamp=ts,
                             url=article.get('url', ''),
                         ))
+        except Exception:
+            pass
+
+        self._set_cache(cache_key, items)
+        return items
+
+    def _fetch_alpaca_news(self, symbols: Optional[List[str]] = None,
+                           limit: int = 50) -> List[NewsItem]:
+        """Fetch news from Alpaca's /v1beta1/news endpoint — proper source
+        for stock news (and increasingly crypto too).
+
+        Each headline is symbol-tagged by Alpaca, so we get the precise
+        per-stock news the FinBERT sentiment layer + 13-agent voter need
+        instead of relying on keyword-matching against generic NewsAPI
+        crypto queries (which never returned stock results).
+
+        Free tier (paper): full access. Auth: APCA_API_KEY_ID +
+        APCA_API_SECRET_KEY (same as paper trading auth).
+
+        Symbol filter is optional. Without it, returns the broadest
+        cross-symbol feed which is useful for general market sentiment.
+        """
+        import os as _os
+        key = _os.environ.get('APCA_API_KEY_ID', '').strip()
+        secret = _os.environ.get('APCA_API_SECRET_KEY', '').strip()
+        if not key or not secret:
+            return []
+        # Cache by symbol-set so we don't re-hit Alpaca for every agent
+        # asking the same question within the 120s window.
+        sym_key = ",".join(sorted(symbols or [])) if symbols else "ALL"
+        cache_key = f'alpaca_news_{sym_key}_{limit}'
+        cached = self._check_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        items: List[NewsItem] = []
+        try:
+            url = "https://data.alpaca.markets/v1beta1/news"
+            params: Dict[str, Any] = {
+                "limit": int(min(max(limit, 1), 50)),
+                "sort":  "desc",
+                "include_content": "false",   # headlines + summary only
+            }
+            if symbols:
+                params["symbols"] = ",".join(s.upper() for s in symbols)
+            headers = {
+                "APCA-API-KEY-ID":     key,
+                "APCA-API-SECRET-KEY": secret,
+                **self.headers,
+            }
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                return []
+            data = resp.json() or {}
+            for article in (data.get("news") or [])[:limit]:
+                headline = article.get("headline") or ""
+                summary = article.get("summary") or ""
+                title = headline or summary
+                if not title:
+                    continue
+                # Alpaca returns ISO 8601 created_at
+                created_at = article.get("created_at") or ""
+                try:
+                    ts = datetime.fromisoformat(
+                        str(created_at).replace("Z", "+00:00")
+                    ).timestamp()
+                except Exception:
+                    ts = time.time()
+                # Symbols field is a list — turn it into a comma string
+                # so the matcher in fetch_all can extract tickers cleanly.
+                syms = article.get("symbols") or []
+                items.append(NewsItem(
+                    title=title,
+                    source=f"alpaca/{article.get('source') or 'newsapi'}",
+                    timestamp=ts,
+                    url=article.get("url", ""),
+                    tickers=[s.upper() for s in syms if isinstance(s, str)],
+                ))
         except Exception:
             pass
 
