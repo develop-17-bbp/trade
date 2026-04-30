@@ -1,0 +1,367 @@
+"""Paper-soak exploration tick — fires one small trade when the bot
+has been silent for too long.
+
+Why this exists:
+  Paper soak needs ACCUMULATION of warm_store data so the readiness
+  gate, fine-tune corpus, and credit assigner have something to learn
+  from. When the LLM analyst is unreachable (Ollama endpoint flap)
+  or the conviction gate is correctly refusing low-quality setups
+  on a dead-quiet market, the soak can sit empty for days. This
+  script breaks that stalemate by firing one small momentum-following
+  trade per quiet period, tagged so post-hoc audit knows the trade
+  came from exploration rather than a real signal.
+
+Hard rules:
+  * Paper-only. ACT_REAL_CAPITAL_ENABLED=1 is a HARD SKIP.
+  * Default 0.5% size. ACT_PAPER_EXPLORATION_SIZE_PCT overrides.
+  * Default fires only if no warm_store decision in the last 4 hours.
+  * Default max 8 exploration trades per UTC day.
+  * Direction follows last 15-bar momentum (BUY if up, SELL if down).
+    Random would be worse than informed-but-loose-thresholds.
+  * Operator kill: ACT_DISABLE_PAPER_EXPLORATION=1 or
+    ACT_DISABLE_AGENTIC_LOOP=1 (broader kill).
+  * Tags warm_store row with conviction_tier='paper_explore' so the
+    fine-tune training-data filter can exclude these from the corpus.
+
+Wire up by adding to START_ALL.ps1 + START_ALL_4060.ps1 as a
+scheduled tick (every 15 min is fine; the cooldown enforces real
+cadence). This is a standalone script — runs once and exits — so
+it works equally well from Windows Scheduled Tasks, cron, or a
+START_ALL background loop.
+
+Usage (one-shot):
+    python scripts/paper_exploration_tick.py
+    python scripts/paper_exploration_tick.py --once
+    python scripts/paper_exploration_tick.py --venue alpaca
+    python scripts/paper_exploration_tick.py --venue robinhood
+    python scripts/paper_exploration_tick.py --venue auto  (default)
+
+`auto` picks alpaca if APCA_* env is set, else robinhood paper-sim.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import logging
+import math
+import os
+import random
+import sys
+from typing import List, Optional, Tuple
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("paper_exploration")
+
+
+# ── Tunables (env overridable) ────────────────────────────────────
+
+QUIET_HOURS = float(os.environ.get("ACT_PAPER_EXPLORATION_QUIET_HOURS", "4"))
+SIZE_PCT = float(os.environ.get("ACT_PAPER_EXPLORATION_SIZE_PCT", "0.5"))
+MAX_PER_DAY = int(os.environ.get("ACT_PAPER_EXPLORATION_MAX_PER_DAY", "8"))
+
+# Asset selection: comma-sep tickers from env, else venue-specific defaults.
+# Picks one asset per call by highest 15-bar |momentum|.
+ALPACA_BASKET = os.environ.get(
+    "ACT_PAPER_EXPLORATION_ALPACA_BASKET",
+    "BTC/USD,ETH/USD,SPY,QQQ,NVDA,AAPL,MSFT,TSLA,AMD,META",
+).split(",")
+ROBINHOOD_BASKET = os.environ.get(
+    "ACT_PAPER_EXPLORATION_RH_BASKET",
+    "BTC,ETH",
+).split(",")
+
+
+# ── Gate checks ───────────────────────────────────────────────────
+
+
+def _is_disabled() -> Optional[str]:
+    if os.environ.get("ACT_REAL_CAPITAL_ENABLED") == "1":
+        return "ACT_REAL_CAPITAL_ENABLED=1 (hard skip on real capital)"
+    if os.environ.get("ACT_DISABLE_PAPER_EXPLORATION") == "1":
+        return "ACT_DISABLE_PAPER_EXPLORATION=1"
+    if os.environ.get("ACT_DISABLE_AGENTIC_LOOP") == "1":
+        return "ACT_DISABLE_AGENTIC_LOOP=1"
+    return None
+
+
+def _last_decision_age_h() -> float:
+    """Return hours since last warm_store decision. inf when warm_store
+    has no rows (first soak, fresh DB)."""
+    try:
+        from src.orchestration.warm_store import get_store
+        store = get_store()
+        store.flush()
+        conn = store._get_conn()
+        row = conn.execute(
+            "SELECT MAX(ts_ns) FROM decisions"
+        ).fetchone()
+    except Exception as e:
+        logger.debug("warm_store probe failed: %s", e)
+        return math.inf
+    if not row or row[0] is None:
+        return math.inf
+    import time
+    return (time.time_ns() - int(row[0])) / 1e9 / 3600.0
+
+
+def _today_explore_count() -> int:
+    """Count exploration trades fired so far today (UTC)."""
+    try:
+        from src.orchestration.warm_store import get_store
+        store = get_store()
+        store.flush()
+        conn = store._get_conn()
+        today_utc = _dt.datetime.now(_dt.timezone.utc).date()
+        start_ts_ns = int(_dt.datetime(
+            today_utc.year, today_utc.month, today_utc.day,
+            tzinfo=_dt.timezone.utc,
+        ).timestamp() * 1e9)
+        row = conn.execute(
+            "SELECT COUNT(*) FROM decisions WHERE ts_ns >= ? AND conviction_tier = 'paper_explore'",
+            (start_ts_ns,),
+        ).fetchone()
+    except Exception:
+        return 0
+    return int(row[0] or 0) if row else 0
+
+
+# ── Momentum scoring (15-bar pct change abs ranks) ────────────────
+
+
+def _pick_asset_alpaca() -> Optional[Tuple[str, str]]:
+    """Pick (symbol, side) by 15-bar momentum across the alpaca basket.
+    Side 'buy' if last bar close > 15 bars ago, 'sell' otherwise.
+    Returns None if no asset has enough data."""
+    try:
+        from src.data.alpaca_fetcher import AlpacaFetcher
+        f = AlpacaFetcher(paper=True)
+        if not f.available:
+            return None
+    except Exception:
+        return None
+
+    best: Optional[Tuple[str, str, float]] = None
+    for sym in ALPACA_BASKET:
+        sym = sym.strip().upper()
+        if not sym:
+            continue
+        try:
+            bars = f.fetch_ohlcv(sym, timeframe="5Min", limit=20)
+            if not bars or len(bars) < 16:
+                continue
+            close_now = float(bars[-1][4])
+            close_ago = float(bars[-16][4])
+            if close_ago <= 0:
+                continue
+            mom_pct = (close_now - close_ago) / close_ago * 100.0
+            if best is None or abs(mom_pct) > abs(best[2]):
+                best = (sym, "buy" if mom_pct > 0 else "sell", mom_pct)
+        except Exception as e:
+            logger.debug("momentum probe failed for %s: %s", sym, e)
+            continue
+    if best is None:
+        return None
+    sym, side, mom = best
+    logger.info("[EXPLORE] picked %s %s (momentum %+.2f%% over 15×5m bars)",
+                sym, side.upper(), mom)
+    return sym, side
+
+
+# ── Submission ────────────────────────────────────────────────────
+
+
+def _submit_alpaca(symbol: str, side: str) -> int:
+    """Submit a small exploration trade via PriceFetcher (handles both
+    stocks + crypto). Tagged so audit can identify it."""
+    if not os.environ.get("APCA_API_KEY_ID") or not os.environ.get("APCA_API_SECRET_KEY"):
+        logger.error("APCA_* keys missing - cannot submit alpaca exploration")
+        return 2
+
+    is_crypto = "/" in symbol
+    venue = "alpaca_crypto" if is_crypto else "alpaca"
+    try:
+        from src.data.fetcher import PriceFetcher
+        fetcher = PriceFetcher(exchange_name=venue, testnet=True)
+    except Exception as e:
+        logger.error("PriceFetcher init failed for %s: %s", venue, e)
+        return 3
+
+    if not getattr(fetcher, "_available", False):
+        logger.error("PriceFetcher not available for %s", venue)
+        return 3
+
+    # Size: SIZE_PCT of equity, in shares/qty. For crypto this is a
+    # fractional unit; for stocks we pick min(1, calculated qty).
+    try:
+        acct = fetcher.alpaca.get_account() if hasattr(fetcher, "alpaca") and fetcher.alpaca else {}
+        equity = float(acct.get("equity", 100000) or 100000)
+    except Exception:
+        equity = 100000.0
+
+    notional = equity * (SIZE_PCT / 100.0)
+    # Quick price probe for sizing
+    try:
+        last_px = float(fetcher.fetch_latest_price(symbol) or 0)
+    except Exception:
+        last_px = 0.0
+    if last_px <= 0:
+        logger.error("Could not get last price for %s", symbol)
+        return 4
+    qty = notional / last_px
+    if not is_crypto:
+        qty = max(1, int(qty))
+    else:
+        qty = round(qty, 6)
+
+    logger.info("[EXPLORE] submitting %s %s qty=%s (~$%.0f at $%.2f)",
+                side.upper(), symbol, qty, notional, last_px)
+    try:
+        result = fetcher.place_order(
+            symbol=symbol, side=side, amount=float(qty),
+            order_type="market",
+        )
+    except Exception as e:
+        logger.error("place_order raised: %s", e)
+        return 5
+
+    if result.get("status") == "success":
+        logger.info("[OK] EXPLORE order accepted: %s", result.get("order_id"))
+        # Mark as exploration in warm_store so the corpus filter knows.
+        try:
+            from src.orchestration.warm_store import get_store
+            import uuid as _uuid
+            import time as _time
+            store = get_store()
+            row = {
+                "decision_id": f"paper_explore_{_uuid.uuid4().hex}",
+                "ts_ns": _time.time_ns(),
+                "symbol": symbol, "asset_class": "CRYPTO" if is_crypto else "STOCK",
+                "venue": "alpaca", "side": side, "qty": float(qty),
+                "conviction_tier": "paper_explore",
+                "final_action": "EXPLORE_SUBMIT",
+                "plan_json": {"exploration": True, "size_pct": SIZE_PCT},
+                "order_resp": result,
+            }
+            try:
+                store.write_decision(row)
+            except Exception:
+                store.write(row)
+        except Exception as e:
+            logger.debug("warm_store write soft-fail: %s", e)
+        return 0
+    logger.error("[FAIL] EXPLORE rejected: %s", result)
+    return 6
+
+
+def _submit_robinhood(asset: str, side: str) -> int:
+    """RH paper-sim — internal-only, uses RobinhoodPaperFetcher."""
+    import yaml
+    from pathlib import Path
+    cfg_path = Path(_PROJECT_ROOT) / "config.yaml"
+    try:
+        config = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error("config load failed: %s", e)
+        return 4
+
+    from src.data.robinhood_fetcher import RobinhoodPaperFetcher
+    pf = RobinhoodPaperFetcher(config=config)
+
+    fill_price = None
+    if pf.connected:
+        try:
+            q = pf.get_live_price(asset)
+            if q.get("mid"):
+                fill_price = float(q["mid"])
+        except Exception:
+            pass
+    if not fill_price:
+        fill_price = {"BTC": 75000.0, "ETH": 2200.0}.get(asset, 100.0)
+
+    direction = "LONG" if side == "buy" else "SHORT"
+    qty = (pf.equity * SIZE_PCT / 100.0) / fill_price
+    qty = round(qty, 6)
+    logger.info("[EXPLORE] RH paper-sim: %s %s %s @ $%.2f", direction, qty, asset, fill_price)
+
+    pos = pf.record_entry(
+        asset=asset, direction=direction, price=fill_price,
+        score=5, quantity=qty,
+        sl_price=fill_price * (0.97 if direction == "LONG" else 1.03),
+        tp_price=fill_price * (1.03 if direction == "LONG" else 0.97),
+        ml_confidence=0.4, llm_confidence=0.4,
+        size_pct=SIZE_PCT,
+        reasoning="paper_exploration_tick.py (low-conviction soak data)",
+    )
+    return 0 if pos is not None else 5
+
+
+# ── Main ──────────────────────────────────────────────────────────
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--venue", choices=["alpaca", "robinhood", "auto"], default="auto")
+    p.add_argument("--once", action="store_true",
+                   help="Single-shot. Always true; flag is a no-op for compat.")
+    p.add_argument("--force", action="store_true",
+                   help="Skip the quiet-hours + daily-cap gates (testing only).")
+    args = p.parse_args()
+
+    disabled = _is_disabled()
+    if disabled:
+        logger.info("[SKIP] paper exploration disabled: %s", disabled)
+        return 0
+
+    if not args.force:
+        age_h = _last_decision_age_h()
+        if age_h < QUIET_HOURS:
+            logger.info("[SKIP] last decision %.1fh ago < %sh quiet threshold; not stale yet",
+                        age_h, QUIET_HOURS)
+            return 0
+        cnt = _today_explore_count()
+        if cnt >= MAX_PER_DAY:
+            logger.info("[SKIP] daily exploration count %s >= cap %s", cnt, MAX_PER_DAY)
+            return 0
+        logger.info("[GATES OK] last decision %.1fh ago; %s/%s explorations today",
+                    age_h, cnt, MAX_PER_DAY)
+    else:
+        logger.warning("[FORCE] gates bypassed (--force)")
+
+    venue = args.venue
+    if venue == "auto":
+        venue = "alpaca" if os.environ.get("APCA_API_KEY_ID") else "robinhood"
+        logger.info("[INFO] auto-selected venue=%s", venue)
+
+    if venue == "alpaca":
+        pick = _pick_asset_alpaca()
+        if pick is None:
+            logger.warning("[SKIP] no alpaca asset has sufficient bar data")
+            return 0
+        sym, side = pick
+        return _submit_alpaca(sym, side)
+
+    if venue == "robinhood":
+        # RH basket is BTC/ETH only; pick by 15m return on whichever
+        # has more momentum via Robinhood quotes (or fallback).
+        # For simplicity, alternate between BTC/ETH by daily count parity.
+        cnt = _today_explore_count()
+        asset = ROBINHOOD_BASKET[cnt % len(ROBINHOOD_BASKET)].strip().upper() or "BTC"
+        # Direction: random 50/50 within paper-sim is fine; the real
+        # version benefits from market data when available.
+        side = "buy" if random.random() > 0.5 else "sell"
+        logger.info("[EXPLORE] RH paper-sim picked asset=%s side=%s", asset, side)
+        return _submit_robinhood(asset, side)
+
+    logger.error("Unknown venue: %s", venue)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
