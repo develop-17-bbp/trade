@@ -33,6 +33,16 @@ import os
 import sys
 import time
 
+# Ensure project root is on sys.path so `from src.X` works when this
+# script is run as `python scripts/force_test_trade.py ...` from the
+# repo root. Without this, the 5090's Python (different env from the
+# 4060's) raises ModuleNotFoundError: No module named 'src' on the
+# robinhood path because that's the first import that happens before
+# any sibling module triggers path setup.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
