@@ -135,10 +135,44 @@ def _today_explore_count() -> int:
 # ── Momentum scoring (15-bar pct change abs ranks) ────────────────
 
 
-def _pick_asset_alpaca() -> Optional[Tuple[str, str]]:
-    """Pick (symbol, side) by 15-bar momentum across the alpaca basket.
-    Side 'buy' if last bar close > 15 bars ago, 'sell' otherwise.
-    Returns None if no asset has enough data."""
+def _rsi(closes: List[float], period: int = 14) -> float:
+    """Plain Wilder RSI; returns 50 on insufficient data."""
+    if len(closes) < period + 1:
+        return 50.0
+    gains, losses = [], []
+    for i in range(1, period + 1):
+        d = closes[-i] - closes[-i - 1]
+        gains.append(d if d > 0 else 0.0)
+        losses.append(-d if d < 0 else 0.0)
+    ag = sum(gains) / period if gains else 0.0
+    al = sum(losses) / period if losses else 0.0
+    if ag == 0 and al == 0:
+        return 50.0
+    if al == 0:
+        return 100.0
+    rs = ag / al
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _pick_asset_alpaca() -> Optional[Tuple[str, str, str]]:
+    """Pick (symbol, side, rationale) for a profit-biased exploration trade.
+
+    Filters for higher-probability setups (vs blind momentum):
+      1. Multi-timeframe trend alignment: 1h slope direction must
+         match 5m momentum direction. Trades fighting the higher
+         timeframe lose more than they win.
+      2. RSI not in danger zones: 40-65 (longs) or 35-60 (shorts).
+         Avoids catching falling knives or chasing exhaustion.
+      3. Volume on most-recent 5m bar > 1.2× the trailing 20-bar
+         average. Volume-confirmed moves follow through more often
+         than dead-volume blips.
+      4. Move size > 0.3% over last 15×5m bars. Below that is noise.
+
+    Among assets passing all four filters, picks the one with the
+    largest absolute momentum (most-conviction setup). Returns None
+    if no asset qualifies — exploration tick simply skips this cycle
+    rather than firing a low-quality trade.
+    """
     try:
         from src.data.alpaca_fetcher import AlpacaFetcher
         f = AlpacaFetcher(paper=True)
@@ -147,31 +181,74 @@ def _pick_asset_alpaca() -> Optional[Tuple[str, str]]:
     except Exception:
         return None
 
-    best: Optional[Tuple[str, str, float]] = None
+    candidates: List[Tuple[str, str, float, str]] = []
     for sym in ALPACA_BASKET:
         sym = sym.strip().upper()
         if not sym:
             continue
         try:
-            bars = f.fetch_ohlcv(sym, timeframe="5Min", limit=20)
-            if not bars or len(bars) < 16:
+            # 5m bars (limit=30 for RSI + momentum + volume avg)
+            bars5 = f.fetch_ohlcv(sym, timeframe="5Min", limit=30)
+            if not bars5 or len(bars5) < 21:
                 continue
-            close_now = float(bars[-1][4])
-            close_ago = float(bars[-16][4])
-            if close_ago <= 0:
+            closes5 = [float(b[4]) for b in bars5]
+            volumes5 = [float(b[5]) for b in bars5]
+
+            close_now = closes5[-1]
+            close_15ago = closes5[-16]
+            if close_15ago <= 0 or close_now <= 0:
                 continue
-            mom_pct = (close_now - close_ago) / close_ago * 100.0
-            if best is None or abs(mom_pct) > abs(best[2]):
-                best = (sym, "buy" if mom_pct > 0 else "sell", mom_pct)
+            mom5_pct = (close_now - close_15ago) / close_15ago * 100.0
+
+            # Filter 4: minimum move
+            if abs(mom5_pct) < 0.3:
+                continue
+
+            # Filter 3: volume confirmation
+            avg_vol = sum(volumes5[:-1]) / max(1, len(volumes5) - 1)
+            last_vol = volumes5[-1]
+            if avg_vol > 0 and last_vol < 1.2 * avg_vol:
+                continue
+
+            # Filter 2: RSI sanity
+            rsi = _rsi(closes5, period=14)
+            side_5m = "buy" if mom5_pct > 0 else "sell"
+            if side_5m == "buy" and (rsi < 40 or rsi > 65):
+                continue
+            if side_5m == "sell" and (rsi < 35 or rsi > 60):
+                continue
+
+            # Filter 1: multi-timeframe trend alignment.
+            # 1h bars (limit=8 for ~8h trend)
+            bars1h = f.fetch_ohlcv(sym, timeframe="1Hour", limit=8)
+            if not bars1h or len(bars1h) < 4:
+                # No HTF data → can't confirm trend → skip rather than risk
+                continue
+            closes1h = [float(b[4]) for b in bars1h]
+            slope1h_pct = (closes1h[-1] - closes1h[0]) / closes1h[0] * 100.0
+            if side_5m == "buy" and slope1h_pct <= 0:
+                continue
+            if side_5m == "sell" and slope1h_pct >= 0:
+                continue
+
+            rationale = (
+                f"mom5={mom5_pct:+.2f}% slope1h={slope1h_pct:+.2f}% "
+                f"rsi={rsi:.0f} vol={last_vol/avg_vol:.1f}x"
+            )
+            candidates.append((sym, side_5m, abs(mom5_pct), rationale))
         except Exception as e:
-            logger.debug("momentum probe failed for %s: %s", sym, e)
+            logger.debug("setup probe failed for %s: %s", sym, e)
             continue
-    if best is None:
+
+    if not candidates:
+        logger.info("[EXPLORE] no asset passed trend-alignment + RSI + volume filters; skipping")
         return None
-    sym, side, mom = best
-    logger.info("[EXPLORE] picked %s %s (momentum %+.2f%% over 15×5m bars)",
-                sym, side.upper(), mom)
-    return sym, side
+
+    # Pick highest-conviction setup (largest |momentum|)
+    candidates.sort(key=lambda c: c[2], reverse=True)
+    sym, side, mom_abs, rationale = candidates[0]
+    logger.info("[EXPLORE] picked %s %s (%s)", sym, side.upper(), rationale)
+    return sym, side, rationale
 
 
 # ── Submission ────────────────────────────────────────────────────
@@ -342,9 +419,10 @@ def main() -> int:
     if venue == "alpaca":
         pick = _pick_asset_alpaca()
         if pick is None:
-            logger.warning("[SKIP] no alpaca asset has sufficient bar data")
+            logger.warning("[SKIP] no alpaca asset passed quality filters this cycle")
             return 0
-        sym, side = pick
+        sym, side, rationale = pick
+        logger.info("[EXPLORE] rationale: %s", rationale)
         return _submit_alpaca(sym, side)
 
     if venue == "robinhood":
