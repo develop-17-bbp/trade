@@ -71,6 +71,19 @@ class EvidenceSection:
         return f"## {self.name}{tag_str}\n{self.content}".rstrip()
 
 
+# Global budget for the assembled evidence document. Each individual
+# section already self-truncates (NEWS=400, FEAR_GREED=120, TRACES=300,
+# AGENT_VOTES=600, CRITIQUES=500, GRAPH=400, scanner rationale=200,
+# BODY_CONTROLS=200, TICK_SNAPSHOT=variable) but there was no GLOBAL
+# cap — if every section filled its budget AND TICK_SNAPSHOT was large,
+# the total could blow past the LLM provider's user-prompt allotment
+# and force a hard truncation that drops the actual task description.
+# 4000 chars (~1000 tokens) leaves comfortable headroom inside a 16K
+# num_ctx so the analyst's task / tool-call prompt isn't squeezed.
+DEFAULT_EVIDENCE_DOC_BUDGET_CHARS = 4000
+_TRUNC_SUFFIX = "\n[…evidence truncated to fit context budget…]"
+
+
 @dataclass
 class EvidenceDocument:
     """Structured bundle of all sources the analyst sees for an asset.
@@ -89,9 +102,41 @@ class EvidenceDocument:
         if section and section.content.strip():
             self.sections.append(section)
 
-    def to_prompt(self) -> str:
-        """Flatten to the analyst-facing blob."""
-        return "\n\n".join(s.to_prompt_block() for s in self.sections)
+    def to_prompt(self, max_chars: int = DEFAULT_EVIDENCE_DOC_BUDGET_CHARS) -> str:
+        """Flatten to the analyst-facing blob, capped at `max_chars` total.
+
+        Sections are emitted in insertion order. Once the running total
+        would exceed the budget, the offending section is hard-truncated
+        and subsequent sections are dropped — better to lose a few
+        late-priority blocks than to let one bloated section silently
+        crowd out the entire task description downstream. Pass max_chars=0
+        to disable the cap (audit / debug only — not recommended for
+        live tick paths).
+        """
+        if max_chars <= 0:
+            return "\n\n".join(s.to_prompt_block() for s in self.sections)
+
+        out: List[str] = []
+        used = 0
+        sep_chars = 2  # "\n\n" between sections
+        for s in self.sections:
+            block = s.to_prompt_block()
+            if not block:
+                continue
+            cost = (sep_chars if out else 0) + len(block)
+            if used + cost <= max_chars:
+                out.append(block)
+                used += cost
+                continue
+            # Section overflow: truncate the head of this section to fit
+            # remaining budget (after suffix). If even the suffix wouldn't
+            # fit, just stop appending entirely.
+            remaining = max_chars - used - (sep_chars if out else 0) - len(_TRUNC_SUFFIX)
+            if remaining > 80:
+                truncated = block[:remaining].rstrip() + _TRUNC_SUFFIX
+                out.append(truncated)
+            break
+        return "\n\n".join(out)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

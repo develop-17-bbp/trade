@@ -223,18 +223,36 @@ def evaluate(
     sniper_macro_magnitude = SNIPER_MIN_MACRO_MAGNITUDE * (
         HOLD_MACRO_MAGNITUDE_FACTOR if in_position else 1.0
     )
+    # Defensive: signed_bias can be None / NaN / inf when an upstream
+    # economic-intelligence layer falls back to its stub (e.g. yfinance
+    # not installed, FRED outage). Without this guard, abs(None) raises
+    # TypeError and aborts the entire conviction evaluation, silently
+    # rejecting every plan downstream. Treat any unparseable bias as
+    # "neutral" so the gate keeps evaluating other dimensions.
+    _bias_val: Optional[float] = None
     if macro_bias is not None:
+        try:
+            _b = macro_bias.signed_bias
+            if _b is not None:
+                _bias_f = float(_b)
+                import math as _math
+                if _math.isfinite(_bias_f):
+                    _bias_val = _bias_f
+        except (TypeError, ValueError):
+            _bias_val = None
+    if macro_bias is not None and _bias_val is not None:
         macro_aligned = macro_bias.aligned(d)
-        macro_strong = abs(macro_bias.signed_bias) >= sniper_macro_magnitude
+        macro_strong = abs(_bias_val) >= sniper_macro_magnitude
     else:
-        macro_aligned = True            # absent macro = neutral
+        macro_aligned = True            # absent / invalid macro = neutral
         macro_strong = False
     checks["macro_aligned"] = macro_aligned
     checks["macro_strong_lean"] = macro_strong
     if not macro_aligned:
-        reasons.append(
-            f"macro_misaligned:bias={macro_bias.signed_bias:+.2f}" if macro_bias else "macro_unknown"
-        )
+        if _bias_val is not None:
+            reasons.append(f"macro_misaligned:bias={_bias_val:+.2f}")
+        else:
+            reasons.append("macro_unknown")
 
     # ── Hurst regime (bonus for sniper; not required for normal) ───────
     regime = (hurst_regime or "").lower()
