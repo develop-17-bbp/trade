@@ -300,22 +300,31 @@ Should show:
 
 ## 12. What still blocks profitable trades on Robinhood
 
-Listed in order of likelihood (run `/diagnose-noop` first to narrow):
+Listed in order of likelihood (run `python scripts/diagnose_llm_silence.py
+--hours 6 --tail 20` first to narrow — section 4's skip-reason histogram
+is the smoking gun):
 
-1. **Readiness gate closed** — expected during 14-day paper soak.
-   Nothing to fix; let the soak complete. Real capital waits for
-   `ACT_REAL_CAPITAL_ENABLED=1` AND 500+ trades.
-2. **Conviction gate too strict** — Robinhood's 1.69% round-trip
-   spread needs ≥ 2% expected move. On low-vol days the scanner
-   correctly flags zero setups. Not a bug; Robinhood-specific.
-3. **Ollama models not pulled / not running** — `/status` shows red on
-   `ollama`. Fix: `ollama pull deepseek-r1:32b && ollama pull deepseek-r1:7b`.
-4. **Scanner producing invalid JSON** — check warm_store
-   `shadow_terminated_reasons` histogram via /diagnose-noop. If
-   `parse_failures` dominates, lower scanner temperature or pin a
-   smaller more-structured model.
-5. **Authority min-hold forcing no day-trading** — by design; 24h hold
+1. **paper_exploration cooldown reset by shadow rows** — FIXED 2026-04-30.
+   `_last_decision_age_h()` now excludes `shadow-%` rows. If you see this
+   regress, the fix is in `scripts/paper_exploration_tick.py`.
+2. **Technical-lane direct fires bypassing LLM** — FIXED 2026-04-30 via
+   `ACT_LLM_SOLE_AUTHOR=1` (default-on). `_evaluate_entry` short-circuits
+   at the top, leaving `submit_trade_plan` as the only order path.
+3. **LLM analyst silent (parse_failure / max_steps / model unreachable)** —
+   surface via skip-reason histogram. If `parse_failure` dominates on the
+   4060, the analyst is qwen2.5-coder:7b (a CODER model bad at trading
+   JSON) — switch to `qwen3:8b` via `ACT_BRAIN_PROFILE=local_8gb`.
+   Tech-blended escalation (`ACT_LLM_TECH_BLENDED=1`) catches this case
+   automatically when tick_state has a directional consensus.
+4. **Conviction gate refusing low-quality setups on RH 1.69% spread** —
+   by design. paper_exploration `--relaxed` fires anyway as the soak
+   safety net. Not a bug.
+5. **Readiness gate closed** — expected during 14-day paper soak.
+   Real capital waits for `ACT_REAL_CAPITAL_ENABLED=1` + 500+ trades.
+6. **Authority min-hold forcing no day-trading** — by design; 24h hold
    on Robinhood. Not a bug.
+7. **Ollama down / model not pulled** — `/status` shows red on `ollama`.
+   Fix: `ollama pull qwen3:8b qwen2.5-coder:7b deepseek-r1:32b`.
 
 ---
 
@@ -352,9 +361,97 @@ Listed in order of likelihood (run `/diagnose-noop` first to narrow):
 
 ---
 
+## 13b. LLM-sole-author architecture (2026-04-30)
+
+The operator decided ACT must run as **agentic_primary**: every trade is
+authored by the LLM analyst. The 13 fixed agents + 36 strategies +
+genetic engine + ML ensemble remain VOTE INPUTS to the LLM, not
+parallel writers to the executor. Three env flags carry this:
+
+| Env (default) | Effect |
+|---|---|
+| `ACT_AGENTIC_LOOP=1` | Runs `agentic_trade_loop` per asset per tick |
+| `ACT_LLM_SOLE_AUTHOR=1` | `_evaluate_entry` short-circuits at the top — technical lane stops calling `_paper.record_entry` / `alpaca_exec.submit_order` directly. Only `submit_trade_plan()` fires orders |
+| `ACT_LLM_TECH_BLENDED=1` | When LLM emits `skip` AND tick_state has `agents_consensus + conviction_tier in {sniper, normal} + |agents_net|≥0.15`, agentic_trade_loop auto-promotes the technical signal to a TradePlan. Plan still passes EVERY gate in submit_trade_plan |
+
+All three default-on in both `START_ALL.ps1` (5090 Robinhood) and
+`START_ALL_4060.ps1` (4060 Alpaca). To disable any one: `setx ACT_LLM_*
+0` then restart.
+
+**Routing matrix after the architecture commit:**
+
+| Asset class | Active venue | Path |
+|---|---|---|
+| US stock (SPY, QQQ, NVDA, etc.) | alpaca | `submit_trade_plan` → `AlpacaExecutor.submit_order` (real Alpaca paper) |
+| BTC/ETH | alpaca / alpaca_crypto | `submit_trade_plan` → `price_source.place_order` (real Alpaca crypto, **NOT** RH paper-sim) |
+| BTC/ETH | robinhood | `submit_trade_plan` → `RobinhoodPaperFetcher.record_entry` (RH paper-sim) |
+| Other crypto | any | `unsupported_asset` reject |
+
+**4060 brain profile when no remote**: when `OLLAMA_REMOTE_URL` is
+unset, `START_ALL_4060.ps1` defaults `ACT_BRAIN_PROFILE=local_8gb`
+(qwen3:8b analyst + qwen2.5-coder:7b scanner, ~5.5GB total VRAM). The
+`local_8gb` profile is the auto-downgrade tail; it sacrifices analyst
+depth for guaranteed local availability. Pulls qwen3:8b in pre-flight.
+
+---
+
+## 13c. Soak-data safety net (2026-04-30)
+
+`scripts/paper_exploration_tick.py` is the OS-scheduler-loop fallback
+that fires a small momentum trade when the LLM lane is silent.
+Critical wiring details:
+
+- `_last_decision_age_h()` excludes `decision_id LIKE 'shadow-%'` rows.
+  Without that, the agentic loop's per-minute shadow writes
+  permanently reset the 4-hour quiet-hours gate and exploration never
+  fires.
+- First call after START_ALL launch passes `--force` so an end-to-end
+  trade lands within ~30 seconds (proves the path; subsequent calls in
+  the 15-min loop use the normal cooldown).
+- RH path (`_submit_robinhood`) writes a `paper_explore_*` warm_store
+  row so the MAX_PER_DAY cap and audits work for both venues.
+
+Diagnostic: `python scripts/diagnose_llm_silence.py --hours 6 --tail 20`
+prints (1) action histogram, (2) NON-shadow LONG/SHORT count, (3)
+exploration firings, (4) skip-reason histogram, (5) latest decisions.
+Section 4 is the smoking gun for "LLM is silent — why?".
+
+---
+
+## 13d. MCP server connection (Acer ↔ 5090)
+
+Stable URL: `http://100.127.155.36:9100/mcp` (Tailscale IP, NOT
+MagicDNS hostname `act5090` which intermittently 5s-timeouts on the
+Acer).
+
+5090 binding: `scripts/start_mcp.ps1` defaults to `BindHost="0.0.0.0"`
+so Tailscale-routed peers reach the server. One-time firewall rule:
+
+```
+netsh advfirewall firewall add rule name="ACT-MCP-9100" dir=in `
+  action=allow protocol=TCP localport=9100 profile=any
+```
+
+Acer-side: `.mcp.json` is read at session-launch only. Editing the
+file mid-session does NOT reload — operator must `/exit` and run
+`claude` (NOT `--continue` or `--resume`) for new URL to take effect.
+
+---
+
 ## 14. Recent commits (read this on session start)
 
 ```
+LLM-AUTHOR-2026-04-30
+     - feat(llm-author): ACT_LLM_SOLE_AUTHOR + RH paper-sim unblocked
+       (paper_exploration shadow-row filter; technical-lane gate)
+     - feat(4060-llm): local_8gb brain profile (qwen3:8b analyst)
+     - feat(llm-trades): tech-blended escalation
+       (LLM-skip + strong tech signal -> auto-promote TradePlan)
+     - fix(routing): BTC/ETH on Alpaca venue routes to alpaca_crypto
+       REST (was silently logging to RH paper-sim file)
+     - fix(soak): force first paper_exploration trade on launch
+     - fix(mcp): Tailscale IP + BindHost=0.0.0.0 default
+     - feat(diag): scripts/diagnose_llm_silence.py
 C17  — end-to-end wiring + START_ALL alignment
 C14  — transient persona agents from knowledge graph
 C12  — real-time knowledge graph over live data streams
@@ -398,20 +495,37 @@ C1   — warm_store migration + TradePlan model
 
 ## 16. Golden rules for future Claude sessions
 
-1. **Never promise 1%/day on Robinhood** — ceiling is ~37%/year simple.
-   Venue migration is the load-bearing move, not code tweaks.
-2. **Always check `memory/` on session start** — `project_realistic_targets`,
+1. **LLM is the SOLE author of every trade** (operator directive
+   2026-04-30). The 13 fixed agents + math + genetics feed the LLM
+   via tick_state / orchestrator output, never as parallel writers.
+   Maintained by `ACT_LLM_SOLE_AUTHOR=1` (default-on). If asked to
+   change this, push back: it's a settled architecture, not a tweak.
+2. **Trades MUST fire automatically once START_ALL runs** — no manual
+   force_test_trade required. paper_exploration `--force` on first
+   launch + tech-blended escalation guarantee this. If "no trades"
+   is reported, run `scripts/diagnose_llm_silence.py` BEFORE
+   suggesting code changes.
+3. **Never promise 1%/day on Robinhood** — ceiling is ~37%/year simple.
+   Venue migration is the load-bearing move, not code tweaks. But
+   1%/day is the operator's non-negotiable target — don't lower it,
+   show the realistic path.
+4. **Always check `memory/` on session start** — `project_realistic_targets`,
    `feedback_upside_framing`, `feedback_realtime_paradigm`, etc.
-3. **Adapt external tools to real-time paradigm** — ACT is streaming,
+5. **Disk-side audit before MCP queries** — when MCP is unreachable,
+   `scripts/diagnose_llm_silence.py` answers "is the LLM trading?"
+   from warm_store.sqlite alone. NON-shadow LONG/SHORT count > 0 means
+   yes; only SHADOW_SKIP means no.
+6. **Adapt external tools to real-time paradigm** — ACT is streaming,
    not batch. Don't port static-batch patterns.
-4. **Feature-by-feature audit before dismissing external tools** —
+7. **Feature-by-feature audit before dismissing external tools** —
    MiroFish looked "wrong paradigm" at first glance; rigorous audit
    found 5 genuine wins after reframing.
-5. **Default to shadow mode for new venues** — real orders require
+8. **Default to shadow mode for new venues** — real orders require
    multiple independent gates.
-6. **Run `/diagnose-noop` before writing new features** when operator
-   asks "why no trades" — usually the answer is "gate working correctly,
-   let the soak complete" not "need more code."
+9. **Use the Tailscale IP for MCP, not MagicDNS hostname** —
+   `http://100.127.155.36:9100/mcp` is reliable; `http://act5090:9100/mcp`
+   intermittently 5s-timeouts on the Acer due to local resolver chain
+   stalls. Memory: this session debugged it for an hour; don't repeat.
 
 ---
 
