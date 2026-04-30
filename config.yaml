@@ -279,6 +279,51 @@ exchanges:
   intraday_position_pct_max: 15
   overnight_position_pct_max: 15    # crypto fine to hold overnight (no daily-reset decay)
   rth_only: false                   # 24/7 venue
+- name: alpaca_options
+  # Alpaca options Level 3 (long calls/puts + multi-leg spreads).
+  # Disabled by default; enable on whichever box has options Level 3
+  # cleared on the Alpaca paper account by setting
+  # ACT_BOX_ROLE to include "options" (e.g. "stocks,crypto,options").
+  # Same paper account as alpaca + alpaca_crypto — shared paper P&L.
+  enabled: false
+  asset_class: OPTIONS
+  venue: alpaca
+  paper: true
+  poll_seconds: 60
+  # Liquid underlyings only — illiquid single-name options have wide
+  # spreads that eat the edge. Operator can extend this list once
+  # the basket's option flow shows tight bid/ask on the chain probes.
+  underlyings:
+  - SPY
+  - QQQ
+  - IWM
+  - NVDA
+  - MSFT
+  - AAPL
+  - AMZN
+  - GOOGL
+  - META
+  - TSLA
+  - AVGO
+  - AMD
+  - NFLX
+  - COIN
+  - MSTR
+  # Single-leg long directional first; multi-leg requires the conviction-
+  # gate retune (still pending). Operator can extend to vertical_call,
+  # vertical_put, iron_condor once analyst-side option-plan generation
+  # is wired.
+  allowed_strategies:
+  - long_call
+  - long_put
+  per_position_pct_max: 5             # per-position max % of NAV
+  total_exposure_pct_max: 20          # combined option-position cap
+  min_dte: 7                          # avoid 0-DTE during paper soak
+  max_dte: 45                         # short-dated only
+  rth_only: true
+  greek_caps:
+    delta_per_position: 0.5
+    vega_total: 50
 - name: polymarket
   enabled: false
   asset_class: POLYMARKET

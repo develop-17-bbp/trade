@@ -288,6 +288,7 @@ def main():
     ]
     role_to_class = {
         'crypto': 'CRYPTO', 'stocks': 'STOCK', 'stock': 'STOCK',
+        'options': 'OPTIONS',
         'polymarket': 'POLYMARKET',
     }
     allowed_classes = {role_to_class[r] for r in box_roles if r in role_to_class}
