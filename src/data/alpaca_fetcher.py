@@ -112,6 +112,14 @@ class AlpacaFetcher:
 
         Default timeframe is `1Min` because the agentic loop runs at
         ~60-180s tick cadence — minute bars are the right resolution.
+
+        Implementation note (2026-04-30 fix): Alpaca's bars endpoint
+        without an explicit `start` parameter returns nothing when the
+        market is closed — the default lookback window doesn't span
+        overnight gaps. Outside RTH (e.g. operator's 4060 booting at
+        02:25 ET), every symbol returned 0 candles. Forcing a 7-day
+        lookback always captures at least the last trading session,
+        weekends + holidays included.
         """
         if not self.available or self._session is None:
             return []
@@ -119,9 +127,17 @@ class AlpacaFetcher:
         if tf is None:
             logger.debug("AlpacaFetcher: unknown timeframe %r", timeframe)
             return []
+        from datetime import datetime, timedelta, timezone
+        # 7 days back covers a 3-day weekend (e.g. MLK Mon + closure) plus
+        # buffer. Alpaca caps `limit` at 10000 so even on 1Min bars over
+        # 7 days (~10K business minutes) we don't truncate prematurely.
+        # IEX free tier has a 15-minute realtime delay; ending at "now"
+        # is fine — the API serves whatever is within the free window.
+        start_iso = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         url = f"{self.DATA_BASE}/v2/stocks/{symbol.upper()}/bars"
         params = {
             "timeframe": tf,
+            "start":     start_iso,
             "limit":     int(min(max(limit, 1), 10000)),
             "feed":      self.feed,
             "adjustment": "raw",
