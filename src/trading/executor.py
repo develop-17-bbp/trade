@@ -10506,6 +10506,33 @@ Respond ONLY with JSON:
                 if not result.submitted:
                     return {"submitted": False, "reason": result.reason}
                 order_id = result.order_id
+            elif is_crypto_plan and getattr(self, "_exchange_name", "") in (
+                "alpaca", "alpaca_crypto"
+            ) and entry_price > 0:
+                # 4060 path - BTC/ETH on Alpaca crypto. Audit 2026-04-30:
+                # this branch was missing, so crypto plans on Alpaca were
+                # falling through to RobinhoodPaperFetcher (RH paper-sim)
+                # instead of placing real Alpaca crypto orders. Route to
+                # price_source.place_order which is the same Alpaca crypto
+                # REST path the technical lane uses.
+                equity = float(getattr(self, "equity", 0.0) or 100000.0)
+                notional = equity * (size_pct / 100.0)
+                qty = round(notional / entry_price, 6)
+                side = "buy" if direction == "LONG" else "sell"
+                symbol = self._get_symbol(asset)   # "BTC/USD" on alpaca_crypto
+                try:
+                    result = self._api_call(
+                        self.price_source.place_order,
+                        symbol=symbol, side=side, amount=qty,
+                        order_type="market", price=entry_price,
+                    )
+                    if result and result.get("status") == "success":
+                        order_id = result.get("order_id", "alpaca_crypto")
+                    else:
+                        return {"submitted": False,
+                                "reason": f"alpaca_crypto_reject:{result.get('message', result)}"}
+                except Exception as _ce:
+                    return {"submitted": False, "reason": f"alpaca_crypto_error:{_ce}"}
             elif self._paper and entry_price > 0:
                 # Equity-scaled quantity
                 equity = float(getattr(self._paper, "equity", 100000.0))
