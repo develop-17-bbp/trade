@@ -118,6 +118,16 @@ if (-not $env:ACT_BRAIN_PROFILE) {
     _SetEnvDual "ACT_BRAIN_PROFILE" "moe_agentic"
     Ok "ACT_BRAIN_PROFILE defaulted to moe_agentic (7b local + 30b remote, persisted via setx)"
 }
+# Mirror the 5090's START_ALL.ps1 default - ACT_AGENTIC_LOOP=1 makes
+# the agentic shadow loop fire on every per-asset tick. Without this
+# env (and without config.yaml having the flag enabled), the executor's
+# _run_agentic_shadow() returns early at agentic_loop_enabled()=False
+# and zero LLM-driven trades fire on stocks/crypto. Operator can
+# disable via ACT_DISABLE_AGENTIC_LOOP=1 (broader kill).
+if (-not $env:ACT_AGENTIC_LOOP) {
+    _SetEnvDual "ACT_AGENTIC_LOOP" "1"
+    Ok "ACT_AGENTIC_LOOP=1 enabled (autonomous LLM trades on stocks + crypto)"
+}
 # Match the 5090's bumped 16384 default — same reasoning as START_ALL.ps1:
 # 8192 was too tight, prompts got truncated to 500 chars, agentic loop
 # returned parse_failures. 16K gives the analyst real prompt budget.
