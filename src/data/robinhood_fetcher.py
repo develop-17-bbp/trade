@@ -135,6 +135,19 @@ class RobinhoodPaperFetcher:
         # Init Robinhood client
         self._init_client()
 
+        # Restore previous paper state from disk if it exists. Without
+        # this, every bot restart wipes the paper-position book — the
+        # operator's "172 stuck longs" pre-incident state was visible
+        # only because the bot ran for weeks without restart. Forced
+        # test trades placed via scripts/force_test_trade.py also need
+        # this so the bot's position-monitor can auto-close them at
+        # TP/SL on the next tick. Failure modes are caught + logged
+        # inside load_state() — restart never blocks on bad state.
+        try:
+            self.load_state()
+        except Exception as e:
+            logger.warning("[PAPER] load_state on init failed: %s", e)
+
     def _init_client(self):
         """Initialize Robinhood API client."""
         try:

@@ -154,6 +154,16 @@ def _force_robinhood_paper(asset: str, side: str, qty: float,
     if pos is None:
         logger.error("[FAIL] record_entry returned None - check RobinhoodPaperFetcher logs")
         return 5
+    # Persist to logs/robinhood_paper_state.json so the bot's running
+    # fetcher (which now calls load_state on init) sees this position
+    # on next tick / next restart and can monitor it for TP/SL auto-close.
+    # Without this, the position lives only in this script's in-memory
+    # fetcher and dies when the script exits.
+    try:
+        pf.save_state()
+        logger.info("       state persisted to logs/robinhood_paper_state.json")
+    except Exception as e:
+        logger.warning(f"       state persistence soft-fail: {e}")
     logger.info(f"[OK]   RH paper position recorded:")
     logger.info(f"       trade_id={getattr(pos, 'trade_id', '?')}")
     logger.info(f"       asset={getattr(pos, 'asset', '?')}")
