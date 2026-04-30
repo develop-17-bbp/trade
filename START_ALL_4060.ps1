@@ -223,7 +223,19 @@ Start-Bg "ACT - warm_store sync (4060)" "python -m scripts.warm_store_sync" | Ou
 # 4. Silence watchdog
 Start-Bg "ACT - Silence watchdog (4060)" "python -m scripts.silence_watchdog" | Out-Null
 
-# 5. (optional) FastAPI dashboard
+# 5. Paper-exploration loop - guarantees trade activity even when LLM
+#    is silent (Ollama endpoint flap, dead-quiet market, parse_failures).
+#    Fires a quality-filtered momentum trade every 15 min via
+#    paper_exploration_tick.py --relaxed. The script's internal
+#    quiet-hours + daily-cap gates self-throttle so 15-min polling
+#    fires at most 8 trades/UTC-day. Real-capital path (ACT_REAL_CAPITAL_ENABLED=1)
+#    is hard-skipped inside the script. Operator opt-out via
+#    ACT_DISABLE_PAPER_EXPLORATION=1 broader kill via ACT_DISABLE_AGENTIC_LOOP=1.
+#    Auto-picks venue: alpaca crypto (24/7) when no APCA stocks open,
+#    alpaca stocks during RTH, robinhood paper-sim as final fallback.
+Start-Bg "ACT - Paper Exploration (4060)" "powershell -Command `"while (`$true) { python scripts\paper_exploration_tick.py --venue alpaca --relaxed; Start-Sleep -Seconds 900 }`"" | Out-Null
+
+# 6. (optional) FastAPI dashboard
 if ($env:ACT_4060_DASHBOARD -eq "1") {
     Start-Bg "ACT - Dashboard (4060)" "python -m uvicorn src.api.production_server:app --host 0.0.0.0 --port 8081" | Out-Null
 }

@@ -538,7 +538,7 @@ if ($env:ACT_REAL_CAPITAL_ENABLED -eq "1") {
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  LAUNCHING 11 PARALLEL PROCESSES ($tier)" -ForegroundColor Cyan
+Write-Host "  LAUNCHING 12 PARALLEL PROCESSES ($tier)" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -672,11 +672,33 @@ if (Test-Path $watchdogScript) {
     WARN "scripts\silence_watchdog.py not found - skipping (LLM-GATE fail-soft has no safety net)."
 }
 
+# ── 12: Paper Exploration Loop (Idle priority) ──
+# Continuous quality-filtered momentum trades every 15 min. Guarantees
+# the warm_store accumulates soak data even when the LLM analyst is
+# silent (Ollama endpoint flap, parse_failures, dead-quiet market).
+# Internal QUIET_HOURS + MAX_PER_DAY gates self-throttle so 15-min
+# polling fires at most 8 trades/UTC-day. Real-capital path
+# (ACT_REAL_CAPITAL_ENABLED=1) is HARD-SKIPPED inside the script.
+# Operator opt-out: ACT_DISABLE_PAPER_EXPLORATION=1
+# 5090 Robinhood path: paper_exploration_tick.py auto-routes via
+# `--venue auto` (uses RH paper-sim when no APCA env, otherwise
+# alpaca crypto for 24/7 BTC/ETH coverage).
+STEP 12 "Paper Exploration [Idle]"
+$exploreScript = Join-Path $PSScriptRoot "scripts\paper_exploration_tick.py"
+if (Test-Path $exploreScript) {
+    $p12 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Paper Exploration && cd /d $dir && set PYTHONUNBUFFERED=1 && powershell -Command `"while (`$true) { python scripts\paper_exploration_tick.py --venue auto --relaxed; Start-Sleep -Seconds 900 }`"" -PassThru
+    try { $p12.PriorityClass = "Idle" } catch {}
+    Start-Sleep 1
+    OK "Paper Exploration PID=$($p12.Id)  (15min poll; ACT_DISABLE_PAPER_EXPLORATION=1 to halt)"
+} else {
+    WARN "scripts\paper_exploration_tick.py not found - skipping (continuous trade flow not guaranteed)."
+}
+
 # ── Summary ──
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "   ALL 11 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
+Write-Host "   ALL 12 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
 Write-Host ""
 Write-Host "   #  Process            Priority      Interval  GPU Use" -ForegroundColor White
 Write-Host "   1  API Server         AboveNormal   always    none" -ForegroundColor White
@@ -690,6 +712,7 @@ Write-Host "   8  MCP Server         Normal        always    none" -ForegroundCo
 Write-Host "   9  Analyst Nightly    BelowNormal   ~03:00UTC analyst QLoRA" -ForegroundColor Cyan
 Write-Host "  10  Scanner Watcher    BelowNormal   60s poll  scanner merge+gate" -ForegroundColor Cyan
 Write-Host "  11  Silence Watchdog   BelowNormal   5min poll alerts >30min silence" -ForegroundColor Cyan
+Write-Host "  12  Paper Exploration  Idle          15min poll continuous trade flow" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "   VRAM: Ollama ~$([math]::Min($gpuVRAM-2, 12))GB | LoRA ~$([math]::Max(2, $gpuVRAM-14))GB | System ~2GB" -ForegroundColor Yellow
 Write-Host "   Dashboard:  http://localhost:5173" -ForegroundColor Green
