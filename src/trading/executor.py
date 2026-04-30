@@ -4558,6 +4558,9 @@ class TradingExecutor:
                         price=float(price),
                         sl_price=float(_sl),
                         size_pct=float(1.0 if str(_conv.tier) != "sniper" else 3.0),
+                        # Venue carried so tech-blended can refuse promoting
+                        # SHORTs on Robinhood (spot long-only).
+                        venue=str(getattr(self, "_exchange_name", "") or ""),
                     )
                 except Exception:
                     pass
@@ -10366,6 +10369,27 @@ Respond ONLY with JSON:
             return {"submitted": False, "reason": f"unsupported_asset:{asset}"}
         if direction not in ("LONG", "SHORT"):
             return {"submitted": False, "reason": f"unsupported_direction:{direction}"}
+
+        # Robinhood is SPOT LONG-ONLY for BTC/ETH per operator directive
+        # 2026-04-30. The 5090 box's _exchange_name='robinhood' sees crypto
+        # plans here. SHORT plans on this venue would either fail at the
+        # paper-sim layer (no spot-short on RH) or, in real-capital mode,
+        # violate authority. Reject early with explicit reason so the LLM
+        # sees the refusal in next tick's TICK_SNAPSHOT and adjusts.
+        _venue_now = (getattr(self, "_exchange_name", "") or "").lower()
+        if is_crypto_plan and _venue_now == "robinhood" and direction == "SHORT":
+            try:
+                from src.ai import tick_state as _ts_short
+                _ts_short.update(
+                    asset,
+                    last_refusal=(
+                        "robinhood is SPOT LONG-ONLY - SHORT direction rejected. "
+                        "Emit LONG plan when bullish or skip when bearish."
+                    ),
+                )
+            except Exception:
+                pass
+            return {"submitted": False, "reason": "robinhood_spot_long_only"}
 
         # --- Gate 1: Authority rules (hard-coded operator PDF rules) ---
         # Pass only the minimum context the plan shape carries; fields we

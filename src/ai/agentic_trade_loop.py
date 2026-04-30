@@ -533,6 +533,13 @@ class AgenticTradeLoop:
             direction = "SHORT"
         else:
             return None
+        # Robinhood is SPOT LONG-ONLY (operator directive 2026-04-30) -
+        # don't waste a tick promoting a SHORT that submit_trade_plan
+        # will reject. Skip the promotion entirely; LLM can re-evaluate
+        # next tick when the technical lane may flip.
+        venue = str(snap.get("venue") or "").lower()
+        if venue == "robinhood" and direction == "SHORT":
+            return None
         # Require a non-trivial signed bias so we don't promote noise.
         net = float(snap.get("agents_net") or 0.0)
         if abs(net) < 0.15:

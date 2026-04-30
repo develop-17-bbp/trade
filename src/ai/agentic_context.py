@@ -106,6 +106,43 @@ class AgenticContext:
         avoids hard dependencies on MemoryVault being available at import).
         """
         system = self._system_prompt()
+        try:
+            from src.models.asset_class import classify
+            is_stock = classify(self.asset, venue_hint="alpaca").asset_class.is_stock()
+        except Exception:
+            is_stock = False
+        if is_stock or "VENUE=ALPACA" in (quant_data or "").upper():
+            system += (
+                "\n\n## ALPACA US-STOCKS OVERLAY\n"
+                "- The asset is a US equity/ETF routed through Alpaca, not a crypto perpetual.\n"
+                "- Use LONG for buy/open-long and SHORT for sell/open-short; shorts require whole shares and ETB availability.\n"
+                "- Regular-hours only: do not propose new stock entries outside NYSE RTH or inside the configured pre-close blackout.\n"
+                "- Leveraged ETFs such as TQQQ/SOXL are intraday-only and size-capped tighter than 1x ETFs.\n"
+                "- Respect ALPACA_BID, ALPACA_ASK, ALPACA_SPREAD_PCT, ALPACA_FEED, and ALPACA_BUYING_POWER from VERIFIED QUANT DATA."
+            )
+        # Robinhood overlay: 5090 box, BTC/ETH SPOT LONG-ONLY (operator
+        # directive 2026-04-30). RH has no short-on-spot; SHORT plans
+        # are hard-rejected by submit_trade_plan. Tell the LLM upfront so
+        # it doesn't waste cycles compiling SHORT plans that will fail.
+        try:
+            from src.ai import tick_state as _ts_venue
+            _ts_snap = _ts_venue.get(self.asset)
+            _venue = str(_ts_snap.get("venue") or "").lower() if _ts_snap else ""
+        except Exception:
+            _venue = ""
+        if (not is_stock and (
+                _venue == "robinhood"
+                or "VENUE=ROBINHOOD" in (quant_data or "").upper()
+                or self.asset.upper() in ("BTC", "ETH"))):
+            system += (
+                "\n\n## ROBINHOOD CRYPTO OVERLAY (BTC / ETH)\n"
+                "- The asset trades on Robinhood paper-sim — SPOT, LONG-ONLY.\n"
+                "- ONLY emit LONG plans. SHORT is HARD-REJECTED by submit_trade_plan.\n"
+                "- When bearish: emit {\"skip\": \"<reason>\"} instead of SHORT.\n"
+                "- 1.69% round-trip spread → expected_pnl_pct_range upper bound must be >= 3.5% to clear cost gate with any margin.\n"
+                "- Hold until thesis-completion: this is swing/position trading, not intraday scalping.\n"
+                "- Universe is BTC/USD and ETH/USD only — no other crypto."
+            )
         user_blocks: List[str] = []
 
         if quant_data:
