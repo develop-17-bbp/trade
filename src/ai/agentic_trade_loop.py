@@ -390,6 +390,32 @@ class AgenticTradeLoop:
 
             if "skip" in envelope:
                 reason = str(envelope.get("skip") or "")[:200]
+                # Tech-blended escalation: when the LLM keeps skipping but
+                # the technical lane has a high-conviction signal in
+                # tick_state, promote that signal to a TradePlan on the
+                # LLM's behalf. The plan still passes through every gate
+                # in submit_trade_plan, so authority/cost/readiness can
+                # still veto. Operator directive 2026-04-30: "LLM should
+                # do trades on stocks also" - this catches the silent
+                # 7B-analyst case where the model defaults to skip even
+                # when the conviction gate would have approved.
+                # Gated by ACT_LLM_TECH_BLENDED=1 (default OFF).
+                if os.getenv("ACT_LLM_TECH_BLENDED", "0") == "1":
+                    promoted = self._maybe_promote_technical_signal(reason)
+                    if promoted is not None:
+                        logger.info(
+                            "[agentic_loop:%s] tech-blended override - "
+                            "LLM said skip(%s) but conviction tier=%s; "
+                            "promoting technical signal to plan",
+                            self.asset, reason[:60],
+                            promoted.entry_tier,
+                        )
+                        return LoopResult(
+                            plan=promoted, steps_taken=step + 1,
+                            tool_calls=tool_calls,
+                            terminated_reason="plan",
+                            terminated_reason_text=f"tech_blended:{reason[:60]}",
+                        )
                 return LoopResult(
                     plan=TradePlan.skip(self.asset, thesis=reason or "LLM skipped"),
                     steps_taken=step + 1,
@@ -419,3 +445,89 @@ class AgenticTradeLoop:
         except Exception as e:
             logger.debug("agentic_trade_loop LLM call failed: %s", e)
             return ""
+
+    def _maybe_promote_technical_signal(self, llm_skip_reason: str) -> Optional["TradePlan"]:
+        """Build a TradePlan from tick_state when the LLM skipped but
+        the technical lane already produced a high-conviction directional
+        signal. Returns None when:
+          - tick_state has no recent signal
+          - signal direction is FLAT/None
+          - conviction tier is 'reject' (gate would block anyway)
+          - any required field (entry_price, sl_price) is unavailable
+
+        Sizing/SL/TP come from the technical signal so the LLM's silence
+        doesn't sacrifice rigor — every field still came from a system
+        the operator vetted. Conviction gate inside submit_trade_plan
+        will re-evaluate before the order fires.
+        """
+        try:
+            from src.ai import tick_state as _tick_state
+            from src.trading.trade_plan import TradePlan as _TradePlan
+        except Exception:
+            return None
+        try:
+            age = _tick_state.age_s(self.asset)
+            if age is None or age > 180.0:
+                return None
+            snap = _tick_state.get(self.asset)
+        except Exception:
+            return None
+        if not snap:
+            return None
+
+        # tick_state writes the orchestrator output as `agents_consensus`
+        # like "CALL HIGH" / "PUT WEAK" / "FLAT NONE" - first token is
+        # direction. Older paths also write `consensus_dir` / `direction`
+        # so we union all sources.
+        raw_dir = (
+            snap.get("agents_consensus")
+            or snap.get("consensus_dir")
+            or snap.get("direction")
+            or ""
+        )
+        first = str(raw_dir).split()[0].upper() if raw_dir else ""
+        if first in ("CALL", "LONG", "BUY"):
+            direction = "LONG"
+        elif first in ("PUT", "SHORT", "SELL"):
+            direction = "SHORT"
+        else:
+            return None
+        # Require a non-trivial signed bias so we don't promote noise.
+        net = float(snap.get("agents_net") or 0.0)
+        if abs(net) < 0.15:
+            return None
+
+        tier = str(snap.get("conviction_tier") or "").lower()
+        if tier == "reject":
+            return None
+        if tier not in ("sniper", "normal"):
+            tier = "normal"
+
+        entry_price = float(snap.get("price") or snap.get("entry_price") or 0.0)
+        if entry_price <= 0:
+            return None
+        sl_price = float(snap.get("sl_price") or 0.0)
+        if sl_price <= 0:
+            sl_pct = 0.05
+            sl_price = entry_price * (1 - sl_pct) if direction == "LONG" \
+                else entry_price * (1 + sl_pct)
+        size_pct = float(snap.get("size_pct") or (3.0 if tier == "sniper" else 1.0))
+
+        try:
+            return _TradePlan(
+                asset=self.asset,
+                direction=direction,
+                entry_price=entry_price,
+                sl_price=sl_price,
+                entry_tier=tier,
+                size_pct=size_pct,
+                confidence=float(snap.get("confidence") or 0.5),
+                conviction_score=int(snap.get("conviction_score") or (8 if tier == "sniper" else 5)),
+                thesis=(
+                    f"tech_blended_promotion: LLM said skip ({llm_skip_reason[:80]}); "
+                    f"orchestrator+conviction tier={tier} dir={direction}"
+                )[:500],
+            )
+        except Exception as e:
+            logger.debug("[agentic_loop:%s] tech promotion failed: %s", self.asset, e)
+            return None

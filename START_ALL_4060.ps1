@@ -145,6 +145,15 @@ if (-not $env:ACT_LLM_SOLE_AUTHOR) {
     _SetEnvDual "ACT_LLM_SOLE_AUTHOR" "1"
     Ok "ACT_LLM_SOLE_AUTHOR=1 enabled (LLM is sole order author; agents/math/genetics feed it)"
 }
+# Tech-blended escalation: when the LLM emits 'skip' but the technical
+# lane has a high-conviction signal, agentic_trade_loop auto-promotes
+# the technical signal to a TradePlan that still passes through every
+# gate in submit_trade_plan. Default ON so trades flow even when the
+# 7-8B local analyst is timid. Disable via setx ACT_LLM_TECH_BLENDED 0.
+if (-not $env:ACT_LLM_TECH_BLENDED) {
+    _SetEnvDual "ACT_LLM_TECH_BLENDED" "1"
+    Ok "ACT_LLM_TECH_BLENDED=1 enabled (LLM-skip + strong tech signal -> auto-promote)"
+}
 # Match the 5090's bumped 16384 default — same reasoning as START_ALL.ps1:
 # 8192 was too tight, prompts got truncated to 500 chars, agentic loop
 # returned parse_failures. 16K gives the analyst real prompt budget.
@@ -187,7 +196,12 @@ try {
 # 8 GB VRAM alongside qwen2.5-coder:7b (~5 GB).
 $localScanner = if ($env:ACT_SCANNER_MODEL) { $env:ACT_SCANNER_MODEL } else { "qwen2.5-coder:7b" }
 $backupAnalyst = if ($env:ACT_ANALYST_BACKUP_MODEL) { $env:ACT_ANALYST_BACKUP_MODEL } else { "llama3.2:3b" }
-$localPullChain = @($localScanner, $backupAnalyst)
+# qwen3:8b is the local_8gb profile's analyst (better at strict TradePlan
+# JSON than qwen2.5-coder:7b for the analyst role). ~5GB, fits 8GB VRAM
+# alongside the scanner. Pre-pulled so first-tick agentic_loop has the
+# model loaded; without this the 4060 falls through to local_8gb -> errors.
+$localAnalyst = "qwen3:8b"
+$localPullChain = @($localScanner, $localAnalyst, $backupAnalyst)
 try {
     $localTags = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 5 -ErrorAction Stop
     $localModels = @($localTags.models | ForEach-Object { $_.name })

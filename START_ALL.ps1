@@ -423,6 +423,13 @@ if (-not $env:ACT_AGENTIC_LOOP) { _SetEnvPersistent "ACT_AGENTIC_LOOP" "1" }
 # inputs to the LLM. The LLM compiles the only TradePlans that fire
 # orders via submit_trade_plan. Operator directive 2026-04-30.
 if (-not $env:ACT_LLM_SOLE_AUTHOR) { _SetEnvPersistent "ACT_LLM_SOLE_AUTHOR" "1" }
+# Tech-blended escalation: when the LLM emits 'skip' but the technical
+# lane has a high-conviction signal in tick_state, agentic_trade_loop
+# auto-promotes the technical signal into a TradePlan. Order still
+# passes every gate in submit_trade_plan; this just refuses to leave
+# trades on the table when the LLM is timid. Operator directive
+# 2026-04-30: "LLM should do trades on stocks also (at any cost)".
+if (-not $env:ACT_LLM_TECH_BLENDED) { _SetEnvPersistent "ACT_LLM_TECH_BLENDED" "1" }
 if (-not $env:ACT_BRAIN_PROFILE) { _SetEnvPersistent "ACT_BRAIN_PROFILE" $brainProfile }
 if (-not $env:ACT_SCANNER_MODEL) { _SetEnvPersistent "ACT_SCANNER_MODEL" $scannerModel }
 if (-not $env:ACT_ANALYST_MODEL) { _SetEnvPersistent "ACT_ANALYST_MODEL" $analystModel }

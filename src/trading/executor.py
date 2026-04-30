@@ -4534,6 +4534,18 @@ class TradingExecutor:
                       f"{'  (crisis)' if _macro.crisis else ''}")
                 try:
                     from src.ai import tick_state as _ts
+                    # Compute a sane default SL for the tech-blended
+                    # fallback in agentic_trade_loop. 5% ATR-anchored when
+                    # ATR is available, else 5% flat. The fallback only
+                    # uses this when LLM emits skip+ACT_LLM_TECH_BLENDED=1.
+                    try:
+                        _atr_sl_pct = max(0.02, min(0.08, 2.0 * (current_atr / max(price, 1e-9)))) \
+                            if price and current_atr else 0.05
+                    except Exception:
+                        _atr_sl_pct = 0.05
+                    _direction_str = "LONG" if _direction == "LONG" else "SHORT"
+                    _sl = price * (1 - _atr_sl_pct) if _direction_str == "LONG" \
+                        else price * (1 + _atr_sl_pct)
                     _ts.update(
                         asset,
                         conviction_tier=str(_conv.tier),
@@ -4541,6 +4553,11 @@ class TradingExecutor:
                         conviction_reasons=", ".join(list(_conv.reasons or [])[:6]),
                         macro_bias=float(_macro.signed_bias),
                         macro_crisis=bool(_macro.crisis),
+                        # Inputs the tech-blended escalation needs:
+                        consensus_dir=_direction_str,
+                        price=float(price),
+                        sl_price=float(_sl),
+                        size_pct=float(1.0 if str(_conv.tier) != "sniper" else 3.0),
                     )
                 except Exception:
                     pass

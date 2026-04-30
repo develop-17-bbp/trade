@@ -140,18 +140,21 @@ BRAIN_PROFILES: Dict[str, Dict[str, Any]] = {
         "analyst_temperature": 0.2,
         "description": "Devstral 24B agentic scanner + Qwen3-Coder 30B analyst (strict JSON / tool-use pair).",
     },
-    # Local-only 8GB profile: both roles served by qwen2.5-coder:7b.
-    # Scanner reuses the analyst weights to keep VRAM at ~5GB total.
-    # For the 4060 box (8GB) when OLLAMA_REMOTE_URL is unset and a
-    # 30B analyst can't fit. Sacrifices analyst depth for guaranteed
-    # local availability. Operator directive 2026-04-30: 4060 must
-    # still produce LLM-driven Alpaca trades after remote model removal.
+    # Local-only 8GB profile — analyst=qwen3:8b (best 8B for strict JSON
+    # / instruction-following per April-2026 benchmarks), scanner=
+    # qwen2.5-coder:7b (fast, structured output for scan reports).
+    # Total ~5.5GB VRAM, fits comfortably on a 4060 (8GB). Use when
+    # OLLAMA_REMOTE_URL is unset and a 30B analyst can't fit locally.
+    # Operator directive 2026-04-30: parse_failure rate on
+    # qwen2.5-coder:7b-as-analyst was killing every Alpaca tick;
+    # qwen3:8b drops parse_failures dramatically. Operator follow-up
+    # required: `ollama pull qwen3:8b` on the 4060 box.
     "local_8gb": {
         "scanner_model": "qwen2.5-coder:7b",
-        "analyst_model": "qwen2.5-coder:7b",
+        "analyst_model": "qwen3:8b",
         "scanner_temperature": 0.3,
         "analyst_temperature": 0.2,
-        "description": "Single 7B model on both ends. ~5GB VRAM total. Use when only 8-10GB available locally and no remote analyst.",
+        "description": "qwen3:8b analyst + qwen2.5-coder:7b scanner. ~5.5GB VRAM total. Use when only 8-10GB available locally and no remote analyst.",
     },
 }
 
