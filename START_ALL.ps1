@@ -697,10 +697,16 @@ if (Test-Path $watchdogScript) {
 STEP 12 "Paper Exploration [Idle]"
 $exploreScript = Join-Path $PSScriptRoot "scripts\paper_exploration_tick.py"
 if (Test-Path $exploreScript) {
-    $p12 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Paper Exploration && cd /d $dir && set PYTHONUNBUFFERED=1 && powershell -Command `"while (`$true) { python scripts\paper_exploration_tick.py --venue auto --relaxed; Start-Sleep -Seconds 900 }`"" -PassThru
+    # First launch: fire ONE forced exploration trade immediately so the
+    # operator sees end-to-end RH paper-sim flow within ~30 seconds of
+    # START_ALL. Subsequent runs in the 15-min loop use the normal
+    # quiet-hours cooldown. Operator directive 2026-04-30: trades must
+    # fire automatically once START_ALL runs - this proves the path
+    # without waiting for the LLM lane or the 4-hour soak gate.
+    $p12 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Paper Exploration && cd /d $dir && set PYTHONUNBUFFERED=1 && powershell -Command `"python scripts\paper_exploration_tick.py --venue auto --relaxed --force; while (`$true) { Start-Sleep -Seconds 900; python scripts\paper_exploration_tick.py --venue auto --relaxed }`"" -PassThru
     try { $p12.PriorityClass = "Idle" } catch {}
     Start-Sleep 1
-    OK "Paper Exploration PID=$($p12.Id)  (15min poll; ACT_DISABLE_PAPER_EXPLORATION=1 to halt)"
+    OK "Paper Exploration PID=$($p12.Id)  (forced first trade + 15min poll; ACT_DISABLE_PAPER_EXPLORATION=1 to halt)"
 } else {
     WARN "scripts\paper_exploration_tick.py not found - skipping (continuous trade flow not guaranteed)."
 }

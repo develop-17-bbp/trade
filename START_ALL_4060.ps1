@@ -264,7 +264,10 @@ Start-Bg "ACT - Silence watchdog (4060)" "python -m scripts.silence_watchdog" | 
 #    ACT_DISABLE_PAPER_EXPLORATION=1 broader kill via ACT_DISABLE_AGENTIC_LOOP=1.
 #    Auto-picks venue: alpaca crypto (24/7) when no APCA stocks open,
 #    alpaca stocks during RTH, robinhood paper-sim as final fallback.
-Start-Bg "ACT - Paper Exploration (4060)" "powershell -Command `"while (`$true) { python scripts\paper_exploration_tick.py --venue alpaca --relaxed; Start-Sleep -Seconds 900 }`"" | Out-Null
+#    First launch fires --force so a trade is visible within ~30s of
+#    START_ALL; subsequent runs use the normal cooldown (operator
+#    directive 2026-04-30: trades must fire automatically).
+Start-Bg "ACT - Paper Exploration (4060)" "powershell -Command `"python scripts\paper_exploration_tick.py --venue alpaca --relaxed --force; while (`$true) { Start-Sleep -Seconds 900; python scripts\paper_exploration_tick.py --venue alpaca --relaxed }`"" | Out-Null
 
 # 6. (optional) FastAPI dashboard
 if ($env:ACT_4060_DASHBOARD -eq "1") {
