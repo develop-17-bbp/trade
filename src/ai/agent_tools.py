@@ -262,7 +262,7 @@ def register_agent_tools(registry) -> List[str]:
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                        "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                         "task_description": {
                             "type": "string",
                             "description": "Concrete question for this specialist agent.",
@@ -295,7 +295,7 @@ def register_agent_tools(registry) -> List[str]:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "task_description": {"type": "string"},
                 },
                 "required": ["asset"],

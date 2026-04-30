@@ -530,7 +530,7 @@ def _rule_based_fallback_plan(
     # propose a small LONG bounce trade instead of skipping. This
     # captures the bounce trades that happen on every bearish leg
     # while keeping the position size small (paper-mode soak data).
-    is_robinhood_longs_only = "robinhood" in (regime or "").lower() or True  # default assume longs-only
+    is_robinhood_longs_only = "VENUE=ALPACA" not in (quant_data or "").upper()
     net_pre = sum(votes)
     if net_pre < 0 and is_robinhood_longs_only:
         # All votes bearish but we can only LONG. Check for bounce.
@@ -633,7 +633,16 @@ def _cli() -> int:
     parser = argparse.ArgumentParser(
         description="Dry-run the agentic trade loop for one asset and print the result.",
     )
-    parser.add_argument("--asset", default="BTC", help="Asset symbol (BTC, ETH)")
+    parser.add_argument(
+        "--asset",
+        default=os.environ.get("ACT_DRYRUN_ASSET", "BTC"),
+        help=(
+            "Asset symbol — any name in the active basket: BTC/ETH (CRYPTO on "
+            "robinhood) or any stock in config.yaml:exchanges[alpaca].assets "
+            "(SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Override via "
+            "ACT_DRYRUN_ASSET env."
+        ),
+    )
     parser.add_argument("--regime", default="UNKNOWN", help="Current regime tag")
     parser.add_argument("--quant", default="", help="Verified quant-data block to seed with")
     parser.add_argument("--max-steps", type=int, default=6, help="Hard cap on LLM tool-use rounds")

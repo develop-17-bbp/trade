@@ -105,17 +105,38 @@ def _safe_get(d: Dict[str, Any], key: str, default: Any = None) -> Any:
 
 
 def compute_synthesis(asset: str = "BTC") -> FactorSynthesis:
-    """Run all 6 factors and combine into a single directional bias.
+    """Run the per-asset-class factor pack and combine into a single
+    directional bias.
+
+    Asset-class branching:
+      * CRYPTO (BTC/ETH/...): macro + btc_dominance + halving_cycle + cvd
+                              + whale_flow + lead_lag (6 factors)
+      * STOCK  (SPY/QQQ/large-caps): macro + equity_risk_pulse +
+                              earnings_proximity + cvd + whale_flow
+                              (5 factors; no btc_dominance / halving /
+                              lead_lag because those don't apply)
 
     Each factor is called in a try/except — a missing factor reduces
     n_factors_available but doesn't block the synthesis. Empty/error
     factors contribute 0 to the score.
     """
     asset = str(asset).upper()
+
+    # Resolve asset class. classify() handles ETF/leveraged-ETF/STOCK/CRYPTO.
+    try:
+        from src.models.asset_class import classify
+        meta = classify(asset)
+        is_stock = meta.asset_class.is_stock()
+        is_crypto = meta.asset_class.is_crypto()
+    except Exception:
+        # Fallback: assume crypto for legacy BTC/ETH path.
+        is_stock = False
+        is_crypto = asset in ("BTC", "ETH")
+
     factors: Dict[str, Any] = {}
     components: List[Tuple[str, float, str]] = []  # (name, score, direction_label)
 
-    # 1. Macro overlay
+    # 1. Macro overlay (asset-agnostic: DXY/VIX/risk regime apply to both)
     try:
         from src.ai.macro_overlay import fetch_macro_overlay
         m = fetch_macro_overlay()
@@ -128,38 +149,76 @@ def compute_synthesis(asset: str = "BTC") -> FactorSynthesis:
     except Exception as e:
         logger.debug("synthesis macro fetch failed: %s", e)
 
-    # 2. BTC dominance + ETH bias
-    try:
-        from src.ai.btc_dominance import fetch_btc_dominance
-        d = fetch_btc_dominance()
-        if d.method != "unavailable":
-            factors["btc_dominance"] = d.to_dict()
-            # For ETH, use eth_directional_bias_vs_btc directly
-            # For BTC, dominance rising is mildly positive (BTC favored)
-            if asset == "ETH":
-                bias = float(d.eth_directional_bias_vs_btc)
-            else:
-                # BTC: rising BTC.D is mild positive (capital flowing in)
-                bias = max(-0.5, min(0.5, d.btc_dominance_change_24h_pct / 2.0))
-            components.append((
-                "btc_dominance", bias,
-                f"zone={d.btc_dominance_zone}",
-            ))
-    except Exception as e:
-        logger.debug("synthesis btc_dom fetch failed: %s", e)
+    # 2. BTC dominance + ETH bias  (CRYPTO ONLY — meaningless for stocks)
+    if is_crypto:
+        try:
+            from src.ai.btc_dominance import fetch_btc_dominance
+            d = fetch_btc_dominance()
+            if d.method != "unavailable":
+                factors["btc_dominance"] = d.to_dict()
+                if asset == "ETH":
+                    bias = float(d.eth_directional_bias_vs_btc)
+                else:
+                    bias = max(-0.5, min(0.5, d.btc_dominance_change_24h_pct / 2.0))
+                components.append((
+                    "btc_dominance", bias,
+                    f"zone={d.btc_dominance_zone}",
+                ))
+        except Exception as e:
+            logger.debug("synthesis btc_dom fetch failed: %s", e)
 
-    # 3. Halving cycle (BONUS — +0.3 for bullish_phase, 0 otherwise)
-    try:
-        from src.ai.halving_cycle import get_halving_cycle
-        h = get_halving_cycle()
-        factors["halving_cycle"] = h.to_dict()
-        cycle_bonus = 0.3 if h.bullish_phase else (-0.2 if h.cycle_phase == "distribution_bear" else 0.0)
-        components.append((
-            "halving_cycle", cycle_bonus,
-            f"phase={h.cycle_phase}",
-        ))
-    except Exception as e:
-        logger.debug("synthesis halving fetch failed: %s", e)
+    # 2-stocks. Equity risk pulse  (STOCK ONLY — VIX/PCR replaces BTC.D's
+    # role as the cross-market regime input)
+    if is_stock:
+        try:
+            from src.data.equity_risk_pulse import equity_risk_pulse
+            erp = equity_risk_pulse()
+            factors["equity_risk_pulse"] = erp
+            # risk_score 0..100; map to [-1,+1] bias (50 = neutral).
+            score_0_100 = float(erp.get("risk_score", 50.0))
+            erp_bias = max(-1.0, min(1.0, (score_0_100 - 50.0) / 50.0))
+            components.append((
+                "equity_risk_pulse", erp_bias,
+                f"label={erp.get('label', 'neutral')}",
+            ))
+        except Exception as e:
+            logger.debug("synthesis equity_risk_pulse failed: %s", e)
+
+    # 3. Halving cycle (CRYPTO ONLY — BTC supply mechanics, no equity analog)
+    if is_crypto:
+        try:
+            from src.ai.halving_cycle import get_halving_cycle
+            h = get_halving_cycle()
+            factors["halving_cycle"] = h.to_dict()
+            cycle_bonus = 0.3 if h.bullish_phase else (-0.2 if h.cycle_phase == "distribution_bear" else 0.0)
+            components.append((
+                "halving_cycle", cycle_bonus,
+                f"phase={h.cycle_phase}",
+            ))
+        except Exception as e:
+            logger.debug("synthesis halving fetch failed: %s", e)
+
+    # 3-stocks. Earnings proximity  (STOCK ONLY — IV-crush + gap risk
+    # within 3 trading days of an earnings print pushes bias toward zero)
+    if is_stock:
+        try:
+            from src.data.earnings_calendar import next_earnings_in_days
+            days = next_earnings_in_days(asset)
+            factors["earnings_proximity"] = {"days_to_earnings": days}
+            # Within 3 days → strong bearish bias (don't add risk into a
+            # binary event); 3-7 days → mild bearish; >7 days → neutral.
+            if days <= 3.0:
+                ep_bias = -0.5
+                lbl = f"earnings_in_{days:.1f}d_DEFENSIVE"
+            elif days <= 7.0:
+                ep_bias = -0.2
+                lbl = f"earnings_in_{days:.1f}d_caution"
+            else:
+                ep_bias = 0.0
+                lbl = "no_imminent_earnings"
+            components.append(("earnings_proximity", ep_bias, lbl))
+        except Exception as e:
+            logger.debug("synthesis earnings_proximity failed: %s", e)
 
     # 4. CVD (per-asset)
     try:
@@ -201,34 +260,36 @@ def compute_synthesis(asset: str = "BTC") -> FactorSynthesis:
     except Exception as e:
         logger.debug("synthesis whale_flow failed: %s", e)
 
-    # 6. Lead-lag (informational; small bias when this asset leads)
-    try:
-        from src.ai.btc_eth_lead_lag import analyze_lead_lag
-        from src.data.fetcher import PriceFetcher
-        pf = PriceFetcher()
-        btc_bars = pf.get_recent_bars("BTC", timeframe="1h", n=200) or []
-        eth_bars = pf.get_recent_bars("ETH", timeframe="1h", n=200) or []
-        if (btc_bars and eth_bars
-                and len(btc_bars) >= 50 and len(eth_bars) >= 50):
-            btc_closes = [float(b.get("close", 0)) for b in btc_bars]
-            eth_closes = [float(b.get("close", 0)) for b in eth_bars]
-            ll_r = analyze_lead_lag(btc_closes, eth_closes)
-            factors["lead_lag"] = ll_r.to_dict()
-            # +0.2 if THIS asset leads (move first, capture more)
-            if (asset == "BTC" and ll_r.relationship == "btc_leads_eth"
-                    and ll_r.correlation_strength > 0.3):
-                lead_bias = 0.2
-            elif (asset == "ETH" and ll_r.relationship == "eth_leads_btc"
-                    and ll_r.correlation_strength > 0.3):
-                lead_bias = 0.2
-            else:
-                lead_bias = 0.0
-            components.append((
-                "lead_lag", lead_bias,
-                f"relation={ll_r.relationship}",
-            ))
-    except Exception as e:
-        logger.debug("synthesis lead_lag failed: %s", e)
+    # 6. Lead-lag (CRYPTO ONLY — BTC/ETH pair; equity equivalent would
+    # be SPY-vs-QQQ but is not yet wired and only matters when the asset
+    # is one of those two, so we skip for stocks today)
+    if is_crypto:
+        try:
+            from src.ai.btc_eth_lead_lag import analyze_lead_lag
+            from src.data.fetcher import PriceFetcher
+            pf = PriceFetcher()
+            btc_bars = pf.get_recent_bars("BTC", timeframe="1h", n=200) or []
+            eth_bars = pf.get_recent_bars("ETH", timeframe="1h", n=200) or []
+            if (btc_bars and eth_bars
+                    and len(btc_bars) >= 50 and len(eth_bars) >= 50):
+                btc_closes = [float(b.get("close", 0)) for b in btc_bars]
+                eth_closes = [float(b.get("close", 0)) for b in eth_bars]
+                ll_r = analyze_lead_lag(btc_closes, eth_closes)
+                factors["lead_lag"] = ll_r.to_dict()
+                if (asset == "BTC" and ll_r.relationship == "btc_leads_eth"
+                        and ll_r.correlation_strength > 0.3):
+                    lead_bias = 0.2
+                elif (asset == "ETH" and ll_r.relationship == "eth_leads_btc"
+                        and ll_r.correlation_strength > 0.3):
+                    lead_bias = 0.2
+                else:
+                    lead_bias = 0.0
+                components.append((
+                    "lead_lag", lead_bias,
+                    f"relation={ll_r.relationship}",
+                ))
+        except Exception as e:
+            logger.debug("synthesis lead_lag failed: %s", e)
 
     # Combine — straight average of available components.
     n = len(components)
@@ -252,7 +313,9 @@ def compute_synthesis(asset: str = "BTC") -> FactorSynthesis:
     macro_regime = factors.get("macro", {}).get("risk_regime", "unknown")
     action, conf_label = _classify_action(score, asset)
 
-    rationale_parts = [f"score={score:+.2f}", f"n={n}/6"]
+    # Per-asset-class denominator: crypto has 6 factor slots, stocks have 5.
+    expected_n = 5 if is_stock else 6
+    rationale_parts = [f"score={score:+.2f}", f"n={n}/{expected_n}"]
     rationale_parts.extend(
         f"{name}={s:+.2f}({lbl[:20]})" for name, s, lbl in components[:6]
     )

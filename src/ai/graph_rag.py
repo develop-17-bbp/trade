@@ -51,13 +51,16 @@ DISABLE_ENV = "ACT_DISABLE_GRAPH_RAG"
 DEFAULT_HALF_LIFE_S = {
     "news":          3 * 3600,         # news decays across 3 hours
     "sentiment":     1 * 3600,
-    "funding":       30 * 60,          # funding rate window
-    "on_chain":      2 * 3600,
-    "polymarket":    1 * 3600,
+    "funding":       30 * 60,          # funding rate window (CRYPTO)
+    "on_chain":      2 * 3600,         # whale/exchange flows (CRYPTO)
+    "polymarket":    1 * 3600,         # prediction markets (CRYPTO)
     "macro":         24 * 3600,        # macro persists longer
     "correlation":   6 * 3600,
     "orderbook":     5 * 60,           # order-book signal fast-decays
     "event":         4 * 3600,
+    # Equity-specific edge kinds
+    "earnings":      12 * 3600,        # earnings dates persist multi-day
+    "options_skew":  1 * 3600,         # IV skew / PCR — equity flow signal
     "_default":      60 * 60,
 }
 
@@ -563,6 +566,138 @@ def ingest_polymarket(asset: str, markets: List[Dict[str, Any]]) -> int:
             "weight": yes_price, "source": "polymarket",
             "payload": {"market_id": mid, "yes_price": yes_price},
         })
+    return len(g.add_edges_bulk(rows))
+
+
+def ingest_earnings(asset: str, days_to_earnings: float,
+                    confirmed: bool = True) -> bool:
+    """Equity-specific: an upcoming earnings print → asset→earnings_event
+    edge. Weight is inversely proportional to days-to-earnings so the
+    closer the print, the heavier the signal. ETFs and tickers without
+    earnings are no-ops.
+
+    Edge kind: 'earnings' (12h half-life — earnings is a multi-day
+    proximity signal, not a fast-fade fact).
+    """
+    try:
+        days = float(days_to_earnings)
+    except Exception:
+        return False
+    if not (days >= 0 and days < 365):     # +inf/None/garbage → skip
+        return False
+    try:
+        g = get_graph()
+        asset_eid = g.upsert_entity(kind="asset", name=asset.upper())
+        # Bucket the proximity so the entity name is stable across ticks
+        # (entities are deduped on (kind, name); we don't want a fresh
+        # entity every minute as days_to_earnings drifts).
+        if days <= 1.0:
+            bucket = "0-1d"
+        elif days <= 3.0:
+            bucket = "1-3d"
+        elif days <= 7.0:
+            bucket = "3-7d"
+        elif days <= 14.0:
+            bucket = "7-14d"
+        else:
+            bucket = ">14d"
+        ev_eid = g.upsert_entity(
+            kind="earnings_event",
+            name=f"{asset.upper()}_earnings_{bucket}",
+            attrs={"days_to_earnings": days, "confirmed": confirmed},
+        )
+        # Weight: 0-1d→1.0, 1-3d→0.8, 3-7d→0.5, 7-14d→0.3, >14d→0.1
+        if days <= 1.0:
+            w = 1.0
+        elif days <= 3.0:
+            w = 0.8
+        elif days <= 7.0:
+            w = 0.5
+        elif days <= 14.0:
+            w = 0.3
+        else:
+            w = 0.1
+        g.add_edge(
+            src_id=asset_eid, dst_id=ev_eid,
+            relation="prints_in", kind="earnings",
+            weight=w, source="earnings_calendar",
+            payload={"days_to_earnings": days, "confirmed": confirmed},
+        )
+        return True
+    except Exception as e:
+        logger.debug("ingest_earnings failed: %s", e)
+        return False
+
+
+def ingest_options_skew(asset: str, *,
+                         put_call_ratio: Optional[float] = None,
+                         iv_skew: Optional[float] = None,
+                         vix: Optional[float] = None) -> int:
+    """Equity-specific: options-market structure → edges to a regime-
+    indicator entity. PCR > 1.0 = bearish positioning; iv_skew < 0
+    = put-side stress; high VIX = systemic fear.
+
+    Returns number of edges written (0 if no fields supplied).
+    """
+    g = get_graph()
+    try:
+        asset_eid = g.upsert_entity(kind="asset", name=asset.upper())
+    except Exception:
+        return 0
+    rows: List[Dict[str, Any]] = []
+    if put_call_ratio is not None:
+        try:
+            pcr = float(put_call_ratio)
+            if pcr >= 0:
+                indicator_eid = g.upsert_entity(
+                    kind="options_indicator", name=f"{asset.upper()}_pcr",
+                )
+                rel = "elevated_puts" if pcr > 1.0 else "elevated_calls"
+                rows.append({
+                    "src_id": asset_eid, "dst_id": indicator_eid,
+                    "relation": rel, "kind": "options_skew",
+                    "weight": min(2.0, abs(pcr - 1.0) * 2.0),
+                    "source": "equity_risk_pulse",
+                    "payload": {"put_call_ratio": pcr},
+                })
+        except Exception:
+            pass
+    if iv_skew is not None:
+        try:
+            sk = float(iv_skew)
+            indicator_eid = g.upsert_entity(
+                kind="options_indicator", name=f"{asset.upper()}_iv_skew",
+            )
+            rel = "put_skew_high" if sk < 0 else "call_skew_high"
+            rows.append({
+                "src_id": asset_eid, "dst_id": indicator_eid,
+                "relation": rel, "kind": "options_skew",
+                "weight": min(2.0, abs(sk)),
+                "source": "equity_risk_pulse",
+                "payload": {"iv_skew": sk},
+            })
+        except Exception:
+            pass
+    if vix is not None:
+        try:
+            v = float(vix)
+            if v > 0:
+                indicator_eid = g.upsert_entity(
+                    kind="macro_indicator", name="VIX",
+                )
+                # VIX > 25 is the "elevated" line; > 40 is "panic".
+                rel = "vix_panic" if v > 40 else ("vix_elevated" if v > 25 else "vix_calm")
+                rows.append({
+                    "src_id": asset_eid, "dst_id": indicator_eid,
+                    "relation": rel, "kind": "macro",
+                    "weight": min(2.0, v / 25.0),
+                    "source": "equity_risk_pulse",
+                    "payload": {"vix": v},
+                })
+        except Exception:
+            pass
+    if not rows:
+        return 0
     return len(g.add_edges_bulk(rows))
 
 

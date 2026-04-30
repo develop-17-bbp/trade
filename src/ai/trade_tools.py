@@ -398,7 +398,7 @@ def _build_default_registry_uncached() -> ToolRegistry:
         input_schema={
             "type": "object",
             "properties": {
-                "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                 "include": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -428,9 +428,24 @@ def _build_default_registry_uncached() -> ToolRegistry:
 
     reg.register(Tool(
         name="get_fear_greed",
-        description="Current Fear & Greed index reading. Returns {value, label}.",
+        description="Current Fear & Greed index reading. Returns {value, label}. CRYPTO-tuned; for equities use get_equity_risk_pulse instead.",
         input_schema={"type": "object", "properties": {}},
         handler=_handle_fear_greed,
+        tag="read_only",
+    ))
+
+    reg.register(Tool(
+        name="get_equity_risk_pulse",
+        description=(
+            "Equity equivalent of fear_greed: VIX spot + VIX9D/VIX/VIX3M term "
+            "structure + SPY put-call ratio fused into a 0-100 risk score. "
+            "Use BEFORE submitting any STOCK trade plan to gauge regime. "
+            "Score < 30 = panic / fear (defensive sizing); 30-70 = neutral; "
+            ">70 = greed (size normally but watch for mean-reversion). "
+            "Returns {risk_score, label, vix, vix_ts, spy_pcr, reasons}."
+        ),
+        input_schema={"type": "object", "properties": {}},
+        handler=_handle_equity_risk_pulse,
         tag="read_only",
     ))
 
@@ -446,7 +461,7 @@ def _build_default_registry_uncached() -> ToolRegistry:
         input_schema={
             "type": "object",
             "properties": {
-                "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                 "task_description": {
                     "type": "string",
                     "description": "Concrete question for the risk guardian, e.g. 'Is the recent breakout a bull trap given funding rate divergence?'",
@@ -754,6 +769,14 @@ def _handle_news(args: Dict[str, Any]) -> Dict[str, Any]:
 def _handle_fear_greed(_args: Dict[str, Any]) -> Dict[str, Any]:
     from src.ai.web_context import get_fear_greed_digest
     return get_fear_greed_digest().to_dict()
+
+
+def _handle_equity_risk_pulse(_args: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from src.data.equity_risk_pulse import equity_risk_pulse
+        return equity_risk_pulse()
+    except Exception as e:
+        return {"error": f"equity_risk_pulse_unavailable:{e}", "risk_score": 50, "label": "neutral"}
 
 
 def _handle_risk_guardian(args: Dict[str, Any]) -> Dict[str, Any]:

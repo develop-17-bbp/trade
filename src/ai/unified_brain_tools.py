@@ -2252,7 +2252,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_ml_ensemble, tag="read_only",
@@ -2267,7 +2267,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_multi_strategy, tag="read_only",
@@ -2425,7 +2425,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_robinhood_quote, tag="read_only",
@@ -2470,7 +2470,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "regime": {"type": "string"},
                 },
                 "required": ["asset"],
@@ -2504,7 +2504,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_profit_protector, tag="read_only",
@@ -2580,7 +2580,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "strategy_expr": {"type": "string"},
                     "direction": {"type": "string"},
                     "regime": {"type": "string"},
@@ -2643,7 +2643,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_factor_synthesis, tag="read_only",
@@ -2682,7 +2682,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h"]},
                     "lookback": {"type": "integer", "minimum": 20, "maximum": 200},
                 },
@@ -2701,7 +2701,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h"]},
                     "lookback": {"type": "integer", "minimum": 30, "maximum": 300},
                 },
@@ -2764,7 +2764,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "k": {"type": "integer", "minimum": 1, "maximum": 10},
                     "market_context": {"type": "string"},
                 },
@@ -2784,7 +2784,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "formulas": {
                         "type": "array",
                         "items": {
@@ -2815,7 +2815,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"]},
                     "horizons": {"type": "array", "items": {"type": "integer"}},
                 },
@@ -2834,7 +2834,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "timeframe": {"type": "string", "enum": ["1h", "4h", "1d"]},
                     "horizons": {"type": "array", "items": {"type": "integer"}},
                 },
@@ -2853,7 +2853,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_ppo_action, tag="read_only",
@@ -2871,7 +2871,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
             },
             handler=_handle_profit_extraction_targets, tag="read_only",
         ),
@@ -2896,7 +2896,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_continuous_brain_scenarios, tag="read_only",
@@ -2933,7 +2933,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "regime": {"type": "string"},
                     "pattern": {"type": "string"},
                     "direction": {"type": "string"},
@@ -3036,7 +3036,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "regime": {"type": "string"},
                     "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
                 },
@@ -3057,7 +3057,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h"]},
                     "lookback": {"type": "integer", "minimum": 10, "maximum": 50},
                 },
@@ -3105,7 +3105,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
                 "required": ["asset"],
             },
             handler=_handle_grid_chop, tag="read_only",
@@ -3121,7 +3121,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "timeframe": {"type": "string", "enum": ["1h", "4h", "1d"]},
                     "lookback": {"type": "integer", "minimum": 30, "maximum": 200},
                 },
@@ -3170,7 +3170,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "timeframe": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"]},
                 },
                 "required": ["asset"],
@@ -3232,7 +3232,7 @@ def register_unified_brain_tools(registry) -> int:
             ),
             input_schema={
                 "type": "object",
-                "properties": {"asset": {"type": "string", "enum": ["BTC", "ETH"]}},
+                "properties": {"asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."}},
             },
             handler=_handle_institutional_flows, tag="read_only",
         ),
@@ -3360,7 +3360,7 @@ def register_unified_brain_tools(registry) -> int:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "asset": {"type": "string", "enum": ["BTC", "ETH"]},
+                    "asset": {"type": "string", "description": "Active-basket symbol — BTC/ETH (CRYPTO on robinhood) or any name in config.yaml:exchanges[alpaca].assets (STOCK on alpaca: SPY/QQQ/TQQQ/SOXL + top-100 large-caps). Downstream asset_class.classify() rejects unknowns."},
                     "regime": {"type": "string"},
                     "proposed_size_pct": {"type": "number", "minimum": 0.1, "maximum": 30.0},
                 },
