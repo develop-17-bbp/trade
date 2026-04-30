@@ -19,7 +19,12 @@ param(
     [int]$Port = 9100,
     # Renamed from $Host - PowerShell's $Host is a read-only automatic variable
     # and using it as a parameter throws "Cannot overwrite variable Host".
-    [string]$BindHost = "127.0.0.1",
+    # Default 0.0.0.0 so Tailscale-routed peers (Acer 100.116.246.48,
+    # 4060 100.93.49.32) can reach act-gpu directly without depending on
+    # rotating cloudflared quick-tunnel URLs. Operator firewall rule:
+    #   netsh advfirewall firewall add rule name="ACT-MCP-9100" dir=in
+    #     action=allow protocol=TCP localport=9100 profile=any
+    [string]$BindHost = "0.0.0.0",
     [switch]$AllowMutations
 )
 
