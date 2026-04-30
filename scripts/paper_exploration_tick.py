@@ -74,9 +74,9 @@ logger = logging.getLogger("paper_exploration")
 
 # ── Tunables (env overridable) ────────────────────────────────────
 
-QUIET_HOURS = float(os.environ.get("ACT_PAPER_EXPLORATION_QUIET_HOURS", "4"))
+QUIET_HOURS = float(os.environ.get("ACT_PAPER_EXPLORATION_QUIET_HOURS", "1"))
 SIZE_PCT = float(os.environ.get("ACT_PAPER_EXPLORATION_SIZE_PCT", "0.5"))
-MAX_PER_DAY = int(os.environ.get("ACT_PAPER_EXPLORATION_MAX_PER_DAY", "8"))
+MAX_PER_DAY = int(os.environ.get("ACT_PAPER_EXPLORATION_MAX_PER_DAY", "16"))
 
 # Asset selection: comma-sep tickers from env, else use the project's
 # top-100 large-cap list + BTC/ETH on Alpaca crypto. Operator directive

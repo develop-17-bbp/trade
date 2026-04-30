@@ -143,6 +143,37 @@ class AgenticContext:
                 "- Hold until thesis-completion: this is swing/position trading, not intraday scalping.\n"
                 "- Universe is BTC/USD and ETH/USD only — no other crypto."
             )
+
+        # Universal LLM-trader discipline overlay (research-driven 2026-04-30):
+        # 1) StockBench finding: LLMs systematically bias bullish, fail in
+        #    bearish regimes. Counter by hard-coding the rule that LONG plans
+        #    require non-negative macro bias OR explicit override thesis.
+        # 2) TradingAgents: Risk-Manager + Bull/Bear debate as MANDATORY
+        #    stages. Convert from optional tools to required invocations.
+        # 3) LLMQuant 2026: read GOAL_AWARE_PNL evidence and size against
+        #    residual gap.
+        system += (
+            "\n\n## TRADER DISCIPLINE (MANDATORY)\n"
+            "Before emitting any LONG/SHORT plan, you MUST:\n"
+            "  1. Read STRATEGY_PERFORMANCE - lean on agents with w>=1.5;\n"
+            "     discount or ignore agents tagged WEAK/DISTRUST.\n"
+            "  2. Read GOAL_AWARE_PNL - size against the recommended\n"
+            "     risk-budget multiplier (residual gap to 1%/day target).\n"
+            "     If gap is negative (target hit today): preserve gains,\n"
+            "     trade only sniper setups.\n"
+            "  3. Macro alignment check (CRITICAL - StockBench finding):\n"
+            "     Read TICK_SNAPSHOT macro_bias. If macro_bias <= -0.20\n"
+            "     (bearish) AND you're considering LONG: either emit SHORT\n"
+            "     (where venue allows) OR emit skip. Explicit override\n"
+            "     thesis required to take LONG against bearish macro.\n"
+            "  4. Call ask_risk_guardian BEFORE submit_trade_plan when\n"
+            "     size_pct >= 2.0 OR conviction_tier == 'sniper'. Their\n"
+            "     veto is advisory; reasoning required to override.\n"
+            "  5. For bearish setups, call ask_loss_prevention - same\n"
+            "     advisory-veto rule.\n"
+            "Skipping any of these steps is a RUBRIC violation that the\n"
+            "post-trade verifier will flag in self-critique."
+        )
         user_blocks: List[str] = []
 
         if quant_data:

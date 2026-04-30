@@ -582,6 +582,144 @@ def _capital_state_block() -> str:
     return (header + "\n" + body + summary)[:_CAPITAL_STATE_BUDGET_CHARS]
 
 
+def _goal_aware_pnl_block() -> str:
+    """Surface today's PnL vs the 1%/day target so the LLM sizes new
+    entries against residual gap, not as if every trade starts from zero.
+
+    Operator directive 2026-04-30: 1%/day is the non-negotiable target.
+    Research finding (LLMQuant 2026): 'use AI to think more clearly
+    about risk, limits, and failure - not to think for you'. Concretely
+    that means feeding the LLM a goal-aware risk budget every tick:
+
+        TODAY: 14:32 ET (4.2h until close)
+        REALIZED: +$23.50 (+0.21%)  UNREALIZED: -$5.00 (-0.04%)
+        TODAY TOTAL: +0.17%
+        TARGET: +1.00% / day
+        GAP: +0.83% remaining
+        RECOMMENDED RISK BUDGET: 0.5-2x normal size (gap is large but achievable)
+
+    The LLM will then preferentially take HIGHER-conviction setups when
+    the gap is large vs trail-stop-tighter when comfortably ahead.
+    """
+    if os.environ.get("ACT_DISABLE_GOAL_PNL_BLOCK", "").strip() == "1":
+        return ""
+    try:
+        import datetime as _dt
+        now_utc = _dt.datetime.now(_dt.timezone.utc)
+        # Today UTC start
+        day_start_ns = int(_dt.datetime(
+            now_utc.year, now_utc.month, now_utc.day,
+            tzinfo=_dt.timezone.utc,
+        ).timestamp() * 1e9)
+    except Exception:
+        return ""
+
+    realized_today = 0.0
+    unrealized_now = 0.0
+    initial_capital = 0.0
+    current_equity = 0.0
+
+    # Aggregate across venues
+    try:
+        from src.orchestration.warm_store import get_store
+        store = get_store()
+        store.flush()
+        conn = store._get_conn()
+        rows = conn.execute(
+            "SELECT plan_json FROM decisions "
+            "WHERE ts_ns >= ? AND final_action IN ('CLOSE','EXIT','LONG','SHORT') "
+            "AND decision_id NOT LIKE 'shadow-%'",
+            (day_start_ns,),
+        ).fetchall()
+        for (raw,) in rows:
+            if not raw:
+                continue
+            try:
+                import json as _j
+                d = _j.loads(raw) if isinstance(raw, str) else raw
+                pnl = float(d.get("realized_pnl_usd") or d.get("pnl_usd") or 0)
+                realized_today += pnl
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    try:
+        from src.data.fetcher import AlpacaClient
+        ac = AlpacaClient(paper=True)
+        if ac.available:
+            acct = ac.get_account() or {}
+            current_equity += float(acct.get("equity") or 0)
+            try:
+                _last = float(acct.get("last_equity") or 0)
+                if _last > 0:
+                    realized_today += (current_equity - _last)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        from src.data.robinhood_fetcher import RobinhoodPaperFetcher
+        import yaml
+        from pathlib import Path
+        cfg_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+        rh = RobinhoodPaperFetcher(config=cfg)
+        rh_eq = float(getattr(rh, "equity", 0) or 0)
+        rh_init = float(getattr(rh, "initial_capital", 0) or 0)
+        if rh_eq > 0:
+            current_equity += rh_eq
+            initial_capital += rh_init
+            for p in (getattr(rh, "positions", {}) or {}).values():
+                try:
+                    unrealized_now += float(getattr(p, "unrealized_pnl_usd", 0) or 0)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    if current_equity <= 0:
+        return ""
+
+    today_pct = (realized_today / current_equity * 100.0) if current_equity > 0 else 0.0
+    unrealized_pct = (unrealized_now / current_equity * 100.0) if current_equity > 0 else 0.0
+    total_pct = today_pct + unrealized_pct
+    target_pct = 1.0
+    gap_pct = target_pct - total_pct
+
+    # Hours until US-equity close (16:00 ET = 20:00 UTC) for stock-side risk pacing.
+    try:
+        et_close = now_utc.replace(hour=20, minute=0, second=0, microsecond=0)
+        if now_utc > et_close:
+            hours_to_close = 24 - (now_utc.hour - 20)
+        else:
+            hours_to_close = (et_close - now_utc).total_seconds() / 3600.0
+    except Exception:
+        hours_to_close = 6.0
+
+    # Risk-budget guidance keyed on residual gap.
+    if gap_pct <= 0:
+        budget = "0.3-0.5x normal size (target hit; preserve gains, no chasing)"
+    elif gap_pct < 0.3:
+        budget = "0.5-1.0x normal size (gap small; precision over volume)"
+    elif gap_pct < 0.7:
+        budget = "1.0-1.5x normal size (gap moderate; take quality setups)"
+    else:
+        budget = "1.0-2.0x normal size (gap large but achievable; lean into conviction)"
+
+    lines = [
+        f"TODAY: {now_utc.strftime('%H:%M UTC')} (~{hours_to_close:.1f}h to NYSE close)",
+        f"REALIZED: ${realized_today:+,.2f} ({today_pct:+.2f}%)  "
+        f"UNREALIZED: ${unrealized_now:+,.2f} ({unrealized_pct:+.2f}%)",
+        f"TODAY TOTAL: {total_pct:+.2f}%",
+        f"TARGET: +{target_pct:.2f}% / day",
+        f"GAP TO TARGET: {gap_pct:+.2f}%",
+        f"RECOMMENDED RISK BUDGET: {budget}",
+    ]
+    return "\n".join(lines)
+
+
 def _strategy_performance_block() -> str:
     """Surface dynamic Bayesian agent weights + recent accuracy + the
     strategy_repository's current champion + top challengers so the LLM
@@ -822,6 +960,17 @@ def build_evidence_document(
                 confidence=0.85, source="agents.weights+strategy_repo",
                 kind="meta",
             ))
+    # Goal-aware PnL: research finding (LLMQuant 2026) - LLMs need
+    # explicit risk budget keyed on residual gap to target. Without
+    # this they size every entry as if starting from zero. Surfaces
+    # today_pct vs 1%/day target + recommended size multiplier.
+    c = _goal_aware_pnl_block()
+    if c:
+        doc.add(EvidenceSection(
+            name="GOAL_AWARE_PNL", content=c,
+            confidence=0.95, source="warm_store+venue_accounts",
+            kind="meta",
+        ))
     if include_recent_critiques:
         # Phase D.4 wiring: post-trade self-critiques from trade_verifier
         # so the analyst calibrates against its own past predictive errors.
