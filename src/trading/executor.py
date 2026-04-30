@@ -4276,6 +4276,26 @@ class TradingExecutor:
         tf_signals = tf_signals or {}
         active_tf_signals = active_tf_signals or {}
 
+        # ── LLM-SOLE-AUTHOR GUARD ────────────────────────────────────
+        # When ACT_LLM_SOLE_AUTHOR=1, the technical lane in this method
+        # is reduced to feeding the LLM (via tick_state / orch_result
+        # already published upstream). Order placement is the LLM's
+        # sole responsibility via submit_trade_plan(). This makes the
+        # 13 fixed agents + math + genetics pure VOTE INPUTS instead of
+        # parallel writers to the executor. Operator directive
+        # 2026-04-30: "LLM should be deciding doing all trades using
+        # all classical stacked agents help these should make it even
+        # more robust in doing profitable".
+        if os.environ.get("ACT_LLM_SOLE_AUTHOR", "").strip() == "1":
+            try:
+                print(
+                    f"  [{self._ex_tag}:{asset}] LLM-SOLE-AUTHOR: technical-lane "
+                    f"entry skipped — LLM consumes orch_result via tick_state"
+                )
+            except Exception:
+                pass
+            return
+
         # Store tf_signals for use in later gates (e.g., SHORT direction gate)
         if not hasattr(self, '_last_tf_signals'):
             self._last_tf_signals = {}

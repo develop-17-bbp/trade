@@ -104,15 +104,20 @@ def _is_disabled() -> Optional[str]:
 
 
 def _last_decision_age_h() -> float:
-    """Return hours since last warm_store decision. inf when warm_store
-    has no rows (first soak, fresh DB)."""
+    """Return hours since last NON-SHADOW warm_store decision. inf when
+    warm_store has no real rows.
+
+    Shadow rows (decision_id LIKE 'shadow-%') are excluded — those fire
+    every 60-180s from the agentic loop and would permanently reset the
+    quiet-hours gate, blocking exploration forever.
+    """
     try:
         from src.orchestration.warm_store import get_store
         store = get_store()
         store.flush()
         conn = store._get_conn()
         row = conn.execute(
-            "SELECT MAX(ts_ns) FROM decisions"
+            "SELECT MAX(ts_ns) FROM decisions WHERE decision_id NOT LIKE 'shadow-%'"
         ).fetchone()
     except Exception as e:
         logger.debug("warm_store probe failed: %s", e)
@@ -441,7 +446,32 @@ def _submit_robinhood(asset: str, side: str) -> int:
         size_pct=SIZE_PCT,
         reasoning="paper_exploration_tick.py (low-conviction soak data)",
     )
-    return 0 if pos is not None else 5
+    if pos is None:
+        return 5
+    try:
+        from src.orchestration.warm_store import get_store
+        import uuid as _uuid
+        import time as _time
+        store = get_store()
+        row = {
+            "decision_id": f"paper_explore_{_uuid.uuid4().hex}",
+            "ts_ns": _time.time_ns(),
+            "symbol": asset, "asset_class": "CRYPTO",
+            "venue": "robinhood", "side": side, "qty": float(qty),
+            "conviction_tier": "paper_explore",
+            "final_action": "EXPLORE_SUBMIT",
+            "plan_json": {
+                "exploration": True, "size_pct": SIZE_PCT,
+                "entry_price": fill_price, "direction": direction,
+            },
+        }
+        try:
+            store.write_decision(row)
+        except Exception:
+            store.write(row)
+    except Exception as e:
+        logger.debug("warm_store write soft-fail: %s", e)
+    return 0
 
 
 # ── Main ──────────────────────────────────────────────────────────

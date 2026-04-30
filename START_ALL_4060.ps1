@@ -128,6 +128,14 @@ if (-not $env:ACT_AGENTIC_LOOP) {
     _SetEnvDual "ACT_AGENTIC_LOOP" "1"
     Ok "ACT_AGENTIC_LOOP=1 enabled (autonomous LLM trades on stocks + crypto)"
 }
+# LLM-sole-author: technical-lane (_evaluate_entry) becomes pure vote
+# inputs to the LLM. The LLM compiles the only TradePlans that fire
+# orders via submit_trade_plan. Operator directive 2026-04-30:
+# all classical agents/math/genetics help the LLM, not parallel writers.
+if (-not $env:ACT_LLM_SOLE_AUTHOR) {
+    _SetEnvDual "ACT_LLM_SOLE_AUTHOR" "1"
+    Ok "ACT_LLM_SOLE_AUTHOR=1 enabled (LLM is sole order author; agents/math/genetics feed it)"
+}
 # Match the 5090's bumped 16384 default — same reasoning as START_ALL.ps1:
 # 8192 was too tight, prompts got truncated to 500 chars, agentic loop
 # returned parse_failures. 16K gives the analyst real prompt budget.

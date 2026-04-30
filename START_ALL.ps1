@@ -419,6 +419,10 @@ function _SetEnvPersistent($name, $value) {
 }
 
 if (-not $env:ACT_AGENTIC_LOOP) { _SetEnvPersistent "ACT_AGENTIC_LOOP" "1" }
+# LLM-sole-author: technical-lane (_evaluate_entry) becomes pure vote
+# inputs to the LLM. The LLM compiles the only TradePlans that fire
+# orders via submit_trade_plan. Operator directive 2026-04-30.
+if (-not $env:ACT_LLM_SOLE_AUTHOR) { _SetEnvPersistent "ACT_LLM_SOLE_AUTHOR" "1" }
 if (-not $env:ACT_BRAIN_PROFILE) { _SetEnvPersistent "ACT_BRAIN_PROFILE" $brainProfile }
 if (-not $env:ACT_SCANNER_MODEL) { _SetEnvPersistent "ACT_SCANNER_MODEL" $scannerModel }
 if (-not $env:ACT_ANALYST_MODEL) { _SetEnvPersistent "ACT_ANALYST_MODEL" $analystModel }
