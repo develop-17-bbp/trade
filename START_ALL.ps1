@@ -510,7 +510,7 @@ if ($env:ACT_REAL_CAPITAL_ENABLED -eq "1") {
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  LAUNCHING 10 PARALLEL PROCESSES ($tier)" -ForegroundColor Cyan
+Write-Host "  LAUNCHING 11 PARALLEL PROCESSES ($tier)" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -625,11 +625,30 @@ if (Test-Path $watcherScript) {
     WARN "scripts\scanner_adapter_watcher.py not found - skipping."
 }
 
+# ── 11: Silence Watchdog (BelowNormal) ──
+# Polls warm_store decisions every 5 min. If no decision rows for >30 min
+# during expected-active hours, fires a CRITICAL alert via AlertManager
+# (Slack/Discord/Telegram channels per .env). This is the single piece of
+# plumbing that converts "bot silently broken for a week" into "operator
+# pinged within 30 min". Required precondition for the LLM-GATE fail-soft
+# downgrade — without the watchdog there's no safety net catching a boot
+# that came up degraded. Honors ACT_DISABLE_SILENCE_WATCHDOG=1.
+STEP 11 "Silence Watchdog [BelowNormal]"
+$watchdogScript = Join-Path $PSScriptRoot "scripts\silence_watchdog.py"
+if (Test-Path $watchdogScript) {
+    $p11 = Start-Process cmd.exe -ArgumentList "/k","title ACT - Silence Watchdog && cd /d $dir && set PYTHONUNBUFFERED=1 && python -m scripts.silence_watchdog" -PassThru
+    try { $p11.PriorityClass = "BelowNormal" } catch {}
+    Start-Sleep 1
+    OK "Silence Watchdog PID=$($p11.Id)  (polls every 5min; alerts if no decisions >30min)"
+} else {
+    WARN "scripts\silence_watchdog.py not found - skipping (LLM-GATE fail-soft has no safety net)."
+}
+
 # ── Summary ──
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "   ALL 10 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
+Write-Host "   ALL 11 SYSTEMS RUNNING ($tier)" -ForegroundColor Green
 Write-Host ""
 Write-Host "   #  Process            Priority      Interval  GPU Use" -ForegroundColor White
 Write-Host "   1  API Server         AboveNormal   always    none" -ForegroundColor White
@@ -642,6 +661,7 @@ Write-Host "   7  Tunnel             Idle          always    none" -ForegroundCo
 Write-Host "   8  MCP Server         Normal        always    none" -ForegroundColor White
 Write-Host "   9  Analyst Nightly    BelowNormal   ~03:00UTC analyst QLoRA" -ForegroundColor Cyan
 Write-Host "  10  Scanner Watcher    BelowNormal   60s poll  scanner merge+gate" -ForegroundColor Cyan
+Write-Host "  11  Silence Watchdog   BelowNormal   5min poll alerts >30min silence" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "   VRAM: Ollama ~$([math]::Min($gpuVRAM-2, 12))GB | LoRA ~$([math]::Max(2, $gpuVRAM-14))GB | System ~2GB" -ForegroundColor Yellow
 Write-Host "   Dashboard:  http://localhost:5173" -ForegroundColor Green

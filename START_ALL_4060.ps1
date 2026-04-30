@@ -81,10 +81,20 @@ if (-not $env:ACT_5090_SSH_HOST) {
     else { Warn "ssh $($env:ACT_5090_SSH_HOST) NOT reachable - warm_store_sync will skip" }
 }
 
+# Persist env vars at BOTH process scope (immediate) AND user scope (setx,
+# survives shell exit). Process-only writes were biting operators when
+# Start-Process'd children somehow didn't inherit the parent shell env in
+# certain Windows configurations - dual write guarantees the var lands.
+# `try { setx ... }` because setx errors are non-fatal here.
+function _SetEnvDual([string]$name, [string]$value) {
+    Set-Item -Path ("env:" + $name) -Value $value
+    try { setx $name $value | Out-Null } catch {}
+}
+
 # 4. Box role
 if (-not $env:ACT_BOX_ROLE) {
     Warn "ACT_BOX_ROLE not set - defaulting to 'stocks' for the 4060"
-    [Environment]::SetEnvironmentVariable("ACT_BOX_ROLE", "stocks", "Process")
+    _SetEnvDual "ACT_BOX_ROLE" "stocks"
 }
 
 # 4b. Tailscale-routed analyst (THE 30B LIVES ON THE 5090, NOT HERE)
@@ -93,20 +103,20 @@ if (-not $env:ACT_BOX_ROLE) {
 # dual_brain router calls the 5090 over Tailscale for analyst inference,
 # while the 7b scanner stays local. Operator overrides win.
 if (-not $env:OLLAMA_REMOTE_URL) {
-    [Environment]::SetEnvironmentVariable("OLLAMA_REMOTE_URL", "http://act5090:11434", "Process")
-    Ok "OLLAMA_REMOTE_URL defaulted to http://act5090:11434 (Tailscale)"
+    _SetEnvDual "OLLAMA_REMOTE_URL" "http://act5090:11434"
+    Ok "OLLAMA_REMOTE_URL defaulted to http://act5090:11434 (Tailscale, persisted via setx)"
 } else {
     Ok "OLLAMA_REMOTE_URL preset by operator: $env:OLLAMA_REMOTE_URL"
 }
 if (-not $env:OLLAMA_REMOTE_MODEL) {
-    [Environment]::SetEnvironmentVariable("OLLAMA_REMOTE_MODEL", "qwen3-coder:30b", "Process")
-    Ok "OLLAMA_REMOTE_MODEL defaulted to qwen3-coder:30b (analyst)"
+    _SetEnvDual "OLLAMA_REMOTE_MODEL" "qwen3-coder:30b"
+    Ok "OLLAMA_REMOTE_MODEL defaulted to qwen3-coder:30b (analyst, persisted via setx)"
 } else {
     Ok "OLLAMA_REMOTE_MODEL preset by operator: $env:OLLAMA_REMOTE_MODEL"
 }
 if (-not $env:ACT_BRAIN_PROFILE) {
-    [Environment]::SetEnvironmentVariable("ACT_BRAIN_PROFILE", "moe_agentic", "Process")
-    Ok "ACT_BRAIN_PROFILE defaulted to moe_agentic (7b local + 30b remote)"
+    _SetEnvDual "ACT_BRAIN_PROFILE" "moe_agentic"
+    Ok "ACT_BRAIN_PROFILE defaulted to moe_agentic (7b local + 30b remote, persisted via setx)"
 }
 
 # 4c. Probe the remote analyst before launch so silence has a stated reason

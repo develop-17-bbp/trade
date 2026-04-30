@@ -107,6 +107,16 @@ def main():
 
             print(f"  [LLM-GATE] probing scanner={_scanner} + analyst={_analyst} at {_ollama}"
                   + (f" (analyst remote: {_remote})" if _remote else ""))
+            # Fail-soft: collect probe results instead of sys.exit(2). When
+            # ALL probes fail the bot still boots into shadow / legacy-voter
+            # mode and silence_watchdog (Process 11) will fire a CRITICAL
+            # alert within 30 min if no warm_store decisions appear. Hard
+            # exit was too brittle: a 5090 reboot during a 4060 deploy
+            # cycle would crash both bots in lockstep with no audible
+            # warning to the operator. Operator can still force the old
+            # behavior via ACT_LLM_GATE_HARD_FAIL=1.
+            _llm_gate_failures = []
+            _llm_gate_passes = []
             for _m in [_scanner, _analyst]:
                 if not _m or _m in (_scanner if _m == _analyst else "_"):
                     if _m == _analyst and _analyst == _scanner:
@@ -127,23 +137,41 @@ def main():
                     _txt = (_data.get("response") or "").strip()
                     if not _txt:
                         print(
-                            f"  [LLM-GATE] FAIL: {_m} @ {_probe_at} returned empty -- "
-                            "VRAM eviction likely on that host. Drop OLLAMA_NUM_CTX "
-                            f"(currently {_ctx}) to 4096 and restart, OR set "
-                            "ACT_SKIP_LLM_HEALTH_GATE=1 to boot anyway."
+                            f"  [LLM-GATE] WARN: {_m} @ {_probe_at} returned empty -- "
+                            "VRAM eviction likely on that host. Consider dropping "
+                            f"OLLAMA_NUM_CTX (currently {_ctx}) to 4096."
                         )
-                        sys.exit(2)
+                        _llm_gate_failures.append((_m, _probe_at, "empty"))
+                        continue
                     print(f"  [LLM-GATE] OK: {_m} @ {_probe_at} responded {_txt[:40]!r}")
+                    _llm_gate_passes.append((_m, _probe_at))
                 except (_uerr.URLError, OSError) as _e:
                     print(
-                        f"  [LLM-GATE] FAIL: {_m} unreachable at {_probe_at}: {_e}. "
+                        f"  [LLM-GATE] WARN: {_m} unreachable at {_probe_at}: {_e}. "
                         "Verify Ollama is running at that URL and the model is "
-                        f"pulled there. For a remote analyst, check that "
+                        "pulled there. For a remote analyst, check that "
                         "OLLAMA_REMOTE_URL points at a reachable peer + the model "
-                        "is listed by `ollama list` on that peer. Set "
-                        "ACT_SKIP_LLM_HEALTH_GATE=1 to boot without LLM."
+                        "is listed by `ollama list` on that peer."
                     )
+                    _llm_gate_failures.append((_m, _probe_at, "unreachable"))
+            # Summary + escalate when both probes fail. The bot continues
+            # in either case, but a both-fail boot deserves a louder line
+            # so the operator notices before silence_watchdog fires.
+            if _llm_gate_failures and not _llm_gate_passes:
+                print(
+                    f"  [LLM-GATE] DEGRADED: ALL {len(_llm_gate_failures)} probe(s) failed. "
+                    "Bot is booting in shadow / legacy-voter mode. silence_watchdog "
+                    "will alert if no decisions land in warm_store within 30 min. "
+                    "Set ACT_LLM_GATE_HARD_FAIL=1 to revert to the old fail-fast behavior."
+                )
+                if os.environ.get("ACT_LLM_GATE_HARD_FAIL", "").strip() == "1":
                     sys.exit(2)
+            elif _llm_gate_failures:
+                print(
+                    f"  [LLM-GATE] PARTIAL: {len(_llm_gate_passes)} model(s) reachable, "
+                    f"{len(_llm_gate_failures)} model(s) unreachable. Bot booting; "
+                    "the working model will handle both roles via dual_brain fallback."
+                )
         except SystemExit:
             raise
         except Exception as _e:
