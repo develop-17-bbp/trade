@@ -23,6 +23,7 @@ can be re-emitted to JSON for audit + fine-tune training signal.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -391,6 +392,196 @@ def _recent_critiques_block(asset: str, limit: int = 5, max_age_s: float = 86400
     return "\n".join(lines)
 
 
+_OPEN_POSITIONS_BUDGET_CHARS = 1200
+
+
+def _open_positions_block() -> str:
+    """Render every open position across every active venue (alpaca-stocks,
+    alpaca-crypto, alpaca-options, robinhood paper-sim). Asset-class-tagged
+    so the analyst sees stocks alongside crypto on every tick — this is
+    the cross-asset awareness operator demanded 2026-04-30.
+
+    Each position line carries the data the LLM needs to decide HOLD /
+    EXIT / ADD without making a follow-up tool call:
+      * venue + asset_class
+      * symbol, side, qty
+      * entry_price → current_price (PnL % net + USD)
+      * age_min, sl_price, tp_price
+      * thesis (200 chars) so it remembers WHY the position was opened
+
+    Failures per-venue are caught + logged; one bad fetcher doesn't
+    blank out the whole block. Returns empty string when zero positions
+    exist (no point bloating the prompt with an empty header).
+    """
+    if os.environ.get("ACT_DISABLE_OPEN_POSITIONS_BLOCK", "").strip() == "1":
+        return ""
+    rows: List[str] = []
+
+    # Alpaca: stocks + crypto + options share the same /v2/positions
+    # endpoint. asset_class field distinguishes 'us_equity' / 'crypto'
+    # / 'us_option'. side is 'long' / 'short'. unrealized_plpc is a
+    # decimal (0.012 = +1.2%).
+    try:
+        from src.data.fetcher import AlpacaClient
+        ac = AlpacaClient(paper=True)
+        if ac.available:
+            for p in (ac.get_positions() or []):
+                try:
+                    sym = str(p.get("symbol") or "")
+                    if not sym:
+                        continue
+                    asset_cls = str(p.get("asset_class") or "us_equity").upper()
+                    if asset_cls == "US_EQUITY":
+                        cls_tag = "STOCK alpaca"
+                    elif asset_cls == "CRYPTO":
+                        cls_tag = "CRYPTO alpaca"
+                    elif asset_cls == "US_OPTION":
+                        cls_tag = "OPTION alpaca"
+                    else:
+                        cls_tag = f"{asset_cls} alpaca"
+                    side = str(p.get("side") or "long").upper()
+                    qty = float(p.get("qty") or 0)
+                    entry = float(p.get("avg_entry_price") or 0)
+                    cur = float(p.get("current_price") or 0)
+                    pnl_pct = float(p.get("unrealized_plpc") or 0) * 100.0
+                    pnl_usd = float(p.get("unrealized_pl") or 0)
+                    rows.append(
+                        f"[{cls_tag}] {sym} {side} {qty}u @ ${entry:,.2f} → cur ${cur:,.2f} "
+                        f"({pnl_pct:+.2f}% / ${pnl_usd:+.2f})"
+                    )
+                except Exception as e:
+                    logger.debug("alpaca pos parse error: %s", e)
+                    continue
+    except Exception as e:
+        logger.debug("alpaca positions fetch failed: %s", e)
+
+    # Robinhood paper-sim: positions live in RobinhoodPaperFetcher.positions
+    # dict, keyed by trade_id. Now that RH fetcher load_state on init
+    # (commit 4d41fd2), we can get a fresh fetcher and read the persisted
+    # state file. Each PaperPosition has entry_price, current_pnl_pct_net,
+    # quantity, age_min, sl_price, tp_price, thesis.
+    try:
+        from src.data.robinhood_fetcher import RobinhoodPaperFetcher
+        import yaml
+        from pathlib import Path
+        cfg_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+        rh = RobinhoodPaperFetcher(config=cfg)
+        for tid, pos in (rh.positions or {}).items():
+            try:
+                sym = getattr(pos, "asset", "?")
+                direction = getattr(pos, "direction", "LONG")
+                qty = getattr(pos, "quantity", 0)
+                entry = float(getattr(pos, "entry_price", 0) or 0)
+                pnl_pct = float(getattr(pos, "current_pnl_pct_net", 0) or 0)
+                age_min = float(getattr(pos, "age_min", 0) or 0)
+                sl = float(getattr(pos, "sl_price", 0) or 0)
+                tp = float(getattr(pos, "tp_price", 0) or 0)
+                thesis = (str(getattr(pos, "thesis", "") or "")[:120]).replace("\n", " ")
+                # RH paper-sim doesn't track current_price separately;
+                # reconstruct from entry × (1 + pnl_pct/100)
+                cur = entry * (1.0 + pnl_pct / 100.0)
+                rows.append(
+                    f"[CRYPTO robinhood] {sym} {direction} {qty} @ ${entry:,.2f} → cur ${cur:,.2f} "
+                    f"({pnl_pct:+.2f}%) age={age_min:.0f}m sl=${sl:,.2f} tp=${tp:,.2f}"
+                )
+                if thesis:
+                    rows.append(f"    thesis: {thesis!r}")
+            except Exception as e:
+                logger.debug("rh pos parse error: %s", e)
+                continue
+    except Exception as e:
+        logger.debug("rh positions fetch failed: %s", e)
+
+    if not rows:
+        return ""   # don't bloat the prompt with an empty section
+
+    # Trim to budget
+    out: List[str] = [f"## OPEN_POSITIONS ({len([r for r in rows if not r.startswith('    thesis')])} positions)"]
+    used = len(out[0])
+    for r in rows:
+        cost = 1 + len(r)
+        if used + cost > _OPEN_POSITIONS_BUDGET_CHARS:
+            out.append("    [...truncated; call query_open_positions_detail for the rest]")
+            break
+        out.append(r)
+        used += cost
+    return "\n".join(out)
+
+
+_CAPITAL_STATE_BUDGET_CHARS = 600
+
+
+def _capital_state_block() -> str:
+    """Aggregate equity / cash / buying_power across every active venue
+    on this box — alpaca paper (stocks + crypto + options) and robinhood
+    paper-sim. The analyst's per-tick "where am I, how much can I deploy"
+    snapshot. Operator directive 2026-04-30: every analysis must see this.
+
+    Failures per-venue collapse to that venue being absent in the
+    aggregate — we don't fail-block on a transient API error. Empty
+    string when zero venues respond (rare; usually means env keys
+    missing OR all networks down).
+    """
+    if os.environ.get("ACT_DISABLE_CAPITAL_STATE_BLOCK", "").strip() == "1":
+        return ""
+    lines: List[str] = []
+    total_cash = 0.0
+    total_equity = 0.0
+    venue_count = 0
+
+    try:
+        from src.data.fetcher import AlpacaClient
+        ac = AlpacaClient(paper=True)
+        if ac.available:
+            acct = ac.get_account() or {}
+            equity = float(acct.get("equity") or 0)
+            cash = float(acct.get("cash") or 0)
+            bp = float(acct.get("buying_power") or 0)
+            status = acct.get("status", "?")
+            if equity > 0:
+                lines.append(
+                    f"[ALPACA paper]   equity=${equity:,.2f} cash=${cash:,.2f} "
+                    f"buying_power=${bp:,.2f} status={status}"
+                )
+                total_cash += cash
+                total_equity += equity
+                venue_count += 1
+    except Exception as e:
+        logger.debug("alpaca account fetch failed: %s", e)
+
+    try:
+        from src.data.robinhood_fetcher import RobinhoodPaperFetcher
+        import yaml
+        from pathlib import Path
+        cfg_path = Path(__file__).resolve().parent.parent.parent / "config.yaml"
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+        rh = RobinhoodPaperFetcher(config=cfg)
+        rh_eq = float(getattr(rh, "equity", 0) or 0)
+        rh_init = float(getattr(rh, "initial_capital", 0) or 0)
+        if rh_eq > 0:
+            ret_pct = ((rh_eq - rh_init) / rh_init * 100.0) if rh_init > 0 else 0.0
+            lines.append(
+                f"[ROBINHOOD sim]  equity=${rh_eq:,.2f} (start ${rh_init:,.2f}, "
+                f"{ret_pct:+.2f}%) [no leverage; spot-long only]"
+            )
+            total_cash += rh_eq
+            total_equity += rh_eq
+            venue_count += 1
+    except Exception as e:
+        logger.debug("rh account fetch failed: %s", e)
+
+    if not lines:
+        return ""
+    header = f"## CAPITAL_STATE ({venue_count} venue{'s' if venue_count != 1 else ''} active)"
+    summary = (
+        f"\nTOTAL deployable cash: ${total_cash:,.2f}  "
+        f"combined equity: ${total_equity:,.2f}"
+    )
+    body = "\n".join(lines)
+    return (header + "\n" + body + summary)[:_CAPITAL_STATE_BUDGET_CHARS]
+
+
 def _body_controls_block() -> str:
     try:
         from src.learning.brain_to_body import get_controller
@@ -418,6 +609,8 @@ def build_evidence_document(
     include_body_controls: bool = True,
     include_agent_votes: bool = True,
     include_recent_critiques: bool = True,
+    include_open_positions: bool = True,
+    include_capital_state: bool = True,
 ) -> EvidenceDocument:
     """Structured assemble of the analyst's evidence bundle (C19).
 
@@ -502,6 +695,29 @@ def build_evidence_document(
                 confidence=0.7, source="warm_store.self_critique",
                 kind="mixed",
             ))
+    if include_open_positions:
+        # Operator directive 2026-04-30: every analysis must see open
+        # positions across ALL venues (stocks + crypto + options).
+        # Cross-asset visibility — when reasoning about NVDA the analyst
+        # also sees the open BTC position; when on BTC it sees NVDA.
+        # Closes the "LLM doesn't manage existing portfolio" gap.
+        c = _open_positions_block()
+        if c:
+            doc.add(EvidenceSection(
+                name="OPEN_POSITIONS", content=c,
+                confidence=0.9, source="alpaca+robinhood positions",
+                kind="technical",
+            ))
+    if include_capital_state:
+        # Same operator directive: per-tick "where am I, how much can I
+        # deploy" snapshot aggregated across every active venue.
+        c = _capital_state_block()
+        if c:
+            doc.add(EvidenceSection(
+                name="CAPITAL_STATE", content=c,
+                confidence=0.95, source="alpaca+robinhood accounts",
+                kind="technical",
+            ))
 
     # TICK_SNAPSHOT — every subsystem signal the executor just computed.
     # Brings the "11 brain blind spots" into the LLM's prompt:
@@ -535,6 +751,8 @@ def build_analyst_context(
     include_body_controls: bool = True,
     include_agent_votes: bool = True,
     include_recent_critiques: bool = True,
+    include_open_positions: bool = True,
+    include_capital_state: bool = True,
     ttl_s: float = DEFAULT_CONTEXT_TTL_S,
 ) -> str:
     """Assemble the standard analyst seed-context block for `asset`.
@@ -552,6 +770,7 @@ def build_analyst_context(
         int(include_scanner), int(include_traces), int(include_news),
         int(include_fear_greed), int(include_graph), int(include_body_controls),
         int(include_agent_votes), int(include_recent_critiques),
+        int(include_open_positions), int(include_capital_state),
     )
     cache_key = f"{asset_key}:{mask}"
     if ttl_s > 0:
@@ -570,6 +789,8 @@ def build_analyst_context(
         include_body_controls=include_body_controls,
         include_agent_votes=include_agent_votes,
         include_recent_critiques=include_recent_critiques,
+        include_open_positions=include_open_positions,
+        include_capital_state=include_capital_state,
     )
     block = doc.to_prompt()
     if ttl_s > 0:

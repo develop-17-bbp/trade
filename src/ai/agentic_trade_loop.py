@@ -44,7 +44,7 @@ from src.trading.trade_plan import TradePlan
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MAX_STEPS = int(os.getenv("ACT_AGENTIC_MAX_STEPS", "8"))
+DEFAULT_MAX_STEPS = int(os.getenv("ACT_AGENTIC_MAX_STEPS", "12"))
 MAX_PARSE_FAILURES = 2
 DISABLE_ENV = "ACT_DISABLE_AGENTIC_LOOP"
 

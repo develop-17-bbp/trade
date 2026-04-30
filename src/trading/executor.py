@@ -356,8 +356,22 @@ class TradingExecutor:
         self.config = config
         self._paper = None  # Early init — referenced in _run_live before full setup
         self._config_exchange = config.get('exchange', {}).get('name', 'bybit').lower()
+        self._exchange_config: Dict[str, Any] = {}
+        for _ex_cfg in config.get('exchanges', []):
+            if str(_ex_cfg.get('name', '')).lower() == self._config_exchange:
+                self._exchange_config = dict(_ex_cfg)
+                break
+        _mode_is_paper = str(config.get('mode', 'live')).lower() in ('testnet', 'paper')
+        self._exchange_paper = bool(
+            self._exchange_config.get('paper', _mode_is_paper)
+        )
         self.assets: List[str] = config.get('assets', ['BTC', 'ETH'])
-        self.poll_interval: int = config.get('poll_interval', 10)
+        self.poll_interval: int = int(
+            self._exchange_config.get(
+                'poll_seconds',
+                self._exchange_config.get('poll_interval', config.get('poll_interval', 10)),
+            )
+        )
         self.initial_capital: float = config.get('initial_capital', 100000.0)
 
         # EMA / adaptive settings
@@ -421,8 +435,19 @@ class TradingExecutor:
 
         # Exchange
         exchange_name = config.get('exchange', {}).get('name', 'bybit')
-        testnet = config.get('mode', 'live') in ('testnet', 'paper')
+        testnet = self._exchange_paper
         self.price_source = PriceFetcher(exchange_name=exchange_name, testnet=testnet)
+        self._alpaca_stock_executor = None
+        if exchange_name.lower() == 'alpaca':
+            try:
+                from src.trading.alpaca_executor import AlpacaExecutor
+                self._alpaca_stock_executor = AlpacaExecutor(paper=testnet)
+                print(
+                    f"  [ALPACA-EXEC] Stock executor ACTIVE "
+                    f"({'PAPER' if testnet else 'LIVE'})"
+                )
+            except Exception as e:
+                print(f"  [ALPACA-EXEC] Stock executor init failed ({e})")
 
         # LLM strategist (used as fallback / for deeper analysis)
         provider = ai_cfg.get('reasoning_provider', 'auto')
@@ -4464,6 +4489,24 @@ class TradingExecutor:
                         })
                     except Exception as _wse:
                         logger.debug("[HARDEN] conviction-reject warm_store write failed: %s", _wse)
+                    # Feedback to next tick's analyst: surface the
+                    # rejection in tick_state so format_for_brain() emits
+                    # a REFUSAL line. Without this, the LLM compiles the
+                    # same setup, gets silently dropped, repeats forever.
+                    try:
+                        from src.ai import tick_state as _ts_refusal
+                        _reasons_str = ", ".join(list(_conv.reasons or [])[:4])
+                        _ts_refusal.update(
+                            asset,
+                            last_refusal=(
+                                f"conviction tier=reject reasons={_reasons_str} "
+                                f"(direction={_direction}, multistrat L={_ms_long}/S={_ms_short}, "
+                                f"hurst={_regime}, macro_bias={_macro.signed_bias if _macro else 0:+.2f})"
+                                "  → adjust: stronger TF alignment, more strategies agreeing, or wait for macro flip"
+                            )[:600],
+                        )
+                    except Exception as _rfe:
+                        logger.debug("[HARDEN] conviction-reject tick_state update failed: %s", _rfe)
                     return
 
                 print(f"  [{self._ex_tag}:{asset}] CONVICTION PASS: tier={_conv.tier} "
@@ -7290,14 +7333,38 @@ class TradingExecutor:
             print(f"  [{self._ex_tag}:{asset}] PAPER FILL: {side.upper()} {qty:.6f} @ ${fill_price:,.2f} (spread={spread_pct:.2f}%)")
         else:
             # ── Live Mode: Place real order (circuit breaker protected) ──
-            result = self._api_call(
-                self.price_source.place_order,
-                symbol=symbol,
-                side=side,
-                amount=qty,
-                order_type=entry_type,
-                price=order_price,
-            )
+            if self._exchange_name == 'alpaca' and getattr(self, '_alpaca_stock_executor', None):
+                alpaca_result = self._alpaca_stock_executor.submit_order(
+                    symbol=asset,
+                    side=side,
+                    qty=qty,
+                    limit_price=order_price if entry_type == 'limit' else None,
+                    conviction_tier='sniper' if size_pct >= 3 else 'normal',
+                    plan={
+                        "asset": asset,
+                        "direction": action,
+                        "entry_price": price,
+                        "size_pct": size_pct,
+                        "chosen_timeframe": chosen_tf,
+                        "reasoning": reasoning,
+                    },
+                    intent="open",
+                )
+                result = {
+                    "status": "success" if alpaca_result.submitted else "error",
+                    "order_id": alpaca_result.order_id,
+                    "message": alpaca_result.reason,
+                    "exchange": "alpaca",
+                }
+            else:
+                result = self._api_call(
+                    self.price_source.place_order,
+                    symbol=symbol,
+                    side=side,
+                    amount=qty,
+                    order_type=entry_type,
+                    price=order_price,
+                )
 
             # If market order rejected, retry as limit at best ask/bid
             if result.get('status') != 'success' and '30208' in str(result.get('message', '')):
@@ -9642,6 +9709,19 @@ class TradingExecutor:
         # Account context
         equity = self.equity
         max_position_pct = 20 if equity < 500 else 5
+        is_alpaca_stock = self._exchange_name == 'alpaca'
+        instrument_label = (
+            f"{asset} US stock/ETF via Alpaca"
+            if is_alpaca_stock else f"{asset}/USDT perpetual futures"
+        )
+        venue_rules = (
+            "VENUE: Alpaca US equities. Think in stock/ETF terms, not crypto "
+            "perps. RTH-only; leveraged ETFs are intraday-only; shorts require "
+            "whole shares and ETB; use Alpaca bid/ask spread economics."
+            if is_alpaca_stock else
+            "VENUE: crypto/futures. Use the configured exchange spread, leverage, "
+            "and funding context."
+        )
 
         # Historical L-level patterns from journal (teaches LLM what works)
         historical_patterns = self._build_historical_pattern_context(asset)
@@ -9651,7 +9731,9 @@ class TradingExecutor:
         # Build warnings string
         warnings_str = chr(10).join(f'  - {w}' for w in (math_filter_warnings or [])) or '  - No warnings — all clear'
 
-        prompt = f"""You are a PROFIT-FOCUSED trading brain for {asset}/USDT perpetual futures. ONLY enter trades that MAKE MONEY.
+        prompt = f"""You are a PROFIT-FOCUSED trading brain for {instrument_label}. ONLY enter trades that MAKE MONEY.
+
+{venue_rules}
 
 ═══ PROVEN STRATEGY (backtested 6 months: 72% WR, PF 1.19) ═══
 The EMA(8) TREND LINE strategy works as follows — follow EXACTLY:
@@ -10230,7 +10312,20 @@ Respond ONLY with JSON:
                     })
         except Exception:
             pass
-        if asset not in ("BTC", "ETH"):
+        try:
+            from src.models.asset_class import classify
+            venue_hint = "alpaca" if getattr(self, "_exchange_name", "") == "alpaca" else None
+            meta = classify(asset, venue_hint=venue_hint)
+            is_stock_plan = meta.asset_class.is_stock()
+            is_crypto_plan = meta.asset_class.is_crypto()
+        except Exception:
+            meta = None
+            is_stock_plan = False
+            is_crypto_plan = asset in ("BTC", "ETH")
+
+        if is_crypto_plan and asset not in ("BTC", "ETH"):
+            return {"submitted": False, "reason": f"unsupported_asset:{asset}"}
+        if not is_crypto_plan and not is_stock_plan:
             return {"submitted": False, "reason": f"unsupported_asset:{asset}"}
         if direction not in ("LONG", "SHORT"):
             return {"submitted": False, "reason": f"unsupported_direction:{direction}"}
@@ -10240,6 +10335,8 @@ Respond ONLY with JSON:
         # don't know (trade_type, htf_trend_direction, etc.) are omitted
         # so per-rule soft-skip applies rather than false-positive veto.
         try:
+            if is_stock_plan:
+                raise RuntimeError("stock authority handled by AlpacaExecutor")
             from src.ai.authority_rules import validate_authority_entry
             _raw = 1 if direction == "LONG" else -1
             _ctx = {"raw_signal": _raw, "asset": asset}
@@ -10263,6 +10360,8 @@ Respond ONLY with JSON:
         if mode == "real":
             if os.environ.get("ACT_REAL_CAPITAL_ENABLED", "").strip() != "1":
                 return {"submitted": False, "reason": "real_capital_flag_unset"}
+            if is_stock_plan and os.environ.get("ACT_STOCKS_REAL_CAPITAL_ENABLED", "").strip() != "1":
+                return {"submitted": False, "reason": "stocks_real_capital_flag_unset"}
             try:
                 from src.orchestration.readiness_gate import evaluate as _rg_eval
                 rg = _rg_eval()
@@ -10290,7 +10389,7 @@ Respond ONLY with JSON:
                 expected_pct = float(pnl_range[1])
             cg = cost_gate.evaluate(
                 expected_return_pct=expected_pct,
-                venue="robinhood",
+                venue="alpaca" if is_stock_plan else "robinhood",
                 size_pct=float(getattr(plan, "size_pct", 1.0)),
                 direction=direction,
             )
@@ -10317,8 +10416,60 @@ Respond ONLY with JSON:
         sl_price = float(getattr(plan, "sl_price", 0.0) or 0.0)
         size_pct = float(getattr(plan, "size_pct", 1.0) or 1.0)
         qty = 0.0
+        order_id = None
         try:
-            if self._paper and entry_price > 0:
+            if is_stock_plan and entry_price > 0:
+                alpaca_exec = getattr(self, "_alpaca_stock_executor", None)
+                if alpaca_exec is None:
+                    try:
+                        from src.trading.alpaca_executor import AlpacaExecutor
+                        alpaca_exec = AlpacaExecutor(
+                            paper=bool(getattr(self, "_exchange_paper", True))
+                        )
+                        self._alpaca_stock_executor = alpaca_exec
+                    except Exception as _ae:
+                        return {"submitted": False, "reason": f"alpaca_executor_unavailable:{_ae}"}
+
+                equity = float(getattr(self, "equity", 0.0) or 0.0)
+                if equity <= 0:
+                    try:
+                        h = alpaca_exec.health()
+                        equity = float(h.get("equity", 100000.0) or 100000.0)
+                    except Exception:
+                        equity = 100000.0
+                cap = 15.0
+                if meta is not None:
+                    cap = float(meta.intraday_pct_max(default=15.0))
+                size_pct = min(size_pct, cap)
+                notional = equity * (size_pct / 100.0)
+                qty = notional / entry_price
+                side = "buy" if direction == "LONG" else "sell"
+                if side == "sell":
+                    qty = float(int(qty))
+                    if qty < 1:
+                        return {"submitted": False, "reason": "stock_short_qty_below_one_share"}
+
+                limit_price = None
+                try:
+                    entry_type = (getattr(self, "config", {}) or {}).get(
+                        "execution", {}
+                    ).get("entry_type", "limit")
+                    if entry_type == "limit":
+                        limit_price = entry_price
+                except Exception:
+                    limit_price = entry_price
+
+                result = alpaca_exec.submit_order(
+                    symbol=asset, side=side, qty=qty,
+                    limit_price=limit_price,
+                    conviction_tier=str(getattr(plan, "entry_tier", "normal") or "normal"),
+                    plan=plan.to_dict() if hasattr(plan, "to_dict") else {},
+                    intent="open",
+                )
+                if not result.submitted:
+                    return {"submitted": False, "reason": result.reason}
+                order_id = result.order_id
+            elif self._paper and entry_price > 0:
                 # Equity-scaled quantity
                 equity = float(getattr(self._paper, "equity", 100000.0))
                 notional = equity * (size_pct / 100.0)
@@ -10354,6 +10505,8 @@ Respond ONLY with JSON:
                 "direction": {"LONG": 1, "SHORT": -1}.get(direction, 0),
                 "confidence": float(getattr(plan, "confidence", 0.5) or 0.5),
                 "final_action": direction,
+                "asset_class": "STOCK" if is_stock_plan else "CRYPTO",
+                "venue": "alpaca" if is_stock_plan else "robinhood",
                 "plan": plan.to_dict() if hasattr(plan, "to_dict") else {},
                 "component_signals": {
                     "source": "agentic_brain_submit",
@@ -10362,6 +10515,7 @@ Respond ONLY with JSON:
                     "sl_price": sl_price,
                     "size_pct": size_pct,
                     "qty": qty,
+                    "order_id": order_id,
                 },
             })
         except Exception as _e:
@@ -10390,7 +10544,8 @@ Respond ONLY with JSON:
         return {
             "submitted": True, "asset": asset, "direction": direction,
             "entry_price": entry_price, "size_pct": size_pct,
-            "qty": qty, "mode": mode,
+            "qty": qty, "mode": mode, "order_id": order_id,
+            "venue": "alpaca" if is_stock_plan else "robinhood",
         }
 
     def _run_agentic_shadow(self, asset: str, closes) -> None:
@@ -10417,7 +10572,43 @@ Respond ONLY with JSON:
         try:
             last_close = float(closes[-1]) if closes is not None and len(closes) > 0 else 0.0
             regime = getattr(self, '_last_regime', 'UNKNOWN') or 'UNKNOWN'
-            quant_data = f"[ASSET={asset}] [LAST_CLOSE={last_close:.2f}] [REGIME={regime}]"
+            quant_parts = [
+                f"[ASSET={asset}]",
+                f"[LAST_CLOSE={last_close:.2f}]",
+                f"[REGIME={regime}]",
+                f"[VENUE={self._exchange_name.upper()}]",
+            ]
+            if self._exchange_name == 'alpaca':
+                try:
+                    symbol = self._get_symbol(asset)
+                    ob = self.price_source.fetch_order_book(symbol, limit=1)
+                    bid = float((ob.get('bids') or [[0, 0]])[0][0] or 0.0)
+                    ask = float((ob.get('asks') or [[0, 0]])[0][0] or 0.0)
+                    if bid > 0 and ask > 0:
+                        spread_pct = (ask - bid) / bid * 100.0
+                        quant_parts.extend([
+                            f"[ALPACA_BID={bid:.4f}]",
+                            f"[ALPACA_ASK={ask:.4f}]",
+                            f"[ALPACA_SPREAD_PCT={spread_pct:.4f}]",
+                        ])
+                except Exception:
+                    pass
+                try:
+                    acct = self.price_source.alpaca.get_account() if self.price_source.alpaca else {}
+                    if acct and 'error' not in acct:
+                        quant_parts.extend([
+                            f"[ALPACA_EQUITY={float(acct.get('equity', 0) or 0):.2f}]",
+                            f"[ALPACA_BUYING_POWER={float(acct.get('buying_power', 0) or 0):.2f}]",
+                        ])
+                except Exception:
+                    pass
+                quant_parts.extend([
+                    f"[ALPACA_FEED={(os.getenv('ACT_ALPACA_DATA_FEED') or 'iex').upper()}]",
+                    f"[ALPACA_PAPER={int(bool(getattr(self, '_exchange_paper', True)))}]",
+                    "[ASSET_CLASS=STOCK]",
+                    "[RTH_ONLY=1]",
+                ])
+            quant_data = " ".join(quant_parts)
             tick_summary = run_tick(asset=asset, quant_digest=quant_data)
         except Exception as e:
             logger.debug("[agentic_shadow] %s tick failed: %s", asset, e)
