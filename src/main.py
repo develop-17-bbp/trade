@@ -154,6 +154,46 @@ def main():
                         "is listed by `ollama list` on that peer."
                     )
                     _llm_gate_failures.append((_m, _probe_at, "unreachable"))
+            # Auto-fallback: if the (remote) analyst probe failed but the
+            # local scanner is reachable, override ACT_ANALYST_MODEL so the
+            # local scanner serves both roles for this boot. Quality drops
+            # (a 7B serving as analyst has weaker reasoning than a 30B),
+            # but the bot keeps trading instead of dropping into legacy-
+            # voter / shadow mode. The 4060 with 8 GB VRAM specifically
+            # benefits: when its Tailscale link to the 5090 is flaky, the
+            # local qwen2.5-coder:7b takes over rather than the bot
+            # silently degrading.
+            #
+            # Triggered only when:
+            #   1. OLLAMA_REMOTE_URL is configured (otherwise no remote
+            #      route exists and this is a non-remote local-only setup)
+            #   2. The analyst was the failing probe (not the scanner)
+            #   3. At least one scanner probe passed
+            #   4. Scanner != analyst (avoids the no-op when the profile
+            #      happens to use the same model for both roles)
+            _analyst_failed_remote = (
+                bool(_remote)
+                and any(f[0] == _analyst and f[1] == _remote for f in _llm_gate_failures)
+            )
+            _scanner_passed = any(p[0] == _scanner for p in _llm_gate_passes)
+            if _analyst_failed_remote and _scanner_passed and _scanner != _analyst:
+                print(
+                    f"  [LLM-GATE] FALLBACK: remote analyst {_analyst} unreachable at "
+                    f"{_remote}; local scanner {_scanner} will serve BOTH roles for "
+                    "this boot. Quality drops (7B reasoning < 30B). Restart when "
+                    "the remote peer is reachable to pick the analyst back up. "
+                    "Set ACT_DISABLE_LOCAL_ANALYST_FALLBACK=1 to opt out."
+                )
+                if os.environ.get("ACT_DISABLE_LOCAL_ANALYST_FALLBACK", "").strip() != "1":
+                    os.environ["ACT_ANALYST_MODEL"] = _scanner
+                    # Reclassify the failure so the DEGRADED summary below
+                    # doesn't trigger — we now have a working analyst path.
+                    _llm_gate_failures = [
+                        f for f in _llm_gate_failures
+                        if not (f[0] == _analyst and f[1] == _remote)
+                    ]
+                    _llm_gate_passes.append((_scanner, _ollama))  # synthetic: scanner now also serves analyst
+
             # Summary + escalate when both probes fail. The bot continues
             # in either case, but a both-fail boot deserves a louder line
             # so the operator notices before silence_watchdog fires.

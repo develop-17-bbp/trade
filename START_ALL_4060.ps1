@@ -136,6 +136,34 @@ try {
     Warn "remote analyst unreachable at $probeUrl - check Tailscale + 5090 firewall (TCP 11434) + OLLAMA_HOST=0.0.0.0:11434 on the 5090"
 }
 
+# 4d. Local scanner pre-pull
+# When the remote analyst is unreachable mid-day, src/main.py LLM-GATE
+# auto-falls-back to the local scanner playing both roles (qwen2.5-coder:7b
+# by default - fits in 8 GB VRAM). That fallback REQUIRES the scanner to
+# actually be pulled locally. Without this pre-flight, a 4060 boot with a
+# brand-new ollama install would see deepseek auto-downgrade fire instead.
+# The list below is ranked: configured scanner first, then small fallbacks
+# in order of "good enough for both roles in 8 GB". Pull whichever is
+# missing AND likely to be needed.
+$localScanner = if ($env:ACT_SCANNER_MODEL) { $env:ACT_SCANNER_MODEL } else { "qwen2.5-coder:7b" }
+$localFallbackChain = @($localScanner, "llama3.2:3b")
+try {
+    $localTags = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 5 -ErrorAction Stop
+    $localModels = @($localTags.models | ForEach-Object { $_.name })
+    foreach ($m in $localFallbackChain) {
+        $present = $localModels | Where-Object { $_ -like "$m*" }
+        if ($present) {
+            Ok "local model present: $m"
+        } elseif ($m -eq $localScanner) {
+            Warn "local scanner $m NOT pulled - pulling now (8GB box: this is the LLM-GATE fallback path)"
+            & ollama pull $m
+            if ($LASTEXITCODE -eq 0) { Ok "pulled $m" } else { Warn "ollama pull $m failed - bot will boot in legacy-voter mode if remote also fails" }
+        }
+    }
+} catch {
+    Warn "local Ollama not reachable at 127.0.0.1:11434 - 'ollama serve' not running? Start it before launching the bot."
+}
+
 # 5. GPU (informational)
 try {
     $gpu = (& nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>$null)
