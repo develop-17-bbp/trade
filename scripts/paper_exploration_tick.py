@@ -154,24 +154,25 @@ def _rsi(closes: List[float], period: int = 14) -> float:
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def _pick_asset_alpaca() -> Optional[Tuple[str, str, str]]:
+def _pick_asset_alpaca(relaxed: bool = False) -> Optional[Tuple[str, str, str]]:
     """Pick (symbol, side, rationale) for a profit-biased exploration trade.
 
-    Filters for higher-probability setups (vs blind momentum):
-      1. Multi-timeframe trend alignment: 1h slope direction must
-         match 5m momentum direction. Trades fighting the higher
-         timeframe lose more than they win.
-      2. RSI not in danger zones: 40-65 (longs) or 35-60 (shorts).
-         Avoids catching falling knives or chasing exhaustion.
-      3. Volume on most-recent 5m bar > 1.2× the trailing 20-bar
-         average. Volume-confirmed moves follow through more often
-         than dead-volume blips.
-      4. Move size > 0.3% over last 15×5m bars. Below that is noise.
+    STRICT mode (default): all 4 filters must pass.
+      1. Multi-timeframe trend alignment: 1h slope same sign as 5m
+         momentum. Don't fight HTF.
+      2. RSI sanity: 40-65 (longs), 35-60 (shorts). Avoid extremes.
+      3. Volume confirmation: last 5m bar > 1.2× trailing 20-bar avg.
+      4. Min move size: > 0.3% over last 15×5m bars.
 
-    Among assets passing all four filters, picks the one with the
-    largest absolute momentum (most-conviction setup). Returns None
-    if no asset qualifies — exploration tick simply skips this cycle
-    rather than firing a low-quality trade.
+    RELAXED mode (--relaxed): require any 2 of 4 filters to pass +
+    minimum-move halved to 0.15%. Catches more setups on quiet days
+    at the cost of slightly lower win-rate per trade. Use when soak
+    accumulation matters more than per-trade EV (early paper soak).
+
+    Among qualifying assets, picks the one with the largest absolute
+    momentum (most-conviction setup). Returns None if no asset
+    qualifies — exploration tick simply skips this cycle rather
+    than firing a low-quality trade.
     """
     try:
         from src.data.alpaca_fetcher import AlpacaFetcher
@@ -180,6 +181,9 @@ def _pick_asset_alpaca() -> Optional[Tuple[str, str, str]]:
             return None
     except Exception:
         return None
+
+    min_move = 0.15 if relaxed else 0.3
+    min_filters_passed = 2 if relaxed else 4
 
     candidates: List[Tuple[str, str, float, str]] = []
     for sym in ALPACA_BASKET:
@@ -200,40 +204,55 @@ def _pick_asset_alpaca() -> Optional[Tuple[str, str, str]]:
                 continue
             mom5_pct = (close_now - close_15ago) / close_15ago * 100.0
 
-            # Filter 4: minimum move
-            if abs(mom5_pct) < 0.3:
+            # Filter 4: minimum move (always required - below this is noise)
+            if abs(mom5_pct) < min_move:
                 continue
+
+            side_5m = "buy" if mom5_pct > 0 else "sell"
 
             # Filter 3: volume confirmation
             avg_vol = sum(volumes5[:-1]) / max(1, len(volumes5) - 1)
             last_vol = volumes5[-1]
-            if avg_vol > 0 and last_vol < 1.2 * avg_vol:
-                continue
+            vol_pass = avg_vol > 0 and last_vol >= 1.2 * avg_vol
 
             # Filter 2: RSI sanity
             rsi = _rsi(closes5, period=14)
-            side_5m = "buy" if mom5_pct > 0 else "sell"
-            if side_5m == "buy" and (rsi < 40 or rsi > 65):
-                continue
-            if side_5m == "sell" and (rsi < 35 or rsi > 60):
-                continue
+            if side_5m == "buy":
+                rsi_pass = 40 <= rsi <= 65
+            else:
+                rsi_pass = 35 <= rsi <= 60
 
-            # Filter 1: multi-timeframe trend alignment.
-            # 1h bars (limit=8 for ~8h trend)
+            # Filter 1: multi-timeframe trend alignment
             bars1h = f.fetch_ohlcv(sym, timeframe="1Hour", limit=8)
             if not bars1h or len(bars1h) < 4:
-                # No HTF data → can't confirm trend → skip rather than risk
-                continue
-            closes1h = [float(b[4]) for b in bars1h]
-            slope1h_pct = (closes1h[-1] - closes1h[0]) / closes1h[0] * 100.0
-            if side_5m == "buy" and slope1h_pct <= 0:
-                continue
-            if side_5m == "sell" and slope1h_pct >= 0:
+                slope1h_pct = 0.0
+                mtf_pass = False
+            else:
+                closes1h = [float(b[4]) for b in bars1h]
+                if closes1h[0] <= 0:
+                    mtf_pass = False
+                    slope1h_pct = 0.0
+                else:
+                    slope1h_pct = (closes1h[-1] - closes1h[0]) / closes1h[0] * 100.0
+                    if side_5m == "buy":
+                        mtf_pass = slope1h_pct > 0
+                    else:
+                        mtf_pass = slope1h_pct < 0
+
+            # Filter 4 already gated above (min_move). Count remaining 3.
+            passed = sum([mtf_pass, rsi_pass, vol_pass]) + 1   # +1 for min_move
+            if passed < min_filters_passed:
                 continue
 
+            tags = []
+            tags.append("MTF" if mtf_pass else "mtf")
+            tags.append("RSI" if rsi_pass else "rsi")
+            tags.append("VOL" if vol_pass else "vol")
+            mode = "RELAXED" if relaxed else "STRICT"
             rationale = (
+                f"[{mode}] {''.join(t[0] for t in tags).upper()} "
                 f"mom5={mom5_pct:+.2f}% slope1h={slope1h_pct:+.2f}% "
-                f"rsi={rsi:.0f} vol={last_vol/avg_vol:.1f}x"
+                f"rsi={rsi:.0f} vol={last_vol/max(avg_vol,1e-9):.1f}x"
             )
             candidates.append((sym, side_5m, abs(mom5_pct), rationale))
         except Exception as e:
@@ -389,6 +408,10 @@ def main() -> int:
                    help="Single-shot. Always true; flag is a no-op for compat.")
     p.add_argument("--force", action="store_true",
                    help="Skip the quiet-hours + daily-cap gates (testing only).")
+    p.add_argument("--relaxed", action="store_true",
+                   help="Soften per-trade quality bar: 2-of-4 filters (vs 4-of-4) "
+                        "+ min move 0.15%% (vs 0.3%%). Use when soak data accumulation "
+                        "matters more than per-trade EV (early paper soak / quiet markets).")
     args = p.parse_args()
 
     disabled = _is_disabled()
@@ -417,9 +440,12 @@ def main() -> int:
         logger.info("[INFO] auto-selected venue=%s", venue)
 
     if venue == "alpaca":
-        pick = _pick_asset_alpaca()
+        pick = _pick_asset_alpaca(relaxed=args.relaxed)
         if pick is None:
-            logger.warning("[SKIP] no alpaca asset passed quality filters this cycle")
+            mode = "relaxed" if args.relaxed else "strict"
+            logger.warning("[SKIP] no alpaca asset passed quality filters this cycle (%s mode)", mode)
+            if not args.relaxed:
+                logger.info("       Try --relaxed if you need a trade fired now even on a quiet market")
             return 0
         sym, side, rationale = pick
         logger.info("[EXPLORE] rationale: %s", rationale)
