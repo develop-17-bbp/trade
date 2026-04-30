@@ -476,27 +476,46 @@ OK "Env vars persisted via setx (open a new terminal to pick them up for diagnos
 #   - run `python -m src.skills.cli run paper-soak-loose enable=false`
 # after launch.
 $soakOverlay = Join-Path $dir "data\paper_soak_loose.json"
+# ACT_REGEN_SOAK_LOOSE=1 forces this script to overwrite an existing
+# overlay with the (possibly-newer) defaults below. Use this when an
+# upgrade tightens or loosens the recommended values and the operator
+# wants the latest defaults instead of their stale on-disk file. The
+# 2026-04-30 looser-defaults change is the prime motivator: existing
+# overlays sit at the older `min_normal_strategies_agreeing=2 / min_
+# expected_move_pct=2.0` values that produce zero trades during quiet
+# regimes (ADX=0, Hurst=0.5). Refreshing brings them down to 1 / 1.0
+# so paper-soak fires on weaker setups for accumulation.
+$forceRegen = $env:ACT_REGEN_SOAK_LOOSE -eq "1"
 if ($env:ACT_REAL_CAPITAL_ENABLED -eq "1") {
     WARN "ACT_REAL_CAPITAL_ENABLED=1 -- skipping paper-soak-loose auto-enable (real money mode)."
 } elseif ($env:ACT_DISABLE_PAPER_SOAK_LOOSE -eq "1") {
     WARN "ACT_DISABLE_PAPER_SOAK_LOOSE=1 -- skipping paper-soak-loose auto-enable (operator opt-out)."
-} elseif (Test-Path $soakOverlay) {
-    OK "paper-soak-loose overlay already present at data/paper_soak_loose.json (keeping operator's settings)."
+} elseif ((Test-Path $soakOverlay) -and -not $forceRegen) {
+    OK "paper-soak-loose overlay already present at data/paper_soak_loose.json (keeping operator's settings; setx ACT_REGEN_SOAK_LOOSE 1 to refresh defaults)."
 } else {
+    if ($forceRegen -and (Test-Path $soakOverlay)) {
+        WARN "ACT_REGEN_SOAK_LOOSE=1 -- overwriting existing paper-soak-loose overlay with refreshed defaults."
+    }
     $overlayObj = [ordered]@{
         enabled_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffK")
-        reason = "START_ALL auto-enable (override with ACT_DISABLE_PAPER_SOAK_LOOSE=1)"
+        reason = "START_ALL auto-enable (override with ACT_DISABLE_PAPER_SOAK_LOOSE=1; refresh with ACT_REGEN_SOAK_LOOSE=1)"
+        # Looser-than-original defaults (2026-04-30): previous values
+        # produced zero trades for a week during a quiet regime. Paper
+        # soak needs ACCUMULATION, not perfection — better to fire on
+        # weaker setups + have warm_store data to learn from than to
+        # pass zero gates and accumulate nothing. Real-capital mode
+        # hard-skips this overlay entirely so live trading is unaffected.
         sniper = [ordered]@{
-            min_score = 4
-            min_expected_move_pct = 2.0
-            min_confluence = 3
+            min_score = 3
+            min_expected_move_pct = 1.0
+            min_confluence = 2
         }
         conviction = [ordered]@{
-            min_normal_strategies_agreeing = 2
+            min_normal_strategies_agreeing = 1
             bypass_macro_crisis = $true
         }
         cost_gate = [ordered]@{
-            min_margin_pct = 0.3
+            min_margin_pct = 0.2
         }
         requires_paper_mode = $true
     }
