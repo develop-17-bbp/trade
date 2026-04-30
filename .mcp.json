@@ -2,7 +2,7 @@
   "mcpServers": {
     "act-gpu": {
       "type": "http",
-      "url": "http://act5090:9100/mcp",
+      "url": "http://100.127.155.36:9100/mcp",
       "headers": {
         "X-MCP-Token": "nkGmC_P2HEcR_QmYKafdoP_0hONNcNnJ6V8L1J4KUYM"
       }
