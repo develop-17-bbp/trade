@@ -113,13 +113,19 @@ class AlpacaFetcher:
         Default timeframe is `1Min` because the agentic loop runs at
         ~60-180s tick cadence — minute bars are the right resolution.
 
+        Routes by symbol shape:
+          * Stocks (e.g. 'NVDA', 'SPY')  -> /v2/stocks/{symbol}/bars
+          * Crypto (e.g. 'BTC/USD')       -> /v1beta3/crypto/us/bars
+            (different endpoint, response keyed by symbol map)
+
         Implementation note (2026-04-30 fix): Alpaca's bars endpoint
         without an explicit `start` parameter returns nothing when the
         market is closed — the default lookback window doesn't span
         overnight gaps. Outside RTH (e.g. operator's 4060 booting at
-        02:25 ET), every symbol returned 0 candles. Forcing a 7-day
-        lookback always captures at least the last trading session,
-        weekends + holidays included.
+        02:25 ET), every stock symbol returned 0 candles. Forcing a
+        7-day lookback always captures at least the last trading
+        session, weekends + holidays included. Crypto trades 24/7 so
+        the start parameter is harmless there but kept for consistency.
         """
         if not self.available or self._session is None:
             return []
@@ -128,21 +134,37 @@ class AlpacaFetcher:
             logger.debug("AlpacaFetcher: unknown timeframe %r", timeframe)
             return []
         from datetime import datetime, timedelta, timezone
-        # 7 days back covers a 3-day weekend (e.g. MLK Mon + closure) plus
-        # buffer. Alpaca caps `limit` at 10000 so even on 1Min bars over
-        # 7 days (~10K business minutes) we don't truncate prematurely.
-        # IEX free tier has a 15-minute realtime delay; ending at "now"
-        # is fine — the API serves whatever is within the free window.
         start_iso = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        url = f"{self.DATA_BASE}/v2/stocks/{symbol.upper()}/bars"
-        params = {
-            "timeframe": tf,
-            "start":     start_iso,
-            "limit":     int(min(max(limit, 1), 10000)),
-            "feed":      self.feed,
-            "adjustment": "raw",
-            "sort":       "desc",
-        }
+
+        sym = symbol.upper()
+        is_crypto = "/" in sym
+
+        if is_crypto:
+            # /v1beta3/crypto/us/bars takes `symbols` (plural) as a query
+            # param, not in the path. Response shape is:
+            #   {"bars": {"BTC/USD": [{"t": ..., ...}, ...]}}
+            # so we have to dig into the per-symbol map. Crypto endpoint
+            # ignores the `feed` parameter (no IEX/SIP distinction for
+            # 24/7 crypto markets).
+            url = f"{self.DATA_BASE}/v1beta3/crypto/us/bars"
+            params: Dict[str, Any] = {
+                "symbols":    sym,
+                "timeframe":  tf,
+                "start":      start_iso,
+                "limit":      int(min(max(limit, 1), 10000)),
+                "sort":       "desc",
+            }
+        else:
+            url = f"{self.DATA_BASE}/v2/stocks/{sym}/bars"
+            params = {
+                "timeframe":  tf,
+                "start":      start_iso,
+                "limit":      int(min(max(limit, 1), 10000)),
+                "feed":       self.feed,
+                "adjustment": "raw",
+                "sort":       "desc",
+            }
+
         try:
             resp = self._session.get(url, params=params, timeout=10)
             if resp.status_code != 200:
@@ -155,7 +177,11 @@ class AlpacaFetcher:
         except Exception as e:
             logger.debug("AlpacaFetcher.fetch_ohlcv: %s", e)
             return []
-        bars = data.get("bars") or []
+
+        if is_crypto:
+            bars = (data.get("bars") or {}).get(sym) or []
+        else:
+            bars = data.get("bars") or []
         # Reverse so newest is last (matches CCXT convention).
         bars.reverse()
         rows: List[List[float]] = []
@@ -174,34 +200,65 @@ class AlpacaFetcher:
         return rows
 
     def fetch_ticker(self, symbol: str) -> Dict[str, Any]:
-        """Latest quote (best bid + ask + last trade)."""
+        """Latest quote (best bid + ask + last trade).
+
+        Routes by symbol shape (same as fetch_ohlcv):
+          * Stocks  -> /v2/stocks/{sym}/quotes/latest + /trades/latest
+          * Crypto  -> /v1beta3/crypto/us/latest/quotes?symbols=BTC/USD
+                       /v1beta3/crypto/us/latest/trades?symbols=BTC/USD
+        """
         if not self.available or self._session is None:
             return {}
         sym = symbol.upper()
+        is_crypto = "/" in sym
         out: Dict[str, Any] = {"symbol": sym, "ts_ns": time.time_ns()}
         try:
-            quote_resp = self._session.get(
-                f"{self.DATA_BASE}/v2/stocks/{sym}/quotes/latest",
-                params={"feed": self.feed},
-                timeout=8,
-            )
-            if quote_resp.status_code == 200:
-                q = (quote_resp.json() or {}).get("quote") or {}
-                out["bid"] = float(q.get("bp", 0) or 0)
-                out["ask"] = float(q.get("ap", 0) or 0)
-                out["bid_size"] = int(q.get("bs", 0) or 0)
-                out["ask_size"] = int(q.get("as", 0) or 0)
-                out["quote_ts"] = q.get("t")
-            trade_resp = self._session.get(
-                f"{self.DATA_BASE}/v2/stocks/{sym}/trades/latest",
-                params={"feed": self.feed},
-                timeout=8,
-            )
-            if trade_resp.status_code == 200:
-                t = (trade_resp.json() or {}).get("trade") or {}
-                out["last"] = float(t.get("p", 0) or 0)
-                out["last_size"] = int(t.get("s", 0) or 0)
-                out["trade_ts"] = t.get("t")
+            if is_crypto:
+                quote_resp = self._session.get(
+                    f"{self.DATA_BASE}/v1beta3/crypto/us/latest/quotes",
+                    params={"symbols": sym},
+                    timeout=8,
+                )
+                if quote_resp.status_code == 200:
+                    q = (quote_resp.json() or {}).get("quotes", {}).get(sym) or {}
+                    out["bid"] = float(q.get("bp", 0) or 0)
+                    out["ask"] = float(q.get("ap", 0) or 0)
+                    out["bid_size"] = int(q.get("bs", 0) or 0)
+                    out["ask_size"] = int(q.get("as", 0) or 0)
+                    out["quote_ts"] = q.get("t")
+                trade_resp = self._session.get(
+                    f"{self.DATA_BASE}/v1beta3/crypto/us/latest/trades",
+                    params={"symbols": sym},
+                    timeout=8,
+                )
+                if trade_resp.status_code == 200:
+                    t = (trade_resp.json() or {}).get("trades", {}).get(sym) or {}
+                    out["last"] = float(t.get("p", 0) or 0)
+                    out["last_size"] = int(t.get("s", 0) or 0)
+                    out["trade_ts"] = t.get("t")
+            else:
+                quote_resp = self._session.get(
+                    f"{self.DATA_BASE}/v2/stocks/{sym}/quotes/latest",
+                    params={"feed": self.feed},
+                    timeout=8,
+                )
+                if quote_resp.status_code == 200:
+                    q = (quote_resp.json() or {}).get("quote") or {}
+                    out["bid"] = float(q.get("bp", 0) or 0)
+                    out["ask"] = float(q.get("ap", 0) or 0)
+                    out["bid_size"] = int(q.get("bs", 0) or 0)
+                    out["ask_size"] = int(q.get("as", 0) or 0)
+                    out["quote_ts"] = q.get("t")
+                trade_resp = self._session.get(
+                    f"{self.DATA_BASE}/v2/stocks/{sym}/trades/latest",
+                    params={"feed": self.feed},
+                    timeout=8,
+                )
+                if trade_resp.status_code == 200:
+                    t = (trade_resp.json() or {}).get("trade") or {}
+                    out["last"] = float(t.get("p", 0) or 0)
+                    out["last_size"] = int(t.get("s", 0) or 0)
+                    out["trade_ts"] = t.get("t")
         except Exception as e:
             logger.debug("AlpacaFetcher.fetch_ticker: %s", e)
         return out

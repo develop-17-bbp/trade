@@ -2633,16 +2633,41 @@ class TradingExecutor:
         return self._exchange_name == 'robinhood'
 
     def _get_symbol(self, asset: str) -> str:
-        """BTC -> exchange-specific symbol format."""
+        """asset (e.g. 'BTC', 'NVDA') -> exchange-specific symbol format.
+
+        Without an explicit alpaca branch, NVDA fell through to the bybit
+        default `NVDA/USDT:USDT` and Alpaca's `/v2/stocks/{symbol}/bars`
+        endpoint 404'd on every request — surfacing as the "0 candles
+        for every symbol" failure mode the operator hit on the 4060.
+        """
         if self._exchange_name == 'robinhood':
             return f"{asset}/USD"  # Kraken CCXT uses BTC/USD
         if self._exchange_name == 'delta':
             return f"{asset}USD"  # Delta uses BTCUSD
+        if self._exchange_name == 'alpaca':
+            # Stocks symbol passthrough — NVDA stays NVDA, SPY stays SPY.
+            # AlpacaFetcher hits /v2/stocks/{symbol}/bars.
+            # BRK-B / BRK.B nuance: Alpaca accepts BRK.B (dot) but the
+            # operator's basket uses BRK-B (dash). Translate dash to dot
+            # only for the known share-class tickers.
+            if asset.upper() == 'BRK-B':
+                return 'BRK.B'
+            return asset
+        if self._exchange_name == 'alpaca_crypto':
+            # Alpaca crypto canonical 2026 format is `BTC/USD` (slash);
+            # both AlpacaFetcher and the trading client accept it.
+            return f"{asset}/USD"
         return f"{asset}/USDT:USDT"  # Bybit uses BTC/USDT:USDT
 
     def _get_spot_symbol(self, asset: str) -> str:
-        """BTC -> spot symbol."""
+        """asset -> spot symbol (used for spot-price-only queries)."""
         if self._exchange_name == 'robinhood':
+            return f"{asset}/USD"
+        if self._exchange_name == 'alpaca':
+            if asset.upper() == 'BRK-B':
+                return 'BRK.B'
+            return asset
+        if self._exchange_name == 'alpaca_crypto':
             return f"{asset}/USD"
         return f"{asset}/USDT"
 
