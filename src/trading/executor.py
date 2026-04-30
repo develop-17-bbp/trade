@@ -4286,11 +4286,54 @@ class TradingExecutor:
         # 2026-04-30: "LLM should be deciding doing all trades using
         # all classical stacked agents help these should make it even
         # more robust in doing profitable".
+        # BEFORE returning, populate tick_state with the minimal fields
+        # the tech-blended escalation needs (price, sl_price, venue,
+        # consensus_dir, conviction_tier). Without this, parse_failures
+        # exit -> _maybe_promote_technical_signal -> no signal -> skip,
+        # which is exactly the 'zero trades' state the operator hit
+        # 2026-04-30. The orchestrator already wrote agents_consensus +
+        # agents_net upstream; we derive consensus_dir + tier from those.
         if os.environ.get("ACT_LLM_SOLE_AUTHOR", "").strip() == "1":
+            try:
+                from src.ai import tick_state as _ts_sa
+                _ts_existing = _ts_sa.get(asset) or {}
+                _net = float(_ts_existing.get("agents_net") or 0.0)
+                _ac = str(_ts_existing.get("agents_consensus") or "").split()
+                _first = _ac[0].upper() if _ac else ""
+                if _first in ("CALL", "LONG", "BUY"):
+                    _dir = "LONG"
+                elif _first in ("PUT", "SHORT", "SELL"):
+                    _dir = "SHORT"
+                else:
+                    _dir = "FLAT"
+                _abs = abs(_net)
+                _tier = "sniper" if _abs >= 0.5 else \
+                        "normal" if _abs >= 0.15 else "reject"
+                # ATR-anchored 5% stop with min 2% / max 8% guard.
+                try:
+                    _atr_now = float(atr_vals[-1]) if atr_vals else 0.0
+                    _sl_pct = max(0.02, min(0.08, 2.0 * (_atr_now / max(price, 1e-9)))) \
+                        if price and _atr_now else 0.05
+                except Exception:
+                    _sl_pct = 0.05
+                _sl = price * (1 - _sl_pct) if _dir == "LONG" \
+                    else price * (1 + _sl_pct) if _dir == "SHORT" \
+                    else 0.0
+                _ts_sa.update(
+                    asset,
+                    consensus_dir=_dir,
+                    price=float(price),
+                    sl_price=float(_sl),
+                    size_pct=float(3.0 if _tier == "sniper" else 1.0),
+                    conviction_tier=_tier,
+                    venue=str(getattr(self, "_exchange_name", "") or ""),
+                )
+            except Exception as _ts_e:
+                logger.debug("[LLM-SOLE-AUTHOR] tick_state seed skipped: %s", _ts_e)
             try:
                 print(
                     f"  [{self._ex_tag}:{asset}] LLM-SOLE-AUTHOR: technical-lane "
-                    f"entry skipped — LLM consumes orch_result via tick_state"
+                    f"entry skipped - LLM consumes orch_result via tick_state"
                 )
             except Exception:
                 pass
