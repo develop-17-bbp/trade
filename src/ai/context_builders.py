@@ -582,6 +582,128 @@ def _capital_state_block() -> str:
     return (header + "\n" + body + summary)[:_CAPITAL_STATE_BUDGET_CHARS]
 
 
+def _strategy_performance_block() -> str:
+    """Surface dynamic Bayesian agent weights + recent accuracy + the
+    strategy_repository's current champion + top challengers so the LLM
+    knows WHICH inputs to trust on this tick - not all signals equally.
+
+    Operator directive 2026-04-30 ('evolve' principle): the LLM should
+    learn to lean on agents/strategies that have been profitable
+    recently and discount or ignore ones that have been losing. Without
+    this block, agent_votes shows direction+confidence but not weight,
+    so the LLM treats trend_momentum (acc=72%, w=2.3) and a quarantined
+    component the same. This closes that gap.
+    """
+    lines: list = []
+
+    # Section 1: per-agent weight + accuracy from the live orchestrator.
+    try:
+        from src.agents.orchestrator import _ORCHESTRATOR_SINGLETON
+        orch = _ORCHESTRATOR_SINGLETON
+    except Exception:
+        orch = None
+    if orch is None:
+        # Fall back to JSON state files written by save_state().
+        try:
+            import os as _os
+            import glob as _glob
+            import json as _json
+            mem_dir = _os.path.join(
+                _os.path.dirname(_os.path.dirname(
+                    _os.path.dirname(_os.path.abspath(__file__))
+                )), "memory",
+            )
+            files = _glob.glob(_os.path.join(mem_dir, "agent_*_state.json"))
+            agents_data: list = []
+            for f in files:
+                try:
+                    with open(f) as fh:
+                        s = _json.load(fh)
+                    name = s.get("name") or _os.path.basename(f)[6:-11]
+                    weight = float(s.get("weight") or 1.0)
+                    hist = s.get("accuracy_history") or []
+                    acc = (sum(hist) / len(hist)) if hist else 0.5
+                    n = int(s.get("total_calls") or 0)
+                    agents_data.append((name, weight, acc, n))
+                except Exception:
+                    continue
+            agents_data.sort(key=lambda t: -t[1])
+            if agents_data:
+                lines.append("AGENT WEIGHTS (Bayesian, dynamic; persisted):")
+                for name, w, acc, n in agents_data[:10]:
+                    tag = ("STRONG" if w >= 1.5 else
+                           "GOOD" if w >= 1.0 else
+                           "WEAK" if w >= 0.5 else
+                           "DISTRUST")
+                    lines.append(
+                        f"- {name[:24]:<24} w={w:.2f} acc={acc*100:.0f}% n={n}  {tag}"
+                    )
+        except Exception:
+            pass
+    else:
+        try:
+            agents = getattr(orch, "agents", {}) or {}
+            agents_data = []
+            for name, agent in agents.items():
+                try:
+                    w = float(agent.get_weight()) if hasattr(agent, "get_weight") else 1.0
+                    acc = float(agent.get_accuracy()) if hasattr(agent, "get_accuracy") else 0.5
+                    n = int(getattr(agent, "_total_calls", 0))
+                    agents_data.append((name, w, acc, n))
+                except Exception:
+                    continue
+            agents_data.sort(key=lambda t: -t[1])
+            if agents_data:
+                lines.append("AGENT WEIGHTS (Bayesian, dynamic; live):")
+                for name, w, acc, n in agents_data[:10]:
+                    tag = ("STRONG" if w >= 1.5 else
+                           "GOOD" if w >= 1.0 else
+                           "WEAK" if w >= 0.5 else
+                           "DISTRUST")
+                    lines.append(
+                        f"- {name[:24]:<24} w={w:.2f} acc={acc*100:.0f}% n={n}  {tag}"
+                    )
+        except Exception:
+            pass
+
+    # Section 2: top genetic strategies (champion + 3 challengers).
+    try:
+        from src.trading.strategy_repository import StrategyRepository
+        repo = StrategyRepository()
+        champ = repo.get_champion() if hasattr(repo, "get_champion") else None
+        top = []
+        if hasattr(repo, "list_strategies"):
+            try:
+                top = repo.list_strategies(status="champion") or []
+                top += repo.list_strategies(status="challenger") or []
+                top.sort(key=lambda s: -float(getattr(s, "sharpe", 0.0) or 0.0))
+                top = top[:4]
+            except Exception:
+                top = []
+        if top:
+            lines.append("\nGENETIC HALL-OF-FAME (top 4 by Sharpe, recent window):")
+            for s in top:
+                name = getattr(s, "name", "?")
+                sharpe = float(getattr(s, "sharpe", 0.0) or 0.0)
+                wr = float(getattr(s, "win_rate", 0.0) or 0.0)
+                status = getattr(s, "status", "?")
+                lines.append(
+                    f"- {name[:30]:<30} Sharpe={sharpe:.2f} win={wr*100:.0f}% [{status}]"
+                )
+    except Exception:
+        pass
+
+    if not lines:
+        return ""
+    lines.append(
+        "\nGUIDANCE: lean toward STRONG-weight agents (w>=1.5) and "
+        "champion strategies. Discount WEAK/DISTRUST agents. When the "
+        "champion strategy and STRONG agents agree, conviction is "
+        "higher than either alone."
+    )
+    return "\n".join(lines)
+
+
 def _body_controls_block() -> str:
     try:
         from src.learning.brain_to_body import get_controller
@@ -611,6 +733,7 @@ def build_evidence_document(
     include_recent_critiques: bool = True,
     include_open_positions: bool = True,
     include_capital_state: bool = True,
+    include_strategy_performance: bool = True,
 ) -> EvidenceDocument:
     """Structured assemble of the analyst's evidence bundle (C19).
 
@@ -685,6 +808,20 @@ def build_evidence_document(
                 confidence=0.75, source="orchestrator.latest_votes",
                 kind="mixed",
             ))
+    if include_strategy_performance:
+        # Operator directive 2026-04-30 (the 'evolve' principle): LLM
+        # must SEE which agents/strategies have been profitable recently
+        # so it leans on winners and discounts losers, instead of
+        # treating every signal as equal weight. Surfaces dynamic
+        # Bayesian agent weights + recent accuracy + champion strategy
+        # + top genetic challengers.
+        c = _strategy_performance_block()
+        if c:
+            doc.add(EvidenceSection(
+                name="STRATEGY_PERFORMANCE", content=c,
+                confidence=0.85, source="agents.weights+strategy_repo",
+                kind="meta",
+            ))
     if include_recent_critiques:
         # Phase D.4 wiring: post-trade self-critiques from trade_verifier
         # so the analyst calibrates against its own past predictive errors.
@@ -753,6 +890,7 @@ def build_analyst_context(
     include_recent_critiques: bool = True,
     include_open_positions: bool = True,
     include_capital_state: bool = True,
+    include_strategy_performance: bool = True,
     ttl_s: float = DEFAULT_CONTEXT_TTL_S,
 ) -> str:
     """Assemble the standard analyst seed-context block for `asset`.
@@ -771,6 +909,7 @@ def build_analyst_context(
         int(include_fear_greed), int(include_graph), int(include_body_controls),
         int(include_agent_votes), int(include_recent_critiques),
         int(include_open_positions), int(include_capital_state),
+        int(include_strategy_performance),
     )
     cache_key = f"{asset_key}:{mask}"
     if ttl_s > 0:
@@ -791,6 +930,7 @@ def build_analyst_context(
         include_recent_critiques=include_recent_critiques,
         include_open_positions=include_open_positions,
         include_capital_state=include_capital_state,
+        include_strategy_performance=include_strategy_performance,
     )
     block = doc.to_prompt()
     if ttl_s > 0:
