@@ -367,6 +367,41 @@ def _submit_alpaca(symbol: str, side: str) -> int:
     else:
         qty = round(qty, 6)
 
+    # Inventory pre-check: before SELLing a stock, confirm Alpaca
+    # actually has free qty (qty_available, not just qty). Existing
+    # positions can be locked by working orders (held_for_orders > 0)
+    # which makes Alpaca return 403 'insufficient qty available'. When
+    # locked, skip this symbol so the next 15-min tick can pick a
+    # different one rather than retrying the same conflict forever.
+    # Operator audit 2026-04-30: the AAPL 1-share-locked case.
+    if not is_crypto and side == "sell":
+        try:
+            from src.data.alpaca_fetcher import AlpacaFetcher as _AF
+            _af2 = _AF(paper=True)
+            if _af2.available:
+                pos = _af2.alpaca.get_position(symbol) if hasattr(_af2, "alpaca") and _af2.alpaca else None
+                if pos is None:
+                    raise RuntimeError("no_position_method")
+                # alpaca-py returns Position object with .qty_available + .qty
+                _qty_avail = float(getattr(pos, "qty_available", None) or
+                                   pos.get("qty_available", 0) if isinstance(pos, dict) else 0)
+                _qty_held = float(getattr(pos, "qty", None) or
+                                  pos.get("qty", 0) if isinstance(pos, dict) else 0)
+                if _qty_avail < qty:
+                    logger.warning(
+                        "[SKIP] %s SELL blocked: qty_avail=%s held=%s < requested=%s "
+                        "(held_for_orders locks the share). Picking different "
+                        "symbol on next tick.",
+                        symbol, _qty_avail, _qty_held, qty,
+                    )
+                    return 7   # distinct exit code so audit can grep
+        except Exception as _ie:
+            # No position OR error reading - fall through to attempt
+            # the order. Alpaca returns 403 with a clear message which
+            # we'll log below; better to attempt + log than silently
+            # skip every tick because the inventory probe choked.
+            logger.debug("inventory pre-check skipped for %s: %s", symbol, _ie)
+
     logger.info("[EXPLORE] submitting %s %s qty=%s (~$%.0f at $%.2f)",
                 side.upper(), symbol, qty, notional, last_px)
     try:
