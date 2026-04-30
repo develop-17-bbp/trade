@@ -448,7 +448,16 @@ if (-not $env:OLLAMA_NUM_PARALLEL) { _SetEnvPersistent "OLLAMA_NUM_PARALLEL" "1"
 # -> parse_failures. 16K still fits on RTX 5090 (7B ~5 GB, 32B
 # ~22 GB at 16K = ~27 GB total). Operators on smaller cards or
 # lighter prompts can drop back to 8192 manually.
-if (-not $env:OLLAMA_NUM_CTX) { _SetEnvPersistent "OLLAMA_NUM_CTX" "8192" }
+# 16384 (was 8192) — operator hit prompt-truncation 3576->500 chars on the
+# 4060 because system+tools+history fills the 8K budget, leaving only
+# ~500 chars for the actual analyst prompt. With 16K the agentic loop's
+# full tool-registry prompt fits comfortably and the user prompt stays
+# intact. 30B at 16K ctx = ~27 GB on the 5090 (still fits in 32 GB);
+# 7B at 16K = ~6 GB on the 4060 (tight but works because the 30B is
+# served remotely, freeing 4060's VRAM for scanner-only).
+# If a smaller card needs to drop back, `setx OLLAMA_NUM_CTX 8192`
+# overrides the persisted 16384 from this script.
+if (-not $env:OLLAMA_NUM_CTX) { _SetEnvPersistent "OLLAMA_NUM_CTX" "16384" }
 # Generous timeouts for first-load of 32B from disk
 if (-not $env:OLLAMA_READ_TIMEOUT_S) { _SetEnvPersistent "OLLAMA_READ_TIMEOUT_S" "180" }
 OK "Agentic loop: ACT_AGENTIC_LOOP=$($env:ACT_AGENTIC_LOOP) profile=$($env:ACT_BRAIN_PROFILE) scanner=$scannerModel analyst=$analystModel MAX_LOADED=$($env:OLLAMA_MAX_LOADED_MODELS) PARALLEL=$($env:OLLAMA_NUM_PARALLEL) CTX=$($env:OLLAMA_NUM_CTX)"

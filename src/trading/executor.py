@@ -3384,9 +3384,37 @@ class TradingExecutor:
             newest_ts = raw_5m[-1][0] / 1000.0
             age_minutes = (time.time() - newest_ts) / 60
             if age_minutes > 15:
-                print(f"  [{self._ex_tag}:{asset}] STALE CANDLES: newest is {age_minutes:.0f}min old - reconnecting")
-                self._try_reconnect(asset)
-                return
+                # Staleness check is appropriate for 24/7 markets (crypto).
+                # For stocks, the latest bar is naturally 4-17h old during
+                # overnight / weekends — that's NOT a reconnect signal,
+                # it's the market being closed. Without this exemption,
+                # every stock symbol on the 4060 hits "STALE CANDLES" at
+                # 02:00 ET, the bot loops on _try_reconnect, and never
+                # gets through the 100-symbol basket. RTH gate downstream
+                # blocks ENTRIES outside session anyway, so we can safely
+                # let the agentic loop / scanner process historical bars
+                # for shadow plans + training during overnight.
+                is_stocks_overnight = False
+                try:
+                    if 'alpaca' == self._exchange_name:
+                        from src.utils.market_hours import is_us_market_open
+                        if not is_us_market_open():
+                            is_stocks_overnight = True
+                except Exception:
+                    pass
+                if is_stocks_overnight:
+                    # Don't print every tick; once per asset per session
+                    # is enough. The flag lives on `self` so multi-asset
+                    # ticks don't spam the log.
+                    if not getattr(self, '_rth_closed_logged', set()).__contains__(asset):
+                        if not hasattr(self, '_rth_closed_logged'):
+                            self._rth_closed_logged = set()
+                        self._rth_closed_logged.add(asset)
+                        print(f"  [{self._ex_tag}:{asset}] RTH closed; bar {age_minutes:.0f}min old (expected) - processing historical only")
+                else:
+                    print(f"  [{self._ex_tag}:{asset}] STALE CANDLES: newest is {age_minutes:.0f}min old - reconnecting")
+                    self._try_reconnect(asset)
+                    return
 
         # ── PRICE SANITY ──
         # Reject candle-to-candle jumps > 25% (data quality check)

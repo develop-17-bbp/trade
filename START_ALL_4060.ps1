@@ -118,6 +118,13 @@ if (-not $env:ACT_BRAIN_PROFILE) {
     _SetEnvDual "ACT_BRAIN_PROFILE" "moe_agentic"
     Ok "ACT_BRAIN_PROFILE defaulted to moe_agentic (7b local + 30b remote, persisted via setx)"
 }
+# Match the 5090's bumped 16384 default — same reasoning as START_ALL.ps1:
+# 8192 was too tight, prompts got truncated to 500 chars, agentic loop
+# returned parse_failures. 16K gives the analyst real prompt budget.
+if (-not $env:OLLAMA_NUM_CTX) {
+    _SetEnvDual "OLLAMA_NUM_CTX" "16384"
+    Ok "OLLAMA_NUM_CTX defaulted to 16384 (was 8192 - was truncating analyst prompts)"
+}
 
 # 4c. Probe the remote analyst before launch so silence has a stated reason
 # Warn-only: if 5090 is unreachable, the bot still boots into shadow mode
