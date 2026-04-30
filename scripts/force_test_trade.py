@@ -43,6 +43,22 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+# Load .env so APCA_API_KEY_ID, ROBINHOOD_API_KEY, LIVECOINWATCH_API_KEY
+# etc are visible to the price-tier fallback chain. Without this, on
+# the 5090 the script's env only has whatever the parent PowerShell
+# session passed through, which usually doesn't include the .env-only
+# keys. Result: tier-2 (Alpaca crypto) and tier-3 (LiveCoinWatch) both
+# silently fall through to the hardcoded $75K BTC fallback, which is
+# what the operator hit. dotenv is best-effort - if not installed the
+# script proceeds with whatever's already in os.environ.
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(_PROJECT_ROOT, ".env")
+    if os.path.exists(_env_path):
+        load_dotenv(_env_path, override=False)   # don't clobber explicit env
+except Exception:
+    pass   # python-dotenv missing - rely on whatever env the shell has
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

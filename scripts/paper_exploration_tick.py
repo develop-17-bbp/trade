@@ -53,6 +53,18 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+# Load .env so the price-fetch chain (Alpaca / LiveCoinWatch) sees its
+# API keys. Same rationale as force_test_trade.py - without this, the
+# script env on the 5090 is starved of the .env-only keys, falls through
+# to hardcoded prices, and the test trade opens at the wrong fill price.
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(_PROJECT_ROOT, ".env")
+    if os.path.exists(_env_path):
+        load_dotenv(_env_path, override=False)
+except Exception:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
