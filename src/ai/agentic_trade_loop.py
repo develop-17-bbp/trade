@@ -287,7 +287,28 @@ class AgenticTradeLoop:
         tool_calls: List[Dict[str, Any]] = []
         parse_failures = 0
 
+        # Commit-or-skip nudge at the 2/3 mark - LLM tends to tool-loop
+        # for the full budget without converging on a plan. Prod diagnostic
+        # 2026-04-30 showed 437 max_steps exits vs 8 plan exits on the
+        # 5090. Nudging at step ceil(2/3 * max_steps) cuts the tool-loop
+        # tax in half without sacrificing genuine multi-step reasoning.
+        commit_nudge_step = max(2, int(self.max_steps * 2 / 3))
+        commit_nudged = False
+
         for step in range(self.max_steps):
+            if step == commit_nudge_step and not commit_nudged:
+                self.context.append({
+                    "role": "user",
+                    "content": (
+                        f"## COMMIT-OR-SKIP NUDGE (step {step + 1}/{self.max_steps})\n"
+                        "You have used 2/3 of your tool-call budget. Additional tool "
+                        "calls are likely diminishing-returns. Your NEXT response MUST "
+                        "be either {\"plan\": {...}} (if conviction is sufficient) or "
+                        "{\"skip\": \"<reason>\"} (if the setup doesn't qualify). "
+                        "Do NOT call more tools - synthesize what you have and decide."
+                    ),
+                })
+                commit_nudged = True
             raw = self._call_llm()
             envelope = _extract_json(raw or "")
             if envelope is None:
