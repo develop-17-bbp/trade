@@ -2964,6 +2964,19 @@ class TradingExecutor:
                 # ── Paper Trading: update positions with prices from OHLCV feed ──
                 if self._paper:
                     try:
+                        # Reload from disk first so positions written by an
+                        # external process (paper_exploration_tick.py running
+                        # as a separate cmd window) are visible to the bot's
+                        # long-lived instance. Without this, the bot's
+                        # RobinhoodPaperFetcher only sees positions it
+                        # opened itself - the dashboard's OPEN POSITIONS
+                        # panel (which reads from this instance) stayed at
+                        # 0 even when paper_exploration wrote entries to
+                        # the state file. Audit 2026-05-01.
+                        try:
+                            self._paper.load_state()
+                        except Exception as _le:
+                            logger.debug("paper load_state failed: %s", _le)
                         # Pass latest tick prices (already fetched from Kraken OHLCV)
                         _live = {a: self._last_tick_prices.get(a, 0) for a in self.assets}
                         self._paper.update_positions(live_prices=_live)

@@ -496,6 +496,19 @@ def _submit_robinhood(asset: str, side: str) -> int:
     )
     if pos is None:
         return 5
+    # Persist to disk so the bot's long-lived RobinhoodPaperFetcher picks
+    # up the position via load_state on its next tick. Operator audit
+    # 2026-05-01: without this save_state, the position was in-memory
+    # only and lost when this one-shot script exited. Dashboard's
+    # OPEN POSITIONS panel reads from the bot instance, which never saw
+    # the entry, so it stayed at 0 even though RECENT TRADES feed
+    # (which reads warm_store) showed the entry. The bot also needs to
+    # reload from disk on each tick - that's a separate fix.
+    try:
+        pf.save_state()
+        logger.info("[EXPLORE] RH paper-sim state persisted: positions=%d", len(pf.positions))
+    except Exception as _se:
+        logger.warning("[EXPLORE] save_state failed: %s", _se)
     try:
         from src.orchestration.warm_store import get_store
         import uuid as _uuid
@@ -581,10 +594,15 @@ def main() -> int:
         # For simplicity, alternate between BTC/ETH by daily count parity.
         cnt = _today_explore_count()
         asset = ROBINHOOD_BASKET[cnt % len(ROBINHOOD_BASKET)].strip().upper() or "BTC"
-        # Direction: random 50/50 within paper-sim is fine; the real
-        # version benefits from market data when available.
-        side = "buy" if random.random() > 0.5 else "sell"
-        logger.info("[EXPLORE] RH paper-sim picked asset=%s side=%s", asset, side)
+        # Direction: HARDCODED to LONG. Robinhood is SPOT LONG-ONLY per
+        # operator directive 2026-04-30. Earlier random.random() choice
+        # produced SHORT entries that submit_trade_plan would reject and
+        # that show as 'SHORT' in the dashboard's recent_trades log -
+        # confusing audit. Bear-leaning markets get a skip (return 0)
+        # instead of a SHORT trade. Operator explicitly said: 'when
+        # bearish: emit skip not SHORT'.
+        side = "buy"
+        logger.info("[EXPLORE] RH paper-sim picked asset=%s side=%s (LONG-only)", asset, side)
         return _submit_robinhood(asset, side)
 
     logger.error("Unknown venue: %s", venue)
