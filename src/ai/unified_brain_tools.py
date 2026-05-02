@@ -653,6 +653,38 @@ def _handle_volume_profile(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"volume_profile_failed: {e}"[:200]}
 
 
+def _handle_candlestick_patterns(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Candlestick pattern detection — transformer model if loaded, else
+    heuristic. Returns top-K patterns + aggregate direction."""
+    asset = (args.get("asset") or "").upper().strip()
+    timeframe = args.get("timeframe", "1h")
+    if not asset:
+        return {"error": "asset required"}
+    try:
+        from src.data.fetcher import PriceFetcher
+        pf = PriceFetcher()
+        bars = pf.get_recent_bars(asset, timeframe=timeframe, n=64) or []
+        if not bars:
+            return {"error": "bars_unavailable"}
+        opens = [float(b.get("open", 0)) for b in bars]
+        highs = [float(b.get("high", 0)) for b in bars]
+        lows = [float(b.get("low", 0)) for b in bars]
+        closes = [float(b.get("close", 0)) for b in bars]
+        volumes = [float(b.get("volume", 0)) for b in bars]
+        # Try transformer first; falls back to heuristic if no weights loaded
+        try:
+            from src.models.candlestick_transformer import get_inferer
+            inferer = get_inferer()
+            return inferer.predict(opens, highs, lows, closes, volumes, top_k=5)
+        except Exception:
+            from src.trading.strategies.candlestick_patterns import evaluate_dict
+            result = evaluate_dict(opens, highs, lows, closes, volumes)
+            result["source"] = "heuristic_only"
+            return result
+    except Exception as e:
+        return {"error": f"candlestick_failed: {e}"[:200]}
+
+
 def _handle_strategies_for_venue(args: Dict[str, Any]) -> Dict[str, Any]:
     """Filter the strategy registry by which strategies apply to the
     given venue's instrument class. Used by LLM seed context builder
@@ -2451,6 +2483,28 @@ def register_unified_brain_tools(registry) -> int:
                 "required": ["asset"],
             },
             handler=_handle_volume_profile, tag="read_only",
+        ),
+        Tool(
+            name="query_candlestick_patterns",
+            description=(
+                "[CANDLESTICK] Detects 30 classic candlestick patterns at the "
+                "current bar (doji, hammer, engulfing, morning/evening star, "
+                "three-soldiers, harami, kicker, abandoned baby, etc). Uses "
+                "the trained Candlestick Transformer if model weights are "
+                "loaded (smoother probabilities, calibrated for the LLM Risk "
+                "adapter); falls back to the rule-based heuristic detector "
+                "otherwise. Returns top-5 patterns with probabilities + "
+                "aggregate direction (LONG/SHORT/FLAT)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "timeframe": {"type": "string", "enum": ["5m","15m","1h","4h","1d"], "default": "1h"},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_candlestick_patterns, tag="read_only",
         ),
         Tool(
             name="query_strategies_for_venue",
