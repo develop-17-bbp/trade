@@ -582,6 +582,110 @@ def _fetch_recent_bars(asset: str, timeframe: str = "1h", n: int = 100):
         return None
 
 
+# ── New pattern-strategy handlers (Gann/Elliott/Harmonic/Volume Profile) ──
+
+
+def _handle_gann_angles(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Gann angle pivot + 1x1 cardinal angle directional bias."""
+    asset = (args.get("asset") or "").upper().strip()
+    timeframe = args.get("timeframe", "1h")
+    if not asset:
+        return {"error": "asset required"}
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=120)
+        if bars is None:
+            return {"error": "bars_unavailable"}
+        highs, lows, closes, _vols = bars
+        from src.trading.strategies.gann_angles import evaluate_dict
+        return evaluate_dict(highs, lows, closes)
+    except Exception as e:
+        return {"error": f"gann_failed: {e}"[:200]}
+
+
+def _handle_elliott_wave(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Elliott wave 5-impulse + ABC correction detection."""
+    asset = (args.get("asset") or "").upper().strip()
+    timeframe = args.get("timeframe", "1h")
+    if not asset:
+        return {"error": "asset required"}
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=200)
+        if bars is None:
+            return {"error": "bars_unavailable"}
+        highs, lows, closes, _vols = bars
+        from src.trading.strategies.elliott_wave import evaluate_dict
+        return evaluate_dict(highs, lows, closes)
+    except Exception as e:
+        return {"error": f"elliott_failed: {e}"[:200]}
+
+
+def _handle_harmonic_patterns(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Gartley / Bat / Butterfly / Crab harmonic-pattern detection."""
+    asset = (args.get("asset") or "").upper().strip()
+    timeframe = args.get("timeframe", "1h")
+    if not asset:
+        return {"error": "asset required"}
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=200)
+        if bars is None:
+            return {"error": "bars_unavailable"}
+        highs, lows, closes, _vols = bars
+        from src.trading.strategies.harmonic_patterns import evaluate_dict
+        return evaluate_dict(highs, lows, closes)
+    except Exception as e:
+        return {"error": f"harmonic_failed: {e}"[:200]}
+
+
+def _handle_volume_profile(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Volume Profile (POC/VAH/VAL + HVN/LVN)."""
+    asset = (args.get("asset") or "").upper().strip()
+    timeframe = args.get("timeframe", "1h")
+    if not asset:
+        return {"error": "asset required"}
+    try:
+        bars = _fetch_recent_bars(asset, timeframe=timeframe, n=200)
+        if bars is None:
+            return {"error": "bars_unavailable"}
+        highs, lows, closes, volumes = bars
+        from src.trading.strategies.volume_profile import evaluate_dict
+        return evaluate_dict(highs, lows, closes, volumes)
+    except Exception as e:
+        return {"error": f"volume_profile_failed: {e}"[:200]}
+
+
+def _handle_strategies_for_venue(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Filter the strategy registry by which strategies apply to the
+    given venue's instrument class. Used by LLM seed context builder
+    to avoid showing options strategies on spot venues."""
+    venue = (args.get("venue") or "").lower().strip()
+    if not venue:
+        return {"error": "venue required"}
+    try:
+        from src.trading.strategies.asset_class_meta import (
+            STRATEGY_INSTRUMENT_MAP, venue_default_instrument,
+            is_strategy_compatible,
+        )
+        instr = venue_default_instrument(venue)
+        compatible = [
+            name for name in STRATEGY_INSTRUMENT_MAP.keys()
+            if is_strategy_compatible(name, instr)
+        ]
+        incompatible = [
+            name for name in STRATEGY_INSTRUMENT_MAP.keys()
+            if not is_strategy_compatible(name, instr)
+        ]
+        return {
+            "venue": venue,
+            "instrument_class": instr.value,
+            "compatible_count": len(compatible),
+            "incompatible_count": len(incompatible),
+            "compatible": compatible[:30],
+            "incompatible": incompatible[:10],
+        }
+    except Exception as e:
+        return {"error": f"strategies_for_venue_failed: {e}"[:200]}
+
+
 # ── Backtest-rigor tools (overfitting defense) ──────────────────────────
 
 
@@ -2271,6 +2375,98 @@ def register_unified_brain_tools(registry) -> int:
                 "required": ["asset"],
             },
             handler=_handle_multi_strategy, tag="read_only",
+        ),
+        Tool(
+            name="query_gann_angles",
+            description=(
+                "[GANN] W.D. Gann's geometric angle analysis. Detects most-recent "
+                "swing pivot + projects 9 Gann angles (1x1, 1x2, 1x4, 2x1, etc.) "
+                "from it. Returns directional bias based on price relative to "
+                "the cardinal 1x1 angle. Confidence dampens if price is far from "
+                "any angle. Works on any spot/perp/option underlying chart."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "timeframe": {"type": "string", "enum": ["5m","15m","1h","4h","1d"], "default": "1h"},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_gann_angles, tag="read_only",
+        ),
+        Tool(
+            name="query_elliott_wave",
+            description=(
+                "[ELLIOTT] Elliott Wave 5-impulse + ABC correction detector. "
+                "Uses ATR-multiple zigzag pivots + R1/R2/R3 wave-rule validation. "
+                "Returns structure (impulse_up/impulse_down/abc_corrective/unclear), "
+                "current wave label (1-5 or A-B-C), direction bias, and Wave-5 "
+                "projection target. Returns 'unclear' when rules don't fit."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "timeframe": {"type": "string", "enum": ["5m","15m","1h","4h","1d"], "default": "4h"},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_elliott_wave, tag="read_only",
+        ),
+        Tool(
+            name="query_harmonic_patterns",
+            description=(
+                "[HARMONIC] Detects Gartley / Bat / Butterfly / Crab harmonic "
+                "patterns from XABCD pivot configurations. Validates ratios "
+                "against tight Fibonacci tolerance bands. Returns pattern name, "
+                "bullish/bearish bias, PRZ (Potential Reversal Zone) low/high, "
+                "and the 5 pivot points. Confidence dampens by tolerance breach."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "timeframe": {"type": "string", "enum": ["15m","1h","4h","1d"], "default": "4h"},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_harmonic_patterns, tag="read_only",
+        ),
+        Tool(
+            name="query_volume_profile",
+            description=(
+                "[VPVR] Volume Profile by price. Returns Point of Control (POC), "
+                "Value Area High/Low (70% volume zone), HVN/LVN levels, and "
+                "directional bias inferred from current price vs POC/VAH/VAL. "
+                "Boosts confidence when price is near a Low Volume Node "
+                "(fast-traversal expected). Requires volume data."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "asset": {"type": "string"},
+                    "timeframe": {"type": "string", "enum": ["15m","1h","4h","1d"], "default": "1h"},
+                },
+                "required": ["asset"],
+            },
+            handler=_handle_volume_profile, tag="read_only",
+        ),
+        Tool(
+            name="query_strategies_for_venue",
+            description=(
+                "[VENUE-FILTER] Returns the subset of ACT's strategy registry "
+                "that applies to the given venue's instrument class. e.g. on "
+                "RH (spot LONG-only) excludes options-vol structures like "
+                "iron_condor. Use this BEFORE deciding which strategies to "
+                "consult to avoid wasted ReAct turns on incompatible patterns."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"venue": {"type": "string", "description": "robinhood / alpaca / alpaca_crypto / alpaca_options / bybit_perp / polymarket"}},
+                "required": ["venue"],
+            },
+            handler=_handle_strategies_for_venue, tag="read_only",
         ),
         Tool(
             name="find_similar_trades",
