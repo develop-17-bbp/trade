@@ -11,6 +11,7 @@ Run:
 """
 from __future__ import annotations
 
+import json
 import math
 import random
 import sys
@@ -404,6 +405,137 @@ def test_genetic_loop_imports():
     from src.scripts import genetic_loop  # noqa: F401
     assert hasattr(genetic_loop, "run_evolution_cycle")
     assert hasattr(genetic_loop, "main")
+
+
+# ── Wiring: audit outputs reach the LLM ─────────────────────────────────
+
+
+def test_persist_cycle_report_merges_into_adaptation_context(tmp_path, monkeypatch):
+    """_persist_cycle_report writes audit data into adaptation_context.json."""
+    from src.scripts import genetic_loop as gl
+    monkeypatch.setattr(gl, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "logs").mkdir()
+    report = {
+        "completed_at": 12345.0,
+        "flags": {"walk_forward": True, "map_elites": True},
+        "per_asset": {
+            "BTC": {
+                "walk_forward": {
+                    "best_promotable": {"dna_name": "BTC_X", "test_sharpe": 1.5},
+                    "best_oos": {"dna_name": "BTC_X", "test_sharpe": 1.5},
+                    "n_promotable": 3,
+                },
+                "best_oos": {"dna_name": "BTC_X", "test_sharpe": 1.5},
+                "map_elites": {
+                    "summary": {"n_filled": 12, "coverage_pct": 4.0,
+                                "max_cells": 300},
+                    "diverse_top_5": [{"dna_name": "X", "entry_family": "trend"}],
+                },
+                "drift_signal": {"drift_detected": False, "triggers": []},
+            },
+            "ETH": {},
+        },
+    }
+    gl._persist_cycle_report(report)
+    ctx = json.loads((tmp_path / "data" / "adaptation_context.json").read_text())
+    assert "genetic_audit" in ctx
+    assert ctx["genetic_audit"]["walk_forward"]["n_promotable"] == 3
+    assert ctx["genetic_audit"]["map_elites"]["summary"]["n_filled"] == 12
+
+
+def _audit_payload():
+    return {
+        "walk_forward": {
+            "split": {"train_range": [0, 800]},
+            "n_trials": 100,
+            "n_hall_of_fame": 5, "n_promotable": 2,
+            "best_oos": {"dna_name": "WF_TEST", "test_sharpe": 1.2},
+            "best_promotable": {"dna_name": "WF_BEST",
+                                 "test_sharpe": 1.4,
+                                 "deflated_sharpe": 0.9,
+                                 "p_true_sharpe_positive": 0.71,
+                                 "test_trades": 25},
+            "evaluations": [],
+        },
+        "map_elites": {
+            "summary": {"coverage_pct": 12.0, "n_filled": 36,
+                        "max_cells": 300,
+                        "by_entry_family": {"trend": 8}},
+            "diverse_top_5": [
+                {"dna_name": "MEX", "entry_family": "trend",
+                 "fitness": 0.8, "win_rate": 0.6, "sharpe": 1.1},
+            ],
+        },
+        "drift_signal": {
+            "drift_detected": True,
+            "triggers": ["variance_ratio=2.50"],
+        },
+    }
+
+
+def _inject_audit_into_real_context():
+    """Add a genetic_audit key to the real adaptation_context.json,
+    returning a callback that removes ONLY that key on cleanup. Safe
+    against a 382KB live file because we never overwrite existing data.
+    """
+    from src.ai import unified_brain_tools as ubt
+    real_root = Path(ubt.__file__).resolve().parent.parent.parent
+    ctx_path = real_root / "data" / "adaptation_context.json"
+    ctx = {}
+    if ctx_path.exists():
+        try:
+            ctx = json.loads(ctx_path.read_text() or "{}")
+        except Exception:
+            ctx = {}
+    had_audit_before = "genetic_audit" in ctx
+    prior_audit = ctx.get("genetic_audit") if had_audit_before else None
+    ctx["genetic_audit"] = _audit_payload()
+    ctx_path.parent.mkdir(parents=True, exist_ok=True)
+    ctx_path.write_text(json.dumps(ctx, indent=2, default=str))
+
+    def _restore():
+        try:
+            current = json.loads(ctx_path.read_text() or "{}")
+        except Exception:
+            return
+        if had_audit_before:
+            current["genetic_audit"] = prior_audit
+        else:
+            current.pop("genetic_audit", None)
+        ctx_path.write_text(json.dumps(current, indent=2, default=str))
+
+    return ctx_path, _restore
+
+
+def test_handle_walk_forward_oos_returns_audit_data():
+    """When adaptation_context has walk_forward block, the tool returns it."""
+    from src.ai import unified_brain_tools as ubt
+
+    _, restore = _inject_audit_into_real_context()
+    try:
+        wf_result = ubt._handle_walk_forward_oos({})
+        assert wf_result["best_oos"]["dna_name"] == "WF_TEST"
+        assert wf_result["best_promotable"]["p_true_sharpe_positive"] == 0.71
+        me_result = ubt._handle_map_elites_diverse({"k": 3})
+        assert me_result["coverage_pct"] == 12.0
+        assert len(me_result["diverse_top"]) == 1
+        assert me_result["diverse_top"][0]["dna_name"] == "MEX"
+    finally:
+        restore()
+
+
+def test_seed_prompt_includes_audit_block_when_data_present():
+    """context_builders embeds WF + MAP-Elites in the seed prompt."""
+    from src.ai import context_builders as cb
+    _, restore = _inject_audit_into_real_context()
+    try:
+        text = cb._strategy_performance_block()
+        assert "WALK-FORWARD" in text or "WF_BEST" in text or "DSR" in text
+        assert "MAP-ELITES" in text or "MEX" in text
+        assert "DRIFT" in text or "drift" in text.lower()
+    finally:
+        restore()
 
 
 if __name__ == "__main__":

@@ -831,6 +831,69 @@ def _strategy_performance_block() -> str:
     except Exception:
         pass
 
+    # Section 3: genetic-audit modules (P0 walk-forward + P2 MAP-Elites)
+    # Surfaces the OOS-validated winners + niche-diverse winners so the
+    # brain can discount in-sample fitness and pick regime-fit strategies.
+    try:
+        import json as _json
+        import os as _os
+        ctx_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.dirname(
+                _os.path.abspath(__file__)))),
+            "data", "adaptation_context.json",
+        )
+        if _os.path.exists(ctx_path):
+            ctx = _json.loads(open(ctx_path).read() or "{}")
+            audit = ctx.get("genetic_audit") or {}
+            wf = audit.get("walk_forward")
+            best_promotable = (wf or {}).get("best_promotable")
+            if best_promotable:
+                lines.append(
+                    "\nWALK-FORWARD OOS WINNER (passes Deflated-Sharpe + overfit gate):"
+                )
+                lines.append(
+                    f"- {str(best_promotable.get('dna_name', '?'))[:30]:<30} "
+                    f"test_sharpe={best_promotable.get('test_sharpe', 0):.2f} "
+                    f"DSR={best_promotable.get('deflated_sharpe', 0):.2f} "
+                    f"p_pos={best_promotable.get('p_true_sharpe_positive', 0):.2f} "
+                    f"trades={best_promotable.get('test_trades', 0)}"
+                )
+            elif wf and wf.get("best_oos"):
+                bo = wf["best_oos"]
+                lines.append(
+                    "\nWALK-FORWARD OOS BEST (none promotable — discount in-sample fitness):"
+                )
+                lines.append(
+                    f"- {str(bo.get('dna_name', '?'))[:30]:<30} "
+                    f"test_sharpe={bo.get('test_sharpe', 0):.2f} "
+                    f"overfit_indicator={bo.get('overfit_indicator', 0):.2f}"
+                )
+            me = audit.get("map_elites")
+            diverse = (me or {}).get("diverse_top_5") or []
+            if diverse:
+                summary = me.get("summary", {}) if me else {}
+                lines.append(
+                    f"\nMAP-ELITES NICHE WINNERS (coverage "
+                    f"{summary.get('coverage_pct', 0):.0f}% of 300 cells):"
+                )
+                for entry in diverse[:3]:
+                    fam = entry.get("entry_family", "?")
+                    lines.append(
+                        f"- [{fam:<8}] {str(entry.get('dna_name', '?'))[:24]:<24} "
+                        f"fitness={entry.get('fitness', 0):.2f} "
+                        f"win={int(entry.get('win_rate', 0)*100)}% "
+                        f"sharpe={entry.get('sharpe', 0):.2f}"
+                    )
+            drift = audit.get("drift_signal")
+            if drift and drift.get("drift_detected"):
+                lines.append(
+                    f"\nREGIME DRIFT DETECTED — triggers: "
+                    f"{', '.join(drift.get('triggers', []))[:120]}. "
+                    f"Treat older strategies skeptically."
+                )
+    except Exception:
+        pass
+
     if not lines:
         return ""
     lines.append(

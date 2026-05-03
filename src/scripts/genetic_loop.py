@@ -58,6 +58,59 @@ def _persist_cycle_report(report: dict, name: str = "genetic_cycle"):
             json.dump(report, f, indent=2, default=str)
     except Exception as exc:
         logger.warning("Failed to persist cycle report: %s", exc)
+    _merge_into_adaptation_context(report)
+
+
+def _merge_into_adaptation_context(report: dict):
+    """Surface audit-module outputs into data/adaptation_context.json so the
+    LLM seed prompt + LLM tools can read WF/DSR/MAP-Elites/CMA-ES/drift state.
+
+    Picks the FIRST asset's per-asset block that has each subkey (BTC by
+    default, ETH fallback) — the LLM cares about "is the new validation
+    layer firing", not which asset the report came from.
+    """
+    ctx_path = PROJECT_ROOT / "data" / "adaptation_context.json"
+    try:
+        ctx = {}
+        if ctx_path.exists():
+            try:
+                ctx = json.loads(ctx_path.read_text())
+            except Exception:
+                ctx = {}
+
+        per_asset = report.get("per_asset", {}) or {}
+        # Stable order: prefer BTC, then ETH, then anything else.
+        ordered = sorted(per_asset.items(),
+                         key=lambda kv: (kv[0] != "BTC", kv[0] != "ETH", kv[0]))
+
+        def _first_with(key):
+            for _, block in ordered:
+                v = block.get(key)
+                if v:
+                    return v
+            return None
+
+        audit = {
+            "generated_at": report.get("completed_at"),
+            "flags": report.get("flags", {}),
+            "walk_forward": _first_with("walk_forward"),
+            "best_oos": _first_with("best_oos"),
+            "dsr_gate": _first_with("dsr_gate"),
+            "cma_es": _first_with("cma_es"),
+            "map_elites": _first_with("map_elites"),
+            "drift_signal": _first_with("drift_signal"),
+            "drift_immigrants": _first_with("drift_immigrants"),
+            "llm_mutate": _first_with("llm_mutate"),
+            "grammatical_evolution": _first_with("grammatical_evolution"),
+            "multi_asset_summary": report.get("multi_asset"),
+        }
+        # Drop empty keys so the LLM doesn't see zombie nulls.
+        audit = {k: v for k, v in audit.items() if v}
+        if audit:
+            ctx["genetic_audit"] = audit
+        ctx_path.write_text(json.dumps(ctx, indent=2, default=str))
+    except Exception as exc:
+        logger.debug("Failed to merge audit into adaptation_context: %s", exc)
 
 
 def run_evolution_cycle(

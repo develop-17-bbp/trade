@@ -1917,6 +1917,91 @@ def _handle_genetic_hall_of_fame(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"hall_of_fame_query_failed: {e}"[:200]}
 
 
+def _handle_walk_forward_oos(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Most recent walk-forward (P0 audit module) report: OOS test
+    Sharpe + p_true_sharpe_positive + Deflated-Sharpe + promotability
+    flag for each Hall-of-Fame entry. The brain reads this when
+    deciding whether to TRUST a strategy's reported fitness — a
+    strategy with high in-sample fitness but low test_sharpe is
+    overfit and should be discounted.
+
+    Returns: {best_oos, best_promotable, n_promotable, evaluations[]}
+    or {error: ...} when no audit cycle has run yet.
+    """
+    import json as _json
+    import os as _os
+    try:
+        ctx_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.dirname(
+                _os.path.abspath(__file__)))),
+            "data", "adaptation_context.json",
+        )
+        if not _os.path.exists(ctx_path):
+            return {"error": "no_audit_cycle_run_yet",
+                    "hint": "run python -m src.scripts.genetic_loop --mode p0 --once"}
+        ctx = _json.loads(open(ctx_path).read() or "{}")
+        audit = ctx.get("genetic_audit") or {}
+        wf = audit.get("walk_forward")
+        if not wf:
+            return {"error": "walk_forward_not_in_last_cycle",
+                    "flags": audit.get("flags", {})}
+        # Trim evaluations to top-5 to keep the digest under 500 chars.
+        evals = (wf.get("evaluations") or [])[:5]
+        return {
+            "split": wf.get("split"),
+            "n_trials": wf.get("n_trials"),
+            "n_hall_of_fame": wf.get("n_hall_of_fame"),
+            "n_promotable": wf.get("n_promotable"),
+            "best_oos": wf.get("best_oos"),
+            "best_promotable": wf.get("best_promotable"),
+            "top_evaluations": evals,
+        }
+    except Exception as e:
+        return {"error": f"walk_forward_oos_query_failed: {e}"[:200]}
+
+
+def _handle_map_elites_diverse(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Most recent MAP-Elites (P2 audit module) diverse top-K from
+    the behavioral grid (5 win_rate × 4 avg_bars × 5 entry_family ×
+    3 vol-bin = 300 cells). Brain uses this to find NICHE winners
+    rather than just fitness-ranked top-N — answers questions like
+    'is there a high-conviction macro-style winner?' or 'do we have
+    a working mean-reversion strategy in low-vol regime?'.
+
+    Returns: {coverage, n_filled, by_entry_family, diverse_top:[...]}
+    """
+    import json as _json
+    import os as _os
+    k = int(args.get("k") or 5)
+    k = max(1, min(20, k))
+    try:
+        ctx_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.dirname(
+                _os.path.abspath(__file__)))),
+            "data", "adaptation_context.json",
+        )
+        if not _os.path.exists(ctx_path):
+            return {"error": "no_audit_cycle_run_yet"}
+        ctx = _json.loads(open(ctx_path).read() or "{}")
+        audit = ctx.get("genetic_audit") or {}
+        me = audit.get("map_elites")
+        if not me:
+            return {"error": "map_elites_not_in_last_cycle",
+                    "flags": audit.get("flags", {})}
+        summary = me.get("summary", {})
+        diverse = me.get("diverse_top_5", []) or []
+        return {
+            "coverage_pct": summary.get("coverage_pct"),
+            "n_filled": summary.get("n_filled"),
+            "max_cells": summary.get("max_cells"),
+            "by_entry_family": summary.get("by_entry_family", {}),
+            "by_win_rate_bin": summary.get("by_win_rate_bin", {}),
+            "diverse_top": diverse[:k],
+        }
+    except Exception as e:
+        return {"error": f"map_elites_query_failed: {e}"[:200]}
+
+
 def _handle_recovery_plan(args: Dict[str, Any]) -> Dict[str, Any]:
     """When the portfolio is stuck (many opens, large net negative),
     rank positions by current_pnl_pct_net and identify:
@@ -3528,6 +3613,36 @@ def register_unified_brain_tools(registry) -> int:
             handler=_handle_genetic_hall_of_fame, tag="read_only",
         ),
         Tool(
+            name="query_walk_forward_oos",
+            description=(
+                "[GENETIC-AUDIT] Most recent walk-forward (P0) OOS report: "
+                "best_oos (test Sharpe + Deflated Sharpe + p_true_sharpe>0), "
+                "best_promotable (passes overfit gate), n_promotable, top "
+                "evaluations. Brain reads this to discount in-sample "
+                "fitness when test_sharpe << train_sharpe (overfit). "
+                "Empty until --walk-forward cycle has run."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_handle_walk_forward_oos, tag="read_only",
+        ),
+        Tool(
+            name="query_map_elites_diverse",
+            description=(
+                "[GENETIC-AUDIT] MAP-Elites (P2) behavioral-grid diverse "
+                "top-K winners across (win_rate × avg_bars × entry_family × "
+                "vol) niches. Different from query_genetic_hall_of_fame "
+                "(fitness-ranked) — surfaces NICHE winners (e.g. best macro "
+                "strategy in low-vol regime) so the brain can pick a "
+                "strategy that fits the CURRENT regime, not just the global "
+                "champion. Empty until --map-elites cycle has run."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"k": {"type": "integer", "minimum": 1, "maximum": 20}},
+            },
+            handler=_handle_map_elites_diverse, tag="read_only",
+        ),
+        Tool(
             name="query_recovery_plan",
             description=(
                 "[RECOVERY] Stuck-portfolio analysis: ranks opens by "
@@ -3674,6 +3789,8 @@ def register_unified_brain_tools(registry) -> int:
             "query_recovery_plan": ("realtime", "query", "internal"),
             "query_genetic_evolution_state": ("hour", "query", "internal"),
             "query_genetic_hall_of_fame": ("hour", "query", "internal"),
+            "query_walk_forward_oos": ("hour", "query", "internal"),
+            "query_map_elites_diverse": ("hour", "query", "internal"),
             "query_trade_verifier_state": ("realtime", "query", "internal"),
             "query_system_health": ("realtime", "query", "internal"),
             "query_strategy_universe": ("realtime", "analysis", "internal"),
